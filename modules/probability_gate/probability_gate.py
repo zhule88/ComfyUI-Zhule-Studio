@@ -1,3 +1,4 @@
+"""ZhuleProbability 节点。迁移自 nodes/probability_gate.py。"""
 import random
 
 
@@ -25,3 +26,7 @@ class ZhuleProbability:
         if passed:
             return (text, True)
         return ("", False)
+
+
+NODE_CLASS_MAPPINGS = {"ZhuleProbability": ZhuleProbability}
+NODE_DISPLAY_NAME_MAPPINGS = {"ZhuleProbability": "Zhule Probability"}
