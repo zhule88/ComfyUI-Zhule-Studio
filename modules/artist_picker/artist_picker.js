@@ -633,36 +633,18 @@ function buildEmbedPanel(node, container) {
     refresh();
   }
 
-  // ---- 全屏预览 ----
+  // ---- 全屏预览：复用公共全屏查看器（滚轮缩放 / 左键拖拽 / 双击复位） ----
   function openLightbox(a) {
-    const overlay = document.createElement("div");
-    overlay.className = "zhule-lightbox";
-
-    const img = document.createElement("img");
-    img.src = a.imageId
+    const url = a.imageId
       ? `/zhule_artists/image?id=${encodeURIComponent(a.imageId)}`
       : "";
-    img.alt = a.tag || a.slug;
-
-    const cap = document.createElement("div");
-    cap.className = "zhule-lightbox-cap";
-    cap.textContent = (a.tag || a.slug) + "  ·  作品 " + fmtCount(a.postCount);
-
-    overlay.appendChild(img);
-    overlay.appendChild(cap);
-    document.body.appendChild(overlay);
-
-    const close = () => overlay.remove();
-    overlay.onclick = close;
-    const onKey = (e) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey, { once: true });
-    // 等监听注册后再移除，防止图片加载事件误触
-    img.onerror = () => {
-      img.alt = (a.tag || a.slug) + "（图片加载失败）";
-      img.style.opacity = "0.4";
-    };
+    if (!url) return;
+    import('/zhule_modules/common/zhule_fullviewer.js').then((mod) => {
+      const viewer = mod.createFullViewer({
+        tip: (a.tag || a.slug) + '  ·  作品 ' + fmtCount(a.postCount) + '  ·  滚轮缩放 · 左键拖拽 · 双击复位 · 点击或 ✕ 退出',
+      });
+      viewer.open(url);
+    });
   }
 
   // ---- 图片尺寸 ----

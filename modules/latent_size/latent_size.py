@@ -21,8 +21,8 @@ class ZhuleLatentSize:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "random_mode": (["空", "完全随机", "随机横屏", "随机竖屏"],
-                                {"default": "空"}),
+                "random_mode": (["手动指定", "完全随机", "随机横屏", "随机竖屏"],
+                                {"default": "手动指定"}),
                 "ratio": (["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"],
                           {"default": "1:1"}),
                 "batch_size": ("INT", {
@@ -47,7 +47,7 @@ class ZhuleLatentSize:
             pool = self.LANDSCAPE
         elif random_mode == "随机竖屏":
             pool = self.PORTRAIT
-        else:  # "空" → 用手动选的
+        else:  # "手动指定" → 用手动选的
             pool = [ratio]
 
         chosen = random.choice(pool)
