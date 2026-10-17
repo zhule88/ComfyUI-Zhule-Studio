@@ -12,6 +12,12 @@
 html, body { height: 100%; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", sans-serif;
   font-size: 13px; overflow: hidden; }
+/* 全局暗色滚动条，避免默认白底控件在深色主题下突兀 */
+* { scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 5px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 #app { height: 100vh; }
 .app { display: flex; flex-direction: column; height: 100vh; }
 
@@ -496,8 +502,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border-radius: 6px; font-size: 13px; outline: none; transition: border-color 0.12s; }
 .zhg-search:focus { border-color: var(--primary); }
 .zhg-select { padding: 7px 10px; background: #1b202b; color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px; font-size: 12px; outline: none; cursor: pointer; }
+  border: 1px solid var(--border); border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;
+  color-scheme: dark; }
 .zhg-select-sm { padding: 5px 6px; font-size: 12px; }
+.zhg-select option, .zhg-select-sm option, .settings-select option { background: #1b202b; color: #eef2f9; }
 /* 排序控件：一个框两元素（字段 + 方向箭头），无竖线分隔 */
 .zhg-sort-box { display: inline-flex; align-items: center; gap: 10px; padding: 2px 10px;
   background: #1b202b; color: var(--text); border: 1px solid var(--border);
@@ -808,6 +816,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 10px 16px;
   background: var(--bg);
   overflow-x: hidden;
+  max-height: 60vh;
 }
 .zhg-td-block {
   flex: 0 0 auto;
@@ -867,7 +876,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: flex; align-items: center; justify-content: center; }
 .settings-panel { width: 320px; max-width: 90vw; max-height: 90vh; overflow-y: auto; margin: 12px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); }
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; }
+.settings-panel::-webkit-scrollbar { width: 8px; }
+.settings-panel::-webkit-scrollbar-track { background: transparent; }
+.settings-panel::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; border: 2px solid var(--bg); }
+.settings-panel::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 .settings-head { display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .settings-title { font-size: 15px; font-weight: 600; color: var(--text); }
@@ -889,11 +903,40 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border-radius: 50%; background: #fff; transition: 0.2s; }
 .settings-switch input:checked + .settings-switch-slider::before { left: 18px; }
 .settings-select { width: 100%; padding: 6px 8px; font-size: 13px; color: var(--text);
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color-scheme: dark; }
 .settings-none { padding: 12px 0; font-size: 12px; color: var(--text-2); }
 .settings-hint { font-size: 11px; color: var(--text-2); margin-top: 6px; line-height: 1.6; }
 .settings-color { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border);
   border-radius: 6px; background: transparent; cursor: pointer; }
+.settings-danger-btn { padding: 6px 14px; border: 1px solid #d9534f; border-radius: 6px;
+  background: transparent; color: #d9534f; font-size: 12px; cursor: pointer; }
+.settings-danger-btn:hover { background: #d9534f; color: #fff; }
+.settings-danger-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* ===== Tooltip 统一（data-tip 驱动，替代原生 title 白底气泡）===== */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 7px);
+  transform: translateX(-50%) translateY(3px);
+  max-width: 300px; padding: 5px 9px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #2b2f36; color: #e8eaed;
+  font-size: 12px; line-height: 1.5;
+  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  z-index: 300; opacity: 0; pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1; transform: translateX(-50%) translateY(0);
+}
+.rebuild-hint { position: relative; cursor: help; border-bottom: 1px dashed var(--border); }
+.rebuild-hint::after { content: attr(data-tip); position: absolute; left: 0; top: 100%; z-index: 20;
+  width: 260px; max-width: none; padding: 8px 10px; border-radius: 8px; background: #2b2f36; color: #e8eaed;
+  font-size: 11px; line-height: 1.7; white-space: normal; box-shadow: 0 4px 14px rgba(0,0,0,.35); opacity: 0;
+  transform: translateY(4px); transition: opacity .15s, transform .15s; pointer-events: none; }
+.rebuild-hint:hover::after { opacity: 1; transform: translateY(2px); }
 
 /* ===== 加载过渡动画（移植自博客 load.vue：弹跳小球 + 阶梯上升） ===== */
 .zhule-loader { position: absolute; inset: 0; z-index: 99990; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0; }

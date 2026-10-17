@@ -258,64 +258,83 @@ def _scan_tab(tab_path):
     return cards
 
 
-# 词库扫描缓存：TTL 秒内且目录签名未变则直接返回缓存，避免每次刷新都全量遍历
+# 词库扫描缓存：按 tab 粒度惰性缓存。仅当访问某个 tab 时才扫描该 tab，已加载 tab 常驻内存
+# （TTL 过期或目录签名变化时只重扫单个 tab，不再全量遍历所有分类）。
 _WB_TTL = 30
-_wb_cache = {"ts": 0.0, "sig": None, "payload": None}
+_wb_tab_cache = {}
 
 
 def _wb_sig():
-    """轻量目录签名：根目录与直接子项（tab）的 mtime/size，用于捕捉新增/删除/改名 tab。"""
-    parts = []
+    """轻量目录签名：根下每个直接子项（tab）的 mtime/size，返回 {name: sig} 供按 tab 失效。"""
+    sigs = {}
     try:
-        parts.append(str(os.stat(WORD_BANK_ROOT).st_mtime))
         for name in sorted(os.listdir(WORD_BANK_ROOT)):
             p = os.path.join(WORD_BANK_ROOT, name)
             try:
                 st = os.stat(p)
-                parts.append(f"{name}:{int(st.st_mtime)}:{st.st_size}")
+                sigs[name] = f"{int(st.st_mtime)}:{st.st_size}"
             except OSError:
                 pass
     except OSError:
         pass
-    return "|".join(parts)
+    return sigs
 
 
-def _wb_slice(result, tab):
-    """按分类切片词库扫描结果：tabs 仍返回完整列表（前端需要知道有哪些 tab），data 仅含该 tab 卡片。"""
-    return {"root": result.get("root"), "tabs": list(result.get("tabs", [])),
-            "data": {tab: list(result.get("data", {}).get(tab, []))}}
+def _scan_one_tab(name, sigs):
+    """只扫描单个 tab 并写入按 tab 缓存。"""
+    _wb_tab_cache[name] = {
+        "ts": time.time(),
+        "sig": sigs.get(name),
+        "payload": _scan_tab(os.path.join(WORD_BANK_ROOT, name)),
+    }
 
 
 def scan_word_bank(force=False, tab=None):
-    now = time.time()
-    sig = _wb_sig()
-    if not force and _wb_cache["payload"] is not None \
-            and _wb_cache["sig"] == sig \
-            and (now - _wb_cache["ts"]) < _WB_TTL:
-        result = _wb_cache["payload"]
-        if tab is not None:
-            return _wb_slice(result, tab)
-        return result
-
-    result = {"root": WORD_BANK_ROOT, "tabs": [], "data": {}}
     if not os.path.isdir(WORD_BANK_ROOT):
-        result["error"] = "词库目录不存在: " + WORD_BANK_ROOT
-        return result
+        return {"root": WORD_BANK_ROOT, "tabs": [], "data": {},
+                "error": "词库目录不存在: " + WORD_BANK_ROOT}
 
+    now = time.time()
+    sigs = _wb_sig()
+
+    # tabs 列表：根下目录（排除 . 开头），保持原有编号排序
+    tabs = []
     for name in sorted(os.listdir(WORD_BANK_ROOT),
                        key=lambda n: (0 if parse_folder(n)[0] > 0 else 1,
                                       parse_folder(n)[0], parse_folder(n)[1].lower(), n)):
-        path = os.path.join(WORD_BANK_ROOT, name)
-        if not os.path.isdir(path) or name.startswith("."):
+        if not os.path.isdir(os.path.join(WORD_BANK_ROOT, name)) or name.startswith("."):
             continue
-        result["tabs"].append(name)
-        result["data"][name] = _scan_tab(path)
+        tabs.append(name)
 
-    _wb_cache["ts"] = now
-    _wb_cache["sig"] = sig
-    _wb_cache["payload"] = result
+    if force:
+        _wb_tab_cache.clear()
+        if tab is None:
+            # 手动全量刷新：重建所有 tab
+            for name in tabs:
+                _scan_one_tab(name, sigs)
+            return {"root": WORD_BANK_ROOT, "tabs": tabs,
+                    "data": {n: list(_wb_tab_cache[n]["payload"]) for n in tabs}}
+
+    result = {"root": WORD_BANK_ROOT, "tabs": tabs, "data": {}}
+
     if tab is not None:
-        return _wb_slice(result, tab)
+        # 按需读：只保证目标 tab 数据
+        if tab not in tabs:
+            result["data"][tab] = []
+            return result
+        ent = _wb_tab_cache.get(tab)
+        if ent is None or ent["sig"] != sigs.get(tab) or (now - ent["ts"]) >= _WB_TTL:
+            _scan_one_tab(tab, sigs)
+        result["data"][tab] = list(_wb_tab_cache[tab]["payload"])
+        return result
+
+    # 无指定 tab（首屏/局部刷新）：返回已缓存 tab，未缓存时至少保证第一个 tab 有数据
+    for name, ent in _wb_tab_cache.items():
+        if name in tabs:
+            result["data"][name] = list(ent["payload"])
+    if not result["data"] and tabs:
+        _scan_one_tab(tabs[0], sigs)
+        result["data"][tabs[0]] = list(_wb_tab_cache[tabs[0]]["payload"])
     return result
 
 
@@ -419,7 +438,7 @@ async def post_rename(request):
         return web.json_response({"error": "保存失败: " + str(e)}, status=500)
 
     # 目录结构可能已变：使词库扫描缓存失效，保证下次刷新拿到最新数据
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True})
 
 
@@ -462,7 +481,7 @@ async def post_wordbank_delete(request):
     except OSError as e:
         return web.json_response({"error": "删除失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True})
 
 
@@ -506,7 +525,7 @@ async def post_wordbank_tab_create(request):
     except OSError as e:
         return web.json_response({"error": "创建失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True, "tab": name})
 
 
@@ -570,7 +589,7 @@ async def post_wordbank_chip_create(request):
     except OSError as e:
         return web.json_response({"error": "创建失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True})
 
 
@@ -657,7 +676,7 @@ async def post_wordbank_card_create(request):
     except OSError as e:
         return web.json_response({"error": "创建失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True})
 
 
@@ -725,7 +744,7 @@ async def post_wordbank_image(request):
         except OSError as e:
             return web.json_response({"error": "删除文件失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True, "images": _card_images(folder)})
 
 
@@ -788,7 +807,7 @@ async def post_wordbank_image_upload(request):
     except Exception as e:
         return web.json_response({"error": "保存文件失败: " + str(e)}, status=500)
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     return web.json_response({"ok": True, "images": _card_images(folder)})
 
 
@@ -922,7 +941,7 @@ async def post_wordbank_sort_save(request):
         except OSError as e:
             errors.append(f"层级「{parent or '(根)'}」重命名失败: {e}")
 
-    _wb_cache["payload"] = None
+    _wb_tab_cache.clear()
     try:
         from . import gallery as _gal
         _gal._tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})

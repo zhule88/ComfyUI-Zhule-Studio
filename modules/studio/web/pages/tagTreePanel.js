@@ -53,7 +53,7 @@ const TagNode = {
   template: `
   <div class="zhg-ttp-wrap" :class="{ open: expanded }">
     <span class="zhg-ttp-chip" v-if="!expanded" :class="{ leaf: !hasKids() }" :style="chipStyle()"
-          :title="hasKids() ? '左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起' : '左键：放到外部过滤区'"
+          :data-tip="hasKids() ? '左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起' : '左键：放到外部过滤区'"
           @click="onLeft" @contextmenu.prevent="onCtx">
       {{ node.name }}<span class="zhg-ttp-count" v-if="node.count != null">{{ node.count }}</span>
       <span class="zhg-ttp-arrow" v-if="hasKids()">▸</span>
@@ -126,7 +126,7 @@ export default {
       <div class="zhg-ttp-head">
         <span class="zhg-ttp-title">标签层级</span>
         <span class="zhg-ttp-hint">左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起</span>
-        <button class="zhg-ttp-close" title="关闭" @click="close">✕</button>
+        <button class="zhg-ttp-close" data-tip="关闭" @click="close">✕</button>
       </div>
       <div class="zhg-ttp-body" v-if="!loading && !err">
         <div class="zhg-ttp-selected" v-if="selected.length">

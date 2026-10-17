@@ -16,11 +16,40 @@ import os
 from ..common.paths import _get_output_dir
 from . import png_text
 from .api import WORD_BANK_ROOT, parse_folder
-from .gallery import _merge_tag_sources, _scan_images
+from .gallery import INDEX_FILE, _merge_tag_sources, _scan_images
 
 GALLERY_ROOT = os.path.join(_get_output_dir(), "zhule_img")
 IMAGES_FILE = "images.txt"
 MAIN_FILE = "prompt.txt"
+
+
+def _load_index_records():
+    """读 gallery/index.json 的图库索引，返回 [(key, tags), ...]；索引不可用返回 None。
+
+    key 为相对图库根（zhule_img/）的路径；tags 已是三源合并结果
+    （gallery 构建索引时调用 _merge_tag_sources，与本模块语义一致）。
+    相比逐张读 PNG（全量 16.7GB IO），仅读单个 JSON（几 MB）。
+    """
+    try:
+        with open(INDEX_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return None
+    records = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return None
+    out = []
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        key = r.get("key")
+        tags = r.get("tags")
+        if not key or not isinstance(tags, list):
+            continue
+        cleaned = [str(t).strip() for t in tags if str(t).strip()]
+        if cleaned:
+            out.append((str(key), cleaned))
+    return out or None
 
 
 def _card_name_index(root):
@@ -74,16 +103,24 @@ def generate_images_txt(word_bank_root=None, gallery_root=None, dry_run=False):
 
     # 卡片标识名索引（唯一一次 prompt 目录访问，主循环不遍历 prompt 树）
     name_index = _card_name_index(wb)
-    # 图片主循环：只遍历图库目录
-    images = _scan_images(g_root)  # [(rel, full)] rel 相对图库根
+
+    # 图库数据源：优先读 gallery/index.json（零 PNG IO）；索引不可用时回退全量扫 PNG
+    index_records = _load_index_records()
+    if index_records is not None:
+        image_entries = [("zhule_img/" + key.replace(os.sep, "/"), tags)
+                         for key, tags in index_records]
+    else:
+        image_entries = []
+        for rel, full in _scan_images(g_root):
+            texts = png_text.read_png_text(full)
+            tags = _merge_tag_sources(texts)
+            if tags:
+                image_entries.append(("zhule_img/" + rel.replace(os.sep, "/"), tags))
 
     # 按图片 tag 反查卡片，汇总命中：卡片目录 -> set(相对 output/ 图片路径)
     card_hits = {}
     matched_images = 0
-    for rel, full in images:
-        texts = png_text.read_png_text(full)
-        tags = _merge_tag_sources(texts)
-        output_rel = os.path.join("zhule_img", rel).replace(os.sep, "/")
+    for output_rel, tags in image_entries:
         hit = False
         for t in tags:
             folders = name_index.get(t)
@@ -97,7 +134,7 @@ def generate_images_txt(word_bank_root=None, gallery_root=None, dry_run=False):
 
     stats = {
         "cards": len(card_hits),
-        "images": len(images),
+        "images": len(image_entries),
         "matched": matched_images,
         "written": 0,
         "unchanged": 0,

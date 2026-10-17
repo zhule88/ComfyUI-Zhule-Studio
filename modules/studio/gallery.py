@@ -1023,8 +1023,8 @@ async def get_gallery_image(request):
 
 
 async def post_gallery_rescan(request):
-    build_index(force=True)
-    return web.json_response({"ok": True, "count": len(_index or [])})
+    started = _start_bg_build(force=True)
+    return web.json_response({"ok": True, "building": started})
 
 
 async def post_gallery_delete(request):
@@ -1499,3 +1499,154 @@ async def post_gallery_rename(request):
     _rename_state = {"done": False, "updated": 0, "renamed_file": False, "error": None}
     asyncio.create_task(asyncio.to_thread(_do_rename_work, kind, old, new_full, base_old))
     return web.json_response({"ok": True, "async": True, "target": new_full})
+
+
+# ---------------------------------------------------------------------------
+# 实时同步：守护线程专门维护索引，增量对比磁盘与索引，覆盖保存/删除/改 tag 及一切外部改动
+# ---------------------------------------------------------------------------
+_sync_lock = threading.Lock()
+_sync_watcher_started = False
+
+
+def _disk_scan(root):
+    """轻量扫描图库根目录：文件名 -> (size, mtime)。不读 PNG 元数据，毫秒级。"""
+    disk = {}
+    try:
+        with os.scandir(root) as it:
+            for e in it:
+                try:
+                    if e.is_file():
+                        st = e.stat()
+                        disk[e.name] = (st.st_size, int(st.st_mtime))
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return disk
+
+
+def _make_record(rel, full):
+    """按 build_index 同款字段逻辑构造单条索引记录（只处理一张图）。"""
+    st = os.stat(full)
+    texts = png_text.read_png_text(full)
+    model = _extract_zhule_model(texts)
+    loras = _json_list(texts.get("zhule_loras"), "zhule_loras")
+    _pt, _ct, _mt = _backfill_tag_fields(full, texts)
+    tags = _mt + [t for t in (_pt + _ct) if t not in _mt]
+    groups = _tag_groups(load_meta())
+    return {
+        "key": rel,
+        "name": os.path.basename(full),
+        "mtime": int(st.st_mtime),
+        "size": st.st_size,
+        "model": model,
+        "loras": loras,
+        "tags": tags,
+        "hasWF": bool(texts.get("workflow")),
+        "hasPrompt": bool(texts.get("prompt")),
+        "tg": [groups.get(t, "其他") for t in tags],
+    }
+
+
+def _load_index_cache():
+    """从 index.json 加载缓存索引到内存（守护线程惰性启动时用）。"""
+    global _index
+    try:
+        with open(INDEX_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload.get("records"), list) and payload.get("schema") == SCHEMA_VERSION:
+            _index = payload["records"]
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _write_index_cache():
+    """原子写回 index.json（.tmp + os.replace，与 build_index 同款）。"""
+    try:
+        os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
+        payload = {"schema": SCHEMA_VERSION,
+                   "builtAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "count": len(_index), "records": _index}
+        with _rename_lock:
+            tmp = INDEX_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, INDEX_FILE)
+        return True
+    except Exception as e:
+        print(f"[ZhuleGallery] 索引增量写盘失败: {e}")
+        return False
+
+
+def incremental_sync():
+    """增量同步：对比图库磁盘与索引，增删改后原子写回 index.json。
+
+    磁盘有索引无 -> 新增；磁盘无索引有 -> 删除；
+    size/mtime 变化 -> 重读该图元数据更新记录。
+    返回 (added, removed, updated)；无变化返回 None；全量重建进行中返回 None（下一轮再同步）。
+    """
+    global _index
+    if _index_building:
+        return None
+    with _sync_lock:
+        root = _gallery_root()
+        disk = _disk_scan(root)
+        if not disk:
+            return None
+        if _index is None:
+            if not _load_index_cache():
+                return None
+        by_key = {r["key"]: r for r in _index}
+        added, updated = [], []
+        for rel, (size, mtime) in disk.items():
+            rec = by_key.get(rel)
+            if rec is None:
+                full = _safe_full(rel)
+                if full and os.path.isfile(full):
+                    try:
+                        added.append(_make_record(rel, full))
+                    except Exception:
+                        continue
+            elif rec.get("size") != size or rec.get("mtime") != mtime:
+                full = _safe_full(rel)
+                if full and os.path.isfile(full):
+                    try:
+                        updated.append(_make_record(rel, full))
+                    except Exception:
+                        continue
+        removed = [r for r in _index if r["key"] not in disk]
+        if not added and not removed and not updated:
+            return None
+        upd_map = {r["key"]: r for r in updated}
+        new_index = []
+        for r in _index:
+            if r["key"] not in disk:
+                continue
+            new_index.append(upd_map.get(r["key"], r))
+        new_index.extend(added)
+        new_index.sort(key=lambda r: r["mtime"], reverse=True)
+        _index = new_index
+        _write_index_cache()
+        print(f"[ZhuleGallery] 增量同步完成: +{len(added)} -{len(removed)} ~{len(updated)}")
+        return len(added), len(removed), len(updated)
+
+
+def start_index_sync_watcher(interval=3.0):
+    """启动后台守护线程：定时增量同步磁盘与索引，覆盖一切针对图库文件夹的操作。"""
+    global _sync_watcher_started
+    if _sync_watcher_started:
+        return
+    _sync_watcher_started = True
+
+    def _loop():
+        while True:
+            try:
+                incremental_sync()
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    threading.Thread(target=_loop, daemon=True, name="zhule-index-sync").start()
+    print(f"[ZhuleGallery] 索引实时同步守护已启动 interval={interval}s")

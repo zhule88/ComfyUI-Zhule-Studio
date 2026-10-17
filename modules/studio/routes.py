@@ -1,9 +1,39 @@
 """Zhule Studio 路由注册：词库 API + 图库 API + Studio 页面静态服务。"""
+import asyncio
+
 from ..common.routes import get_prompt_routes
 from . import api
 from . import gallery
 from . import images_gen
 from . import state_store
+
+# 启动期不再执行重活：images.txt 生成与孤儿状态清理改为首次访问对应接口时懒触发一次
+_images_gen_done = False
+_cleanup_done = False
+
+
+async def _maybe_generate_images_txt():
+    """首次访问词库接口时触发一次参考图生成（后台线程，不阻塞请求）。"""
+    global _images_gen_done
+    if _images_gen_done:
+        return
+    _images_gen_done = True
+    try:
+        await asyncio.to_thread(images_gen.generate_images_txt)
+    except Exception as e:
+        print(f"[Zhule] 参考图自动生成失败: {e}")
+
+
+async def _maybe_startup_cleanup():
+    """首次访问状态接口时触发一次孤儿状态文件清理（后台线程）。"""
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+    try:
+        await asyncio.to_thread(state_store.startup_cleanup)
+    except Exception:
+        pass
 
 
 def register_routes():
@@ -11,20 +41,19 @@ def register_routes():
     if routes is None:
         return
 
-    # 启动兜底清理：删无工作流引用且超保护期的孤儿状态文件
-    try:
-        state_store.startup_cleanup()
-    except Exception:
-        pass
-
-    # 启动自动生成词库参考图 images.txt（失败不影响插件启动）
-    try:
-        images_gen.generate_images_txt()
-    except Exception as e:
-        print(f"[Zhule] 参考图自动生成失败: {e}")
+    # 启动实时同步守护线程：定时增量对比图库磁盘与索引（保存/删除/改 tag 及外部改动全覆盖）
+    gallery.start_index_sync_watcher()
 
     # API 路由必须先注册：aiohttp 按注册顺序匹配，避免被下方 catch-all 吞掉
-    routes.get("/zhule_studio/api/wordbank")(api.get_wordbank)
+    async def _wordbank(request):
+        await _maybe_generate_images_txt()
+        return await api.get_wordbank(request)
+
+    async def _state_list(request):
+        await _maybe_startup_cleanup()
+        return await api.get_state_list(request)
+
+    routes.get("/zhule_studio/api/wordbank")(_wordbank)
     routes.get("/zhule_studio/api/image")(api.get_image)
     routes.post("/zhule_studio/api/rename")(api.post_rename)
     routes.post("/zhule_studio/api/wordbank/delete")(api.post_wordbank_delete)
@@ -55,7 +84,7 @@ def register_routes():
     # 状态落盘：网页选词变化 → 存本地文件；节点执行时按ID读取
     routes.post("/zhule_state/save")(api.post_state_save)
     routes.post("/zhule_state/delete")(api.post_state_delete)
-    routes.get("/zhule_state/list")(api.get_state_list)
+    routes.get("/zhule_state/list")(_state_list)
 
     # Studio 页面与静态资源
     routes.get("/zhule_studio")(api.get_index)

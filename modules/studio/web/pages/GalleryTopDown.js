@@ -89,7 +89,7 @@ const OutNode = {
   template: `
     <div class="zhg-out-wrap" :class="{ open: expanded }">
       <span class="zhg-sel-tag" v-if="!expanded" :class="{ on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }" :style="chipStyle()"
-            :title="(isActive(node.name) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（移除） / 右键展开收起'"
+            :data-tip="(isActive(node.name) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
         {{ node.name }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
       </span>
@@ -161,36 +161,35 @@ export default {
   <div class="page active gallery-page gallery-td-page">
     <div class="zhg-toolbar">
       <input class="zhg-search" v-model="filters.q" placeholder="搜索文件名 / 模型 / 标签…" @keyup="onSearchKeyup">
-      <div class="zhg-sort-box" title="按时间排序">
+      <div class="zhg-sort-box" data-tip="按时间排序">
         <button class="zhg-sort-arrow" @click="toggleSortDir"
-                :title="filters.sortDir === 'desc' ? '按时间倒序（新→旧），点击切换升序' : '按时间正序（旧→新），点击切换降序'">{{ filters.sortDir === 'desc' ? '▾' : '▴' }}</button>
+                :data-tip="filters.sortDir === 'desc' ? '按时间倒序（新→旧），点击切换升序' : '按时间正序（旧→新），点击切换降序'">{{ filters.sortDir === 'desc' ? '▾' : '▴' }}</button>
       </div>
-      <button class="btn zhg-layout-btn" :title="isTopDown ? '切换到左右布局' : '切换到上下布局'" @click="toggleLayout">⧉</button>
-      <button class="btn" @click="rescan" title="重新扫描 output 目录并重建索引">🔄 刷新索引</button>
+      <button class="btn zhg-layout-btn" :data-tip="isTopDown ? '切换到左右布局' : '切换到上下布局'" @click="toggleLayout">⧉</button>
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              title="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
+              data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              title="把选中的图片以硬链接方式导出到 zhule_link（同卷零拷贝，每次自动新建独立子文件夹）" @click="batchLink">🔗</button>
-      <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :title="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
+              data-tip="把选中的图片以硬链接方式导出到 zhule_link（同卷零拷贝，每次自动新建独立子文件夹）" @click="batchLink">🔗</button>
+      <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
       <span class="zhg-sel-count" v-if="selected.size">已选 <b>{{ selected.size }}</b>
         <a class="zhg-sel-clear" @click="selected.clear()">清除</a></span>
       <span class="zhg-total">共 <b>{{ meta.total }}</b> 张 / 命中 <b>{{ total }}</b></span>
-      <span class="zhg-page-ctl" title="每页显示张数">
+      <span class="zhg-page-ctl" data-tip="每页显示张数">
         <span class="zhg-ctl-ico">☰</span>
-        <button class="zhg-pg-btn" @click="changePageSize(-10)" :disabled="pageSize <= 10" title="每页减少10张">−</button>
+        <button class="zhg-pg-btn" @click="changePageSize(-10)" :disabled="pageSize <= 10" data-tip="每页减少10张">−</button>
         <b class="zhg-pg-val">{{ pageSize }}</b>
-        <button class="zhg-pg-btn" @click="changePageSize(10)" :disabled="pageSize >= 200" title="每页增加10张">＋</button>
+        <button class="zhg-pg-btn" @click="changePageSize(10)" :disabled="pageSize >= 200" data-tip="每页增加10张">＋</button>
       </span>
-      <span class="zhg-grid-ctl" title="每行卡片数">
+      <span class="zhg-grid-ctl" data-tip="每行卡片数">
         <span class="zhg-ctl-ico">⊞</span>
-        <button class="zhg-pg-btn" @click="changeGridCols(-1)" :disabled="gridCols <= 2" title="每行减少1张">−</button>
+        <button class="zhg-pg-btn" @click="changeGridCols(-1)" :disabled="gridCols <= 2" data-tip="每行减少1张">−</button>
         <b class="zhg-pg-val">{{ gridCols }}</b>
-        <button class="zhg-pg-btn" @click="changeGridCols(1)" :disabled="gridCols >= 10" title="每行增加1张">＋</button>
+        <button class="zhg-pg-btn" @click="changeGridCols(1)" :disabled="gridCols >= 10" data-tip="每行增加1张">＋</button>
       </span>
-      <span class="zhg-pager" v-if="total > pageSize" title="第 {{ page }} / {{ totalPages }} 页">
-        <button class="zhg-pg-btn" @click="goPage(page - 1)" :disabled="page <= 1" title="上一页">◀</button>
+      <span class="zhg-pager" v-if="total > pageSize" data-tip="第 {{ page }} / {{ totalPages }} 页">
+        <button class="zhg-pg-btn" @click="goPage(page - 1)" :disabled="page <= 1" data-tip="上一页">◀</button>
         <span class="zhg-pg-info">{{ page }} / {{ totalPages }}</span>
-        <button class="zhg-pg-btn" @click="goPage(page + 1)" :disabled="page >= totalPages" title="下一页">▶</button>
+        <button class="zhg-pg-btn" @click="goPage(page + 1)" :disabled="page >= totalPages" data-tip="下一页">▶</button>
       </span>
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
@@ -208,13 +207,13 @@ export default {
         <div class="zhg-block-body">
           <label class="zhg-opt" v-for="m in meta.models" :key="'m'+m.name">
             <input type="checkbox" :checked="filters.models.includes(m.name)" @change="toggleModel(m.name)">
-            <span class="zhg-opt-name" :title="m.name">{{ fmtModel(m.name) }}</span>
+            <span class="zhg-opt-name" :data-tip="m.name">{{ fmtModel(m.name) }}</span>
             <span class="zhg-opt-count">{{ m.count }}</span>
-            <button class="btn zhg-mini zhg-rename-btn" title="重命名模型，同步所有关联图片" @click.stop.prevent="openRename('model', m.name)">⚙</button>
+            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名模型，同步所有关联图片" @click.stop.prevent="openRename('model', m.name)">⚙</button>
           </label>
           <div class="zhg-none" v-if="!meta.models.length">暂无</div>
         </div>
-        <div class="zhg-block-resize-x" title="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'model')"></div>
+        <div class="zhg-block-resize-x" data-tip="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'model')"></div>
       </div>
 
       <!-- LoRA（可选筛选列） -->
@@ -225,22 +224,22 @@ export default {
         <div class="zhg-block-body">
           <label class="zhg-opt" v-for="l in meta.loras" :key="'l'+l.name">
             <input type="checkbox" :checked="filters.loras.includes(l.name)" @change="toggleLora(l.name)">
-            <span class="zhg-opt-name" :title="l.name">{{ l.name }}</span>
+            <span class="zhg-opt-name" :data-tip="l.name">{{ l.name }}</span>
             <span class="zhg-opt-count">{{ l.count }}</span>
-            <button class="btn zhg-mini zhg-rename-btn" title="重命名 LoRA，同步所有关联图片" @click.stop.prevent="openRename('lora', l.name)">⚙</button>
+            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名 LoRA，同步所有关联图片" @click.stop.prevent="openRename('lora', l.name)">⚙</button>
           </label>
           <div class="zhg-none" v-if="!meta.loras.length">暂无</div>
         </div>
-        <div class="zhg-block-resize-x" title="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'lora')"></div>
+        <div class="zhg-block-resize-x" data-tip="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'lora')"></div>
       </div>
 
       <!-- 标签（层级浏览：齿轮弹大框） -->
       <div class="zhg-td-block" data-name="tag" :style="blockStyle('tag')">
         <div class="zhg-block-head">
           <span class="zhg-block-title">标签 <span class="zhg-badge">{{ visibleTags.length }}</span></span>
-          <button class="zhg-tag-mode-btn" :title="'标签过滤模式：' + (filters.tagMode === 'and' ? '与（AND，满足全部已启用标签）' : '或（OR，满足任一已启用标签）') + '，点击切换'"
+          <button class="zhg-tag-mode-btn" :data-tip="'标签过滤模式：' + (filters.tagMode === 'and' ? '与（AND，满足全部已启用标签）' : '或（OR，满足任一已启用标签）') + '，点击切换'"
                   @click.stop="toggleTagMode()">{{ filters.tagMode === 'and' ? '与' : '或' }}</button>
-          <span class="zhg-tag-gear" title="编辑标签" @click.stop="tagPanelOpen = true">⚙</span>
+          <span class="zhg-tag-gear" data-tip="编辑标签" @click.stop="tagPanelOpen = true">⚙</span>
         </div>
         <div class="zhg-block-body">
           <!-- 外部过滤区：俄罗斯套娃包裹式展开；普通左键点击启用/禁用，Ctrl+左键隐藏（完全移除），普通右键展开/收起，Ctrl+右键展开还原（逐级收起） -->
@@ -250,11 +249,11 @@ export default {
                       @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
           </div>
         </div>
-        <div class="zhg-block-resize-x" title="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'tag')"></div>
+        <div class="zhg-block-resize-x" data-tip="拖拽调整此筛选块宽度" @mousedown.prevent="startBlockDrag($event, 'tag')"></div>
       </div>
     </div>
-    <div class="zhg-td-resize-x" title="拖拽调整筛选区宽度" @mousedown.prevent="startSideDrag($event, 'w')"></div>
-    <div class="zhg-td-resize-y" title="拖拽调整筛选区高度" @mousedown.prevent="startSideDrag($event, 'h')"></div>
+    <div class="zhg-td-resize-x" data-tip="拖拽调整筛选区宽度" @mousedown.prevent="startSideDrag($event, 'w')"></div>
+    <div class="zhg-td-resize-y" data-tip="拖拽调整筛选区高度" @mousedown.prevent="startSideDrag($event, 'h')"></div>
 
     <!-- 下方图片区 -->
     <div class="zhg-td-main" ref="mainEl">
@@ -264,14 +263,14 @@ export default {
              :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)">
           <div class="zhg-thumb-wrap">
             <img class="zhg-thumb" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
-            <button class="zhg-del-btn" title="删除图片" @click.stop="askDelete(it)">✕</button>
-            <button class="zhg-zoom-btn" title="全屏查看" @click.stop="zoomView(imgUrl(it.key, it.mtime))">🔍</button>
+            <button class="zhg-del-btn" data-tip="删除图片" @click.stop="askDelete(it)">✕</button>
+            <button class="zhg-zoom-btn" data-tip="全屏查看" @click.stop="zoomView(imgUrl(it.key, it.mtime))">🔍</button>
             <span class="zhg-sel-badge" v-if="isSel(it.key)">✓</span>
           </div>
           <div class="zhg-card-info">
-            <div class="zhg-card-name" v-if="pref.gallery.showName" :title="it.name">{{ it.name }}</div>
+            <div class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ it.name }}</div>
             <div class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</div>
-            <div class="zhg-card-model" v-if="pref.gallery.showModel && it.model" :title="it.model">{{ fmtModel(it.model) }}</div>
+            <div class="zhg-card-model" v-if="pref.gallery.showModel && it.model" :data-tip="it.model">{{ fmtModel(it.model) }}</div>
             <div class="zhg-card-tags" v-if="pref.gallery.showTags && it.tags && it.tags.length">
               <span class="zhg-card-tag" v-for="t in it.tags.slice(0, 4)" :key="it.key+t">{{ t }}</span>
               <span class="zhg-card-tag-more" v-if="it.tags.length > 4">+{{ it.tags.length - 4 }}</span>
@@ -297,7 +296,7 @@ export default {
           <div class="zhg-modal-left">
             <img class="zhg-modal-img" :src="imgUrl(detail.path, detail.mtime)" :alt="detail.name" @click="zoomView(imgUrl(detail.path, detail.mtime))">
             <div class="zhg-modal-actions">
-              <button class="btn primary" :disabled="!detail.hasWF" @click="useWorkflow(detail)" :title="detail.hasWF ? '跳转 ComfyUI 并导入该图工作流' : '该图片没有保存 workflow 元数据'">
+              <button class="btn primary" :disabled="!detail.hasWF" @click="useWorkflow(detail)" :data-tip="detail.hasWF ? '跳转 ComfyUI 并导入该图工作流' : '该图片没有保存 workflow 元数据'">
                 ⚡ 在 ComfyUI 中使用工作流
               </button>
             </div>
@@ -307,7 +306,7 @@ export default {
             <div class="zhg-detail-row"><span class="zhg-detail-k">时间</span><span class="zhg-detail-v">{{ fmtTime(detail.mtime) }}</span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">大小</span><span class="zhg-detail-v">{{ fmtSize(detail.size) }}</span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">模型</span>
-              <span class="zhg-detail-v" :title="detail.model || ''">{{ detail.model ? fmtModel(detail.model) : '—' }}</span></div>
+              <span class="zhg-detail-v" :data-tip="detail.model || ''">{{ detail.model ? fmtModel(detail.model) : '—' }}</span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">LoRA</span>
               <div class="zhg-detail-v zhg-detail-tags">
                 <span class="zhg-lora" v-for="l in detail.loras" :key="'dl'+l">{{ l }}</span>
@@ -321,7 +320,7 @@ export default {
                   <span class="zhg-tag" :class="{ on: !t.prompt && !t.custom, readonly: t.prompt || t.custom, 'hl-prompt': t.prompt, 'hl-custom': t.custom }"
                         :style="tagStyle(t)"
                         v-for="t in uniqueDetailTags" :key="'dt'+t.name"
-                        :title="(t.prompt || t.custom) ? '来自提示词/工作流（只读）' : ''">
+                        :data-tip="(t.prompt || t.custom) ? '来自提示词/工作流（只读）' : ''">
                     {{ t.name }}<span v-if="!t.prompt && !t.custom" class="zhg-tag-del" @click.stop="removeTagFromImage(t.name)"> ✕</span>
                   </span>
                   <span v-if="!uniqueDetailTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
@@ -387,7 +386,12 @@ export default {
       </div>
     </div>
 
-    <div class="zhg-toast" v-if="toast">{{ toast }}</div>
+    <transition name="toast">
+      <div v-if="toast" class="zhg-toast" :class="'toast-' + toastType" @click="toast = ''">
+        <span class="zhg-toast-icon">{{ toastIcon[toastType] }}</span>
+        <span class="zhg-toast-msg">{{ toast }}</span>
+      </div>
+    </transition>
   </div>
   `,
 
@@ -404,6 +408,10 @@ export default {
       if (oldModel !== pref.gallery.showModelFilter || oldLora !== pref.gallery.showLoraFilter) {
         nextTick(normalizeBlockWidths);
       }
+    }
+    function onRebuilt() {
+      loadMeta();
+      applyFilter();
     }
     const filters = reactive({ q: '', sortField: 'time', sortDir: 'desc', tags: [], models: [], loras: [], tagMode: 'and' });
     const meta = reactive({ tags: [], models: [], loras: [], total: 0 });
@@ -588,7 +596,7 @@ export default {
         allLoaded.value = items.value.length >= d.total;
         if (d.builtAt && d.builtAt) dirty.value = false;
       } catch (e) {
-        showToast('加载失败');
+        showToast('加载失败', 'error');
       } finally {
         loading.value = false;
       }
@@ -603,11 +611,14 @@ export default {
       width: side.w > 0 ? side.w + 'px' : '',
       height: side.h > 0 ? side.h + 'px' : '',
     }));
+    // 筛选区高度上限：不超过视口高度的 60%，避免过滤区占满屏幕把图片区挤出视口
+    const sideMaxH = () => Math.max(240, Math.round(window.innerHeight * 0.6));
     function loadSidePref() {
       try {
         const raw = JSON.parse(localStorage.getItem('zhule_gallery_side') || '{}');
         if (raw.w > 300 && raw.w < 2400) side.w = raw.w;
-        if (raw.h > 120 && raw.h < 900) side.h = raw.h;
+        const maxH = sideMaxH();
+        if (raw.h > 120 && raw.h < maxH) side.h = raw.h;
       } catch (e) { /* ignore */ }
       // 默认给筛选区一个固定基准高度，拖高把手才能按鼠标拉高并让块体随高度伸展
       if (!(side.h > 0)) side.h = 320;
@@ -616,9 +627,10 @@ export default {
     function startSideDrag(e, axis) {
       const startX = e.clientX, startY = e.clientY;
       const startW = side.w, startH = side.h;
+      const maxH = sideMaxH();
       const onMove = (ev) => {
         if (axis === 'w') side.w = Math.max(300, Math.min(2400, startW + ev.clientX - startX));
-        else side.h = Math.max(120, Math.min(900, startH + ev.clientY - startY));
+        else side.h = Math.max(120, Math.min(maxH, startH + ev.clientY - startY));
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -732,6 +744,8 @@ export default {
     const tagInputEl = ref(null);
     let tagBlurTimer = null;
     const toast = ref('');
+    const toastType = ref('info');
+    const toastIcon = { info: '\u2139\ufe0f', success: '\u2705', error: '\u274c', warn: '\u26a0\ufe0f' };
     const delTarget = ref(null);
     const delBatchOpen = ref(false);
     // 重命名模型/LoRA：居中弹框（非浏览器 prompt）
@@ -776,8 +790,9 @@ export default {
     }
 
     let toastTimer = null;
-    function showToast(msg) {
+    function showToast(msg, type = 'info') {
       toast.value = msg;
+      toastType.value = type;
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => (toast.value = ''), 2600);
     }
@@ -845,7 +860,7 @@ export default {
         Object.assign(meta, d);
         if (d.building) startBuildingPoll();
       } catch (e) {
-        showToast('元数据加载失败');
+        showToast('元数据加载失败', 'error');
       }
     }
 
@@ -880,7 +895,7 @@ export default {
         if (d.builtAt && d.builtAt) dirty.value = false;
         if (d.building) startBuildingPoll();
       } catch (e) {
-        showToast('加载失败');
+        showToast('加载失败', 'error');
       } finally {
         loading.value = false;
         loadingMore.value = false;
@@ -939,8 +954,8 @@ export default {
     function cancelRename() { renameOpen.value = false; }
     async function confirmRename() {
       const v = renameNew.value.trim();
-      if (!v) { showToast('新名称不能为空'); return; }
-      if (v === fmtModel(renameOld.value)) { showToast('名称未变化'); return; }
+      if (!v) { showToast('新名称不能为空', 'warn'); return; }
+      if (v === fmtModel(renameOld.value)) { showToast('名称未变化', 'warn'); return; }
       renaming.value = true;
       try {
         const d = await jfetch(API.rename, {
@@ -950,11 +965,11 @@ export default {
         });
         if (!d.ok) throw new Error(d.error || '改名失败');
         renameOpen.value = false;
-        showToast('已提交后台重命名，正在批量更新所有引用该' + (renameKind.value === 'model' ? '模型' : 'LoRA') + '的图片元数据');
+        showToast('已提交后台重命名，正在批量更新所有引用该' + (renameKind.value === 'model' ? '模型' : 'LoRA') + '的图片元数据', 'success');
         await loadMeta();
         applyFilter();
       } catch (e) {
-        showToast('改名失败：' + (e.message || ''));
+        showToast('改名失败：' + (e.message || ''), 'error');
       } finally {
         renaming.value = false;
       }
@@ -970,7 +985,7 @@ export default {
           if (!m.building) {
             clearInterval(buildingTimer);
             buildingTimer = null;
-            showToast('索引已重建：' + (m.total || 0) + ' 张');
+            showToast('索引已重建：' + (m.total || 0) + ' 张', 'success');
             await loadMeta();
             applyFilter();
           }
@@ -987,7 +1002,7 @@ export default {
         startBuildingPoll();
         void d;
       } catch (e) {
-        showToast('重建失败');
+        showToast('重建失败', 'error');
       }
     }
 
@@ -1031,7 +1046,7 @@ export default {
         quickTag.value = '';
         tagInputing.value = false;
       } catch (e) {
-        showToast('详情加载失败');
+        showToast('详情加载失败', 'error');
       }
     }
 
@@ -1061,16 +1076,16 @@ export default {
         const i = items.value.findIndex((x) => x.key === item.key);
         if (i >= 0) items.value.splice(i, 1);
         total.value = Math.max(0, total.value - 1);
-        showToast('已删除：' + item.name);
+        showToast('已删除：' + item.name, 'success');
         await loadMeta();
         if (!items.value.length && hasFilter.value) applyFilter();
       } catch (e) {
-        showToast('删除失败：' + (e.message || ''));
+        showToast('删除失败：' + (e.message || ''), 'error');
       }
     }
 
     function askBatchDelete() {
-      if (!selected.size) { showToast('请先框选或 Ctrl+点击 选中要删除的图片'); return; }
+      if (!selected.size) { showToast('请先框选或 Ctrl+点击 选中要删除的图片', 'warn'); return; }
       delBatchOpen.value = true;
     }
     function cancelBatchDelete() { delBatchOpen.value = false; }
@@ -1101,13 +1116,13 @@ export default {
         await loadMeta();
         if (!items.value.length && hasFilter.value) applyFilter();
       } catch (e) {
-        showToast('批量删除失败：' + (e.message || ''));
+        showToast('批量删除失败：' + (e.message || ''), 'error');
       }
     }
 
     async function batchLink() {
       const keys = [...selected];
-      if (!keys.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片'); return; }
+      if (!keys.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片', 'warn'); return; }
       const paths = [];
       for (const k of keys) {
         const item = items.value.find((x) => x.key === k);
@@ -1125,7 +1140,7 @@ export default {
           ? `已导出 ${d.count} 张（硬链接 ${d.created.length}${cop}） -> ${d.target}`
           : '没有可导出的图片');
       } catch (e) {
-        showToast('批量导出失败：' + (e.message || ''));
+        showToast('批量导出失败：' + (e.message || ''), 'error');
       }
     }
 
@@ -1158,7 +1173,7 @@ export default {
         }
         await loadMeta();
       } catch (e) {
-        showToast('保存失败');
+        showToast('保存失败', 'error');
       }
     }
 
@@ -1179,21 +1194,21 @@ export default {
         const res = await fetch(API.workflow + '?path=' + encodeURIComponent(item.path));
         if (!res.ok) {
           const e = await res.json().catch(() => ({}));
-          showToast(e.error || '没有可用工作流');
+          showToast(e.error || '没有可用工作流', e.error ? 'error' : 'warn');
           return;
         }
         const wf = await res.text();
         try {
           JSON.parse(wf);
         } catch (e) {
-          showToast('工作流数据异常');
+          showToast('工作流数据异常', 'error');
           return;
         }
         localStorage.setItem('zhule_import_workflow', wf);
         showToast('正在新标签页打开 ComfyUI 导入工作流…');
         setTimeout(() => { window.open('/', '_blank'); }, 400);
       } catch (e) {
-        showToast('工作流获取失败');
+        showToast('工作流获取失败', 'error');
       }
     }
 
@@ -1210,6 +1225,7 @@ export default {
 
     onMounted(() => {
       window.addEventListener('zhule-pref-changed', onPrefChanged);
+      window.addEventListener('zhule-gallery-rebuilt', onRebuilt);
       // 初始按容器宽收敛各筛选块总宽，避免 localStorage 中三块宽度合计超出容器宽
       nextTick(normalizeBlockWidths);
       // 支持从词库"进入详情页"跳转携带 tags 过滤条件（单选互斥：取首个）
@@ -1227,6 +1243,7 @@ export default {
     });
     onBeforeUnmount(() => {
       window.removeEventListener('zhule-pref-changed', onPrefChanged);
+      window.removeEventListener('zhule-gallery-rebuilt', onRebuilt);
       document.removeEventListener('visibilitychange', onVisibility);
       if (fullViewer) fullViewer.close();
       clearTimeout(toastTimer);
@@ -1234,7 +1251,7 @@ export default {
 
     return {
       pref, filters, meta, items, total, page, pageSize, totalPages, loading, loadingMore, allLoaded,
-      dirty, tagPanelOpen, detail, quickTag, toast, delTarget,
+      dirty, tagPanelOpen, detail, quickTag, toast, toastType, toastIcon, delTarget,
       mainEl, gridEl, hasFilter, uniqueDetailTags,
       thumbUrl, imgUrl,
       fmtTime, fmtSize, fmtModel, isTopDown, toggleLayout, setSortField, toggleSortDir, applyFilter, changePageSize, goPage, onScroll, removeTag, onSearchKeyup, onTagKeyup,

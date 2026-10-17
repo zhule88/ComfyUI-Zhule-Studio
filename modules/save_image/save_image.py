@@ -258,7 +258,7 @@ class ZhuleSaveImage:
             "optional": {
                 "自定义标签": ("STRING", {
                     "multiline": True,
-                    "default": "[]",
+                    "default": "",
                     "placeholder": "填写 JSON 数组字符串，如 [\"tag1\", \"tag2\"]",
                 }),
                 "自定义模型": ("STRING", {
@@ -302,7 +302,7 @@ class ZhuleSaveImage:
                     seq = max(seq, int(base[prefix_len:]))
         return seq + 1
 
-    def save(self, 图像, 自定义标签="[]", 自定义模型="", 自定义lora="",
+    def save(self, 图像, 自定义标签="", 自定义模型="", 自定义lora="",
              prompt=None, extra_pnginfo=None, unique_id=None, **kwargs):
         manual_model = str(自定义模型 or "").strip()
         manual_loras_raw = 自定义lora
@@ -355,6 +355,8 @@ class ZhuleSaveImage:
                   f"loras={loras or '-'} prompt_tags={prompt_tags_list or '-'} "
                   f"tags={custom_tags or '-'}")
         print(f"[ZhuleSaveImage] 共保存 {len(图像)} 张 -> {output_dir}")
+        # 索引统一由 studio 守护线程维护（见 gallery.start_index_sync_watcher），
+        # save() 只负责写文件与元数据，不再耦合索引同步。
         return {}
 
 

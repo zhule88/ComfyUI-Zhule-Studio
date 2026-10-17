@@ -81,8 +81,8 @@ class ZhuleStudio:
             return None
         return [s for s in selected if isinstance(s, dict) and s.get("content")]
 
-    def encode(self, clip, bind_id="", 前置提示词="", 负面提示词="", _selected="[]"):
-        remote = self._load_state_selected(bind_id)
+    def encode(self, clip, ID="", 前置提示词="", 负面提示词="", _selected="[]"):
+        remote = self._load_state_selected(ID)
         if remote is not None:
             # 网页有保存记录（含清空）→ 以它为准；None 表示无文件才退回 widget _selected
             items = remote

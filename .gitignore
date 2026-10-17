@@ -5,3 +5,6 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# 本地提示词库参考图清单（含本地路径，仅本机使用，不上传）
+prompt/**/images.txt

@@ -75,8 +75,43 @@ const App = {
       } catch (e) { /* ignore */ }
       window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { autoSelectParent: v } }));
     }
+    // 数据库重建：仅设置页保留入口，正常使用不需要触发
+    const rebuilding = ref(false);
+    const rebuildNotice = ref('');
+    function rebuildDB() {
+      if (rebuilding.value) return;
+      rebuilding.value = true;
+      rebuildNotice.value = '正在重建索引，请耐心等待…';
+      fetch('/zhule_studio/api/gallery/rescan', { method: 'POST' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d || d.ok === false) {
+            rebuildNotice.value = '重建失败，请查看后端日志';
+            rebuilding.value = false;
+            return;
+          }
+          const timer = setInterval(() => {
+            fetch('/zhule_studio/api/gallery/meta')
+              .then((r) => r.json())
+              .then((m) => {
+                if (!m.building) {
+                  clearInterval(timer);
+                  rebuilding.value = false;
+                  rebuildNotice.value = '图库已重建完成（' + (m.total != null ? m.total + ' 张' : '') + '）';
+                  window.dispatchEvent(new CustomEvent('zhule-gallery-rebuilt'));
+                  setTimeout(() => { rebuildNotice.value = ''; }, 6000);
+                }
+              })
+              .catch(() => { /* 单次轮询失败忽略，下轮再试 */ });
+          }, 2000);
+        })
+        .catch(() => {
+          rebuildNotice.value = '重建失败：无法连接后端接口';
+          rebuilding.value = false;
+        });
+    }
     return { showSettings, pref, TIME_FMTS, toggleField, setTimeFmt, setTagColor,
-      wordbankAutoParent, toggleWordbankAutoParent };
+      wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB };
   },
   computed: {
     bindQuery() {
@@ -102,7 +137,7 @@ const App = {
           <router-link :to="{ path: '/wordbank', query: bindQuery }" class="nav-tab" active-class="active">词库</router-link>
           <router-link :to="galleryLink" class="nav-tab" active-class="active">图库</router-link>
         </div>
-        <button class="nav-gear" title="设置" @click="showSettings = true">
+        <button class="nav-gear" data-tip="设置" @click="showSettings = true">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -166,6 +201,14 @@ const App = {
                          @input="setTagColor('customTagColor', $event.target.value)">
                 </div>
                 <div class="settings-hint">高亮色即时生效，仅作用于图库详情的只读标签（提示词 / 工作流来源）。</div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-group-title">数据库</div>
+                <div class="settings-row">
+                  <button class="settings-danger-btn" :disabled="rebuilding" @click="rebuildDB">重建图库</button>
+                </div>
+                <div class="settings-hint rebuild-hint" :data-tip="'仅在图片索引异常时才需要重建，例如新增图片未显示、信息过期或索引文件损坏。系统正常运行时会自动维护索引，正常情况请勿点击。重建需重新扫描全部图片元数据，耗时数分钟，期间图库列表暂时不可用。'">⚠️ 正常情况用不到，请勿随意点击。</div>
+                <div class="settings-hint" v-if="rebuildNotice">{{ rebuildNotice }}</div>
               </div>
             </template>
             <template v-if="isWordbank">

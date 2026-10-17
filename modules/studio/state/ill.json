@@ -1,19 +1,19 @@
 {
   "bindId": "ill",
-  "savedAt": "2026-10-17 00:56:39",
+  "savedAt": "2026-10-17 22:50:34",
   "data": {
     "selected": [
-      {
-        "tab": "03_身材",
-        "relPath": "03_身材/04_熟女体型/03_熟女体型，丰腴但不臃肿，风韵犹存，成熟魅力",
-        "name": "熟女体型，丰腴但不臃肿，风韵犹存，成熟魅力",
-        "content": "milf, plump but not bloated, mature, full figured, soft curves, ripe"
-      },
       {
         "tab": "01_角色",
         "relPath": "01_角色/01_原神/02_璃月/01_胡桃",
         "name": "胡桃",
         "content": "1girl, solo, hu tao, genshin impact, red eyes, flower shaped pupils, dark brown hair, long hair, twintails"
+      },
+      {
+        "tab": "08_主题",
+        "relPath": "08_主题/05_异世界/06_圣骑士/02_服饰/07_圣骑士仪仗长袍",
+        "name": "圣骑士仪仗长袍",
+        "content": "paladin ceremonial tabard, white linen, silver trim, cross medallion, wide sash, hooded back, shield, sworn"
       }
     ]
   }

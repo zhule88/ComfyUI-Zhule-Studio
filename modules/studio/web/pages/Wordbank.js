@@ -22,7 +22,7 @@ export default {
           </div>
           <button class="btn" @click="singleRandom">🎲</button>
           <button class="btn" :class="{active: data.randomMode}" @click="toggleRandomMode">🔄</button>
-          <button class="btn icon-btn" @click="clearRandomPools" title="清空随机池">🗑</button>
+          <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空随机池">🗑</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
@@ -30,12 +30,12 @@ export default {
             <button class="col-btn" @click="changeColumns(1)">+</button>
           </div>
           <button class="btn" @click="saveBankOrder" :disabled="bankSaving"
-                  title="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
-          <button class="btn" @click="load(true)" title="强制重新扫描词库目录">⟳ 刷新词库</button>
+                  data-tip="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
+          <button class="btn" @click="load(true)" data-tip="强制重新扫描词库目录">⟳ 刷新词库</button>
         </div>
 
         <div class="tabs">
-          <button class="tab-add" title="新增分类" @click="openAddTab">＋</button>
+          <button class="tab-add" data-tip="新增分类" @click="openAddTab">＋</button>
           <div v-for="name in tabs" :key="name"
                class="tab"
                :class="{active: data.activeTab === name, 'in-pool': isTabInPool(name), 'has-selected': tabHasSelected(name)}"
@@ -52,7 +52,7 @@ export default {
           <div class="chips-head">
             <span class="chips-title">筛选分类</span>
             <button class="chips-toggle" @click="toggleChips"
-                    :title="chipsCollapsed ? '展开分类区' : '收起分类区'">
+                    :data-tip="chipsCollapsed ? '展开分类区' : '收起分类区'">
               {{ chipsCollapsed ? '⏷ 展开' : '⏶ 收起' }}
             </button>
             <span class="chips-count">数量 {{ filteredFiles.length }}</span>
@@ -60,7 +60,7 @@ export default {
           <div class="chips-container" :style="{ height: chipsHeightCss }">
             <div v-for="(line, depth) in chipLines" :key="depth" class="chips-line">
               <div class="chip-add-slot">
-                <button v-show="canAddChip(depth)" class="chip-add" :title="'在「' + (depth > 0 ? chipParentLabel(depth) : tabLabel(data.activeTab)) + '」下新增分类'" @click="openAddChip(depth)">＋</button>
+                <button v-show="canAddChip(depth)" class="chip-add" :data-tip="'在「' + (depth > 0 ? chipParentLabel(depth) : tabLabel(data.activeTab)) + '」下新增分类'" @click="openAddChip(depth)">＋</button>
               </div>
               <div v-if="line.length" class="chip clear" :class="{active: !getSelections()[depth].length}"
                    @click="clearChip(depth)">全部</div>
@@ -76,13 +76,13 @@ export default {
                    @dragend="onChipDragEnd">{{ dispKey(name) }}</div>
             </div>
           </div>
-          <div v-show="!chipsCollapsed" class="chips-resize" title="拖拽调整高度"
+          <div v-show="!chipsCollapsed" class="chips-resize" data-tip="拖拽调整高度"
                @pointerdown="onChipsResizeDown"></div>
         </div>
 
         <div class="main">
           <div class="grid" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }">
-            <div v-if="canAddCard" class="card card-add" title="在「{{ addCardParentLabel }}」下新增词条"
+            <div v-if="canAddCard" class="card card-add" data-tip="在「{{ addCardParentLabel }}」下新增词条"
                  @click="openAddCard">＋</div>
             <div v-if="!filteredFiles.length && !canAddCard" class="empty">没有匹配的提示词</div>
             <div v-for="file in visibleFiles" :key="file.relPath"
@@ -110,9 +110,9 @@ export default {
                   <div class="thumb-count" v-if="file.images && file.images.length">
                     {{ getImgIdx(file) + 1 }}/{{ file.images.length }}
                   </div>
-                  <div class="thumb-img-del" title="删除图片 / 取消作为参考图" @pointerdown.stop @click.stop="askImgAction(file)">✕</div>
-                  <div class="thumb-enter" title="进入详情页" @click.stop="goToGallery(file)">→</div>
-                  <div class="thumb-zoom" title="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
+                  <div class="thumb-img-del" data-tip="删除图片 / 取消作为参考图" @pointerdown.stop @click.stop="askImgAction(file)">✕</div>
+                  <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
+                  <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
                   <div class="thumb-nav" @pointerdown.stop v-if="file.images && file.images.length > 1">
                     <button @click.stop="prevImage(file)">‹</button>
                     <button class="dice" @click.stop="randomImage(file)">🎲</button>
@@ -121,18 +121,18 @@ export default {
                 </div>
                 <div class="card-name-row">
                   <span class="card-name">{{ file.name }}</span>
-                  <button class="card-img-btn" title="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
-                  <button class="card-edit" title="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
-                  <button class="card-del-btn" title="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+                  <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
+                  <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
+                  <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
                 </div>
               </template>
               <template v-else>
                 <div class="file-name-row">
                   <div class="card-title">{{ file.name }}</div>
-                  <button class="card-img-btn" title="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
-                  <button class="card-edit file-zoom" title="放大预览" @pointerdown.stop @click.stop="openFileDetail(file)">🔍</button>
-                  <button class="card-edit" title="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
-                  <button class="card-del-btn" title="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+                  <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
+                  <button class="card-edit file-zoom" data-tip="放大预览" @pointerdown.stop @click.stop="openFileDetail(file)">🔍</button>
+                  <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
+                  <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
                 </div>
                 <div class="card-body">{{ displayContent(file) }}</div>
               </template>
@@ -155,7 +155,7 @@ export default {
             <span style="color:var(--text-3);font-size:11px;">右键 tab 或 chip 加入随机池 ♻ ｜ 拖动 tab / chip / 已选标签排序</span>
             <div class="header-actions">
               <button class="btn" style="padding:4px 10px;font-size:12px;"
-                      :title="selectedCollapsed ? '展开已选区' : '收起已选区'"
+                      :data-tip="selectedCollapsed ? '展开已选区' : '收起已选区'"
                       @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开' : '⏶ 收起' }}</button>
               <button class="btn danger" style="padding:4px 10px;font-size:12px;"
                       @click="clearAll">清空</button>
@@ -168,7 +168,7 @@ export default {
                        @blur="fixCount">
                 <button class="count-btn" @click="changeCount(1)">+</button>
               </div>
-              <button class="btn primary" @click="runGenerate" title="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
+              <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
             </div>
           </div>
           <div class="selected-list" v-show="!selectedCollapsed"
@@ -337,12 +337,12 @@ export default {
         <div class="viewer-dialog">
           <div class="viewer-head">
             <span class="viewer-title">{{ viewer.file.name }}</span>
-            <button class="btn icon-btn" @click="closeViewer" title="关闭">✕</button>
+            <button class="btn icon-btn" @click="closeViewer" data-tip="关闭">✕</button>
           </div>
           <div v-if="viewer.file.images && viewer.file.images.length" class="viewer-media">
             <img :src="imageUrl(viewer.file.images[viewer.idx])" :alt="viewer.file.name"
                  @dblclick="zoomView(imageUrl(viewer.file.images[viewer.idx]))"
-                 title="双击全屏缩放查看">
+                 data-tip="双击全屏缩放查看">
             <div class="viewer-nav" v-if="viewer.file.images.length > 1">
               <button @click="viewerPrev">‹</button>
               <span class="viewer-count">{{ viewer.idx + 1 }}/{{ viewer.file.images.length }}</span>
@@ -1127,7 +1127,13 @@ export default {
       const files = bankData.value[data.activeTab] || [];
       const sel = data.selections[data.activeTab] || [];
       const lines = [];
-      for (let depth = 0; depth < maxDepth.value; depth++) {
+      // 循环上限 = 词条最大层级 与 选中链深度+2 取大：选中 depth d 的空分类时需渲染 d+1 层，提供「＋」/「全部」以继续创建子分类
+      let maxSelDepth = -1;
+      for (let i = 0; i < (sel || []).length; i++) {
+        if (Array.isArray(sel[i]) && sel[i].length) maxSelDepth = i;
+      }
+      const loopDepth = Math.max(maxDepth.value, maxSelDepth + 2);
+      for (let depth = 0; depth < loopDepth; depth++) {
         const filtered = files.filter(f => {
           for (let i = 0; i < depth; i++) {
             const picks = sel[i];
@@ -1156,7 +1162,14 @@ export default {
         // 合并刚创建、尚未落盘为词条的空小类（避免空目录被后端扫描忽略而不可见）
         const pending = pendingChips.value.filter(p => p.depth === depth);
         pending.forEach(p => { if (!options.includes(p.key)) options.push(p.key); });
-        if (!options.length) break;
+        if (!options.length) {
+          // 空层：仅当上层有明确选中的父分类时保留占位行（渲染「＋」与「全部」），否则终止后续层
+          if (depth > 0 && chipParentPath(depth)) {
+            lines.push([]);
+            continue;
+          }
+          break;
+        }
         lines.push(options);
       }
       return lines;
