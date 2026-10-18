@@ -1,7 +1,0 @@
-zhule_img/zhule_0009.png
-zhule_img/zhule_0010.png
-zhule_img/zhule_0012.png
-zhule_img/zhule_0013.png
-zhule_img/zhule_0014.png
-zhule_img/zhule_0015.png
-zhule_img/zhule_0017.png
