@@ -1,6 +1,6 @@
-"""ZhuleSaveImage v3：固定保存到 output/zhule_img/。
+"""ZhuleSaveImage v3：固定保存到 output/zhule_studio/zhule_img/。
 
-- 保存位置固定 output/zhule_img/，文件名 zhule_0001.png 起按全局序号递增
+- 保存位置固定 output/zhule_studio/zhule_img/，文件名 zhule_0001.png 起按全局序号递增
 - 元数据写入：
   * prompt / workflow：拖回画布还原工作流
   * zhule_model：优先取输入「自定义模型」，为空时从 prompt 提取主模型；写入前统一去扩展名后缀
@@ -307,7 +307,7 @@ class ZhuleSaveImage:
         manual_model = str(自定义模型 or "").strip()
         manual_loras_raw = 自定义lora
         output_dir = os.path.join(
-            folder_paths.get_output_directory(), OUTPUT_SUBDIR)
+            folder_paths.get_output_directory(), "zhule_studio", OUTPUT_SUBDIR)
         os.makedirs(output_dir, exist_ok=True)
 
         seq = self._next_seq(output_dir)

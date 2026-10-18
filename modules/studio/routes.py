@@ -4,24 +4,10 @@ import asyncio
 from ..common.routes import get_prompt_routes
 from . import api
 from . import gallery
-from . import images_gen
 from . import state_store
 
-# 启动期不再执行重活：images.txt 生成与孤儿状态清理改为首次访问对应接口时懒触发一次
-_images_gen_done = False
+# 启动期不再执行重活：孤儿状态清理改为首次访问对应接口时懒触发一次
 _cleanup_done = False
-
-
-async def _maybe_generate_images_txt():
-    """首次访问词库接口时触发一次参考图生成（后台线程，不阻塞请求）。"""
-    global _images_gen_done
-    if _images_gen_done:
-        return
-    _images_gen_done = True
-    try:
-        await asyncio.to_thread(images_gen.generate_images_txt)
-    except Exception as e:
-        print(f"[Zhule] 参考图自动生成失败: {e}")
 
 
 async def _maybe_startup_cleanup():
@@ -46,7 +32,6 @@ def register_routes():
 
     # API 路由必须先注册：aiohttp 按注册顺序匹配，避免被下方 catch-all 吞掉
     async def _wordbank(request):
-        await _maybe_generate_images_txt()
         return await api.get_wordbank(request)
 
     async def _state_list(request):

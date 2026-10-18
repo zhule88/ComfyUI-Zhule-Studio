@@ -140,15 +140,26 @@ def _bank_rel(folder):
 
 
 def _card_images(folder):
-    """同级目录图片（与 prompt.txt 同级）优先；其次 images.txt（相对 output/）；最后父目录图片（角色立绘）。"""
+    """词条卡片参考图数据源（按优先级）：
+
+    1. 词条目录内本地上传图片（与 prompt.txt 同级，优先展示）；
+    2. 图库 index 反查：以卡片标识名（目录名去数字前缀）匹配图库 tags，
+       返回带 zhule_img/ 前缀的相对 output 路径（数据源为内存 index，守护线程维护正确性）；
+    3. 父目录图片（角色立绘，仅 Tab 之下的中间层）。
+
+    images.txt 中间产物已停用，不再读取/生成。
+    """
     local = _list_images(folder)
     if local:
         rel = _bank_rel(folder)
         return [rel + "/" + f for f in local]
 
-    lines = _read_lines(os.path.join(folder, IMAGES_FILE))
-    if lines:
-        return lines
+    name = parse_folder(os.path.basename(folder))[1]
+    if name:
+        from .gallery import get_tag_ref_index  # 延迟导入避免循环依赖
+        refs = get_tag_ref_index().get(name)
+        if refs:
+            return refs
 
     parent = os.path.dirname(folder)
     parent_rel = _bank_rel(parent)
@@ -348,9 +359,14 @@ async def get_wordbank(request):
 
 
 async def get_image(request):
-    """先按相对 output/ 解析（images.txt），找不到再按相对词库根解析（文件夹内图片）。"""
+    """先按相对 output/ 解析（index 反查的 zhule_img/ 路径），找不到再按相对词库根解析（文件夹内图片）。
+
+    图库物理目录已迁入 output/zhule_studio/ 下，zhule_img/ 前缀的 path 按新根解析。"""
     path = request.query.get("path", "")
-    for root in (IMAGE_ROOT, WORD_BANK_ROOT):
+    roots = (IMAGE_ROOT, WORD_BANK_ROOT)
+    if path.startswith("zhule_img/"):
+        roots = (os.path.join(IMAGE_ROOT, "zhule_studio"), WORD_BANK_ROOT)
+    for root in roots:
         full = os.path.abspath(os.path.join(root, path))
         if _is_within(root, full) and os.path.isfile(full):
             return web.FileResponse(full)

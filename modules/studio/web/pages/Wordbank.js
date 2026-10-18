@@ -110,7 +110,6 @@ export default {
                   <div class="thumb-count" v-if="file.images && file.images.length">
                     {{ getImgIdx(file) + 1 }}/{{ file.images.length }}
                   </div>
-                  <div class="thumb-img-del" data-tip="删除图片 / 取消作为参考图" @pointerdown.stop @click.stop="askImgAction(file)">✕</div>
                   <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
                   <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
                   <div class="thumb-nav" @pointerdown.stop v-if="file.images && file.images.length > 1">
@@ -316,22 +315,6 @@ export default {
           <div class="confirm-actions">
             <button class="btn" @click="delConfirm = null">取消</button>
             <button class="btn danger" @click="confirmDeleteWord">确认删除</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 图片操作选择框 -->
-      <div v-if="imgAction" class="confirm-overlay" @click.self="imgAction = null">
-        <div class="confirm-dialog">
-          <div class="confirm-title">图片操作</div>
-          <div class="confirm-msg">
-            <div>词条「{{ imgAction.file.name }}」当前图片：</div>
-            <div class="confirm-img-path">{{ imgAction.image }}</div>
-          </div>
-          <div class="confirm-actions">
-            <button class="btn" @click="imgAction = null">取消</button>
-            <button class="btn danger" @click="confirmImgDelete" :disabled="imgBusy">删除图片</button>
-            <button class="btn primary" @click="confirmImgUnref" :disabled="imgBusy">取消作为参考图</button>
           </div>
         </div>
       </div>
@@ -846,50 +829,6 @@ export default {
         deleting.value = false;
       }
     };
-
-    // ============ 图片操作（删除图片 / 取消作为参考图） ============
-    const imgAction = ref(null);
-    const imgBusy = ref(false);
-
-    const askImgAction = (file) => {
-      if (!file.images || !file.images.length) return;
-      const idx = getImgIdx(file);
-      imgAction.value = { file, image: file.images[idx] };
-    };
-
-    const doImgAction = async (action) => {
-      if (!imgAction.value || imgBusy.value) return;
-      const { file, image } = imgAction.value;
-      imgBusy.value = true;
-      try {
-        const resp = await fetch('/zhule_studio/api/wordbank/image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            path: file.relPath,
-            image,
-            action,
-            name: file.name,
-          }),
-        });
-        const json = await resp.json();
-        if (json.error) {
-          showToast('操作失败：' + json.error, 'error');
-          return;
-        }
-        // 单卡片刷新：直接更新 images 列表
-        file.images = json.images || [];
-        showToast(action === 'delete' ? '图片已删除' : '已取消作为参考图', 'success');
-      } catch (e) {
-        showToast('请求失败：' + e.message, 'error');
-      } finally {
-        imgAction.value = null;
-        imgBusy.value = false;
-      }
-    };
-
-    const confirmImgDelete = () => doImgAction('delete');
-    const confirmImgUnref = () => doImgAction('unref');
 
     // ============ 上传参考图（弹窗式：点击 / 拖拽 / 粘贴，过滤非图片） ============
     const uploadRefOpen = ref(false);
@@ -1739,7 +1678,7 @@ const submitAddTab = async () => {
 
     const onCardPointerDown = (e, file) => {
       if (e.button !== 0) return;
-      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.file-zoom') || e.target.closest('.card-edit') || e.target.closest('.card-del-btn') || e.target.closest('.thumb-img-del')) return;
+      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.file-zoom') || e.target.closest('.card-edit') || e.target.closest('.card-del-btn')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
@@ -1978,7 +1917,6 @@ const submitAddTab = async () => {
       editTarget, editName, editContent, editContentCn, editIsTxt, editing,
       openEdit, cancelEdit, submitEdit,
       delConfirm, askDeleteWord, confirmDeleteWord,
-      imgAction, askImgAction, confirmImgDelete, confirmImgUnref, imgBusy,
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,

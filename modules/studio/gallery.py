@@ -7,7 +7,7 @@
   * zhule_tags：图库详情页手动打标（可增删）
   * zhule_prompt_tags：ZhuleStudio 提示词选中词（保存时写入，图库只读）
   * zhule_custom_tags：工作流自定义 tag（SaveImage tags 端口写入，图库只读）
-- 图库根目录：output/zhule_img（只扫这一个目录，历史旧目录一律忽略）
+- 图库根目录：output/zhule_studio/zhule_img（只扫这一个目录，历史旧目录一律忽略）
 - 索引：启动/刷新时扫描图库根目录读取元数据，json 缓存到本模块 gallery/index.json
 - 用户自定义 tag 分组：gallery/meta.json
 - 打标：写 PNG tEXt chunk（不重编码像素），保留原 mtime
@@ -36,7 +36,8 @@ from ..common.paths import _get_output_dir
 GALLERY_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_FILE = os.path.join(GALLERY_DIR, "gallery", "index.json")
 META_FILE = os.path.join(GALLERY_DIR, "gallery", "meta.json")
-SCHEMA_VERSION = 2  # 图库根目录切换为 zhule_img
+STUDIO_SUBDIR = "zhule_studio"  # output 下统一收纳目录：zhule_img / zhule_thumbs / zhule_link
+SCHEMA_VERSION = 3  # 图库数据迁入 output/zhule_studio 下
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 _SKIP_DIRS = {"thumbnails", "zhule_thumbs", "prompt_csv", "zhule image"}
@@ -44,11 +45,13 @@ MAX_WORKFLOW_PREVIEW = 800
 
 _index = None  # 内存缓存：list[dict]
 _index_built_at = 0.0
+_index_rev = 0  # 索引变更版本号（build/get/load/删/增量 6 处 +1），get_tag_ref_index 据此失效重建
+_ref_cache = {"sig": None, "data": None}  # tag -> [zhule_img/ 相对路径] 反向索引缓存
 
 
 def _gallery_root():
-    """图库根目录：output/zhule_img（ZhuleSaveImage v2 实际输出，唯一图源）。"""
-    return os.path.join(_get_output_dir(), "zhule_img")
+    """图库根目录：output/zhule_studio/zhule_img（ZhuleSaveImage 实际输出，唯一图源）。"""
+    return os.path.join(_get_output_dir(), STUDIO_SUBDIR, "zhule_img")
 
 
 def _safe_full(rel):
@@ -430,7 +433,7 @@ def _extract_positive_prompt(pt):
 
 def build_index(force=False):
     """全量重建索引（只扫 zhule_image）。返回索引列表。"""
-    global _index, _index_built_at
+    global _index, _index_built_at, _index_rev
     root = _gallery_root()
     meta = load_meta()
     groups = _tag_groups(meta)
@@ -463,6 +466,7 @@ def build_index(force=False):
     # 按时间倒序缓存
     records.sort(key=lambda r: r["mtime"], reverse=True)
     _index = records
+    _index_rev += 1
     _index_built_at = time.time()
     try:
         os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
@@ -510,7 +514,7 @@ def get_index():
     index.json 缺失/损坏/schema 不符时**不自动全量重建**——全量遍历属大范围操作，
     只允许人工手动触发，此处返回空列表并提示用户手动重建。
     """
-    global _index
+    global _index, _index_rev
     if _index is None:
         # 尝试从缓存加载
         try:
@@ -518,12 +522,42 @@ def get_index():
                 payload = json.load(f)
             if payload.get("schema") == SCHEMA_VERSION and isinstance(payload.get("records"), list):
                 _index = payload["records"]
+                _index_rev += 1
         except Exception:
             _index = None
         if _index is None:
             print("[ZhuleGallery] 索引缺失/损坏，跳过自动重建：请在设置面板手动点击『重建索引』")
             return []
     return _index
+
+
+def get_tag_ref_index():
+    """tag -> [带 zhule_img/ 前缀的相对 output 路径] 反向引用索引（词库参考图数据源）。
+
+    以内存 _index 为唯一事实源（守护线程增量同步维护其正确性），一次遍历构建
+    {tag: [path, ...]} 并按 _index_rev 版本号失效重建，避免词库每卡片 O(N) 全扫。
+    索引不可用（缺失/损坏未重建）时返回空 dict。
+    """
+    global _index_rev
+    if _ref_cache["sig"] == _index_rev and _ref_cache["data"] is not None:
+        return _ref_cache["data"]
+    idx = get_index()
+    data = {}
+    if idx:
+        for r in idx:
+            key = r.get("key")
+            if not key:
+                continue
+            tags = r.get("tags") or []
+            if not tags:
+                continue
+            path = "zhule_img/" + key.replace(os.sep, "/")
+            for t in tags:
+                if t:
+                    data.setdefault(t, []).append(path)
+    _ref_cache["sig"] = _index_rev
+    _ref_cache["data"] = data
+    return data
 
 
 # ==================== 聚合 ====================
@@ -558,7 +592,7 @@ def aggregate(records):
 
 def _thumb_path(rel, mtime):
     digest = hashlib.sha1(f"{rel}|{mtime}".encode("utf-8")).hexdigest()[:16]
-    return os.path.join(_get_output_dir(), "zhule_thumbs", digest + ".jpg")
+    return os.path.join(_get_output_dir(), STUDIO_SUBDIR, "zhule_thumbs", digest + ".jpg")
 
 
 def ensure_thumb(rel):
@@ -1039,9 +1073,10 @@ async def post_gallery_delete(request):
         return web.json_response({"error": f"删除失败: {e}"}, status=500)
 
     # 刷新内存索引与索引缓存
-    global _index
+    global _index, _index_rev
     if _index is not None:
         _index = [r for r in _index if r.get("key") != rel]
+        _index_rev += 1
         try:
             with open(INDEX_FILE, "r", encoding="utf-8") as f:
                 payload = json.load(f)
@@ -1110,10 +1145,11 @@ async def _post_gallery_batch_delete_impl(request):
             failed.append({"path": rel, "error": f"删除异常: {e}"})
 
     # 刷新内存索引与索引缓存
-    global _index
+    global _index, _index_rev
     delset = set(deleted)
     if _index is not None:
         _index = [r for r in _index if r.get("key") not in delset]
+        _index_rev += 1
     try:
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             payload = json.load(f)
@@ -1147,8 +1183,8 @@ async def post_gallery_batch_delete(request):
 
 
 def _link_root():
-    """硬链接导出根目录：output/zhule_link（与图库同卷，硬链接有效）。"""
-    return os.path.join(_get_output_dir(), "zhule_link")
+    """硬链接导出根目录：output/zhule_studio/zhule_link（与图库同卷，硬链接有效）。"""
+    return os.path.join(_get_output_dir(), STUDIO_SUBDIR, "zhule_link")
 
 
 def _unique_dest(target_dir, filename):
@@ -1534,12 +1570,13 @@ def _make_record(rel, full):
 
 def _load_index_cache():
     """从 index.json 加载缓存索引到内存（守护线程惰性启动时用）。"""
-    global _index
+    global _index, _index_rev
     try:
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             payload = json.load(f)
         if isinstance(payload.get("records"), list) and payload.get("schema") == SCHEMA_VERSION:
             _index = payload["records"]
+            _index_rev += 1
             return True
     except Exception:
         pass
@@ -1571,7 +1608,7 @@ def incremental_sync():
     size/mtime 变化 -> 重读该图元数据更新记录。
     返回 (added, removed, updated)；无变化返回 None；全量重建进行中返回 None（下一轮再同步）。
     """
-    global _index
+    global _index, _index_rev
     if _index_building:
         return None
     with _sync_lock:
@@ -1612,6 +1649,7 @@ def incremental_sync():
         new_index.extend(added)
         new_index.sort(key=lambda r: r["mtime"], reverse=True)
         _index = new_index
+        _index_rev += 1
         _write_index_cache()
         print(f"[ZhuleGallery] 增量同步完成: +{len(added)} -{len(removed)} ~{len(updated)}")
         return len(added), len(removed), len(updated)

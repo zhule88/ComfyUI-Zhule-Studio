@@ -1,6 +1,6 @@
 """词库参考图自动生成（images.txt）。
 
-反向遍历：以图库 output/zhule_img 下的图片为主体（含子目录递归），读取每张图的
+反向遍历：以图库 output/zhule_studio/zhule_img 下的图片为主体（含子目录递归），读取每张图的
 tag 元数据（三源合并：zhule_tags 手动 + zhule_prompt_tags 提示词选中词 +
 zhule_custom_tags 自定义，与 gallery._merge_tag_sources 一致），用 tag 反查词库卡片
 （卡片 = prompt/ 中含 prompt.txt 的目录，标识名 = 目录名去掉数字前缀，如
@@ -18,7 +18,7 @@ from . import png_text
 from .api import WORD_BANK_ROOT, parse_folder
 from .gallery import INDEX_FILE, _merge_tag_sources, _scan_images
 
-GALLERY_ROOT = os.path.join(_get_output_dir(), "zhule_img")
+GALLERY_ROOT = os.path.join(_get_output_dir(), "zhule_studio", "zhule_img")
 IMAGES_FILE = "images.txt"
 MAIN_FILE = "prompt.txt"
 

@@ -169,11 +169,11 @@ export default {
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              data-tip="把选中的图片以硬链接方式导出到 zhule_link（同卷零拷贝，每次自动新建独立子文件夹）" @click="batchLink">🔗</button>
+              data-tip="将选中的图片快捷导出到 zhule_link 文件夹：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库在同一磁盘分区），每次导出自动新建独立子文件夹" @click="batchLink">🔗</button>
       <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
       <span class="zhg-sel-count" v-if="selected.size">已选 <b>{{ selected.size }}</b>
         <a class="zhg-sel-clear" @click="selected.clear()">清除</a></span>
-      <span class="zhg-total">共 <b>{{ meta.total }}</b> 张 / 命中 <b>{{ total }}</b></span>
+      <span class="zhg-total">命中 <b>{{ total }}</b> / 共 <b>{{ meta.total }}</b> 张</span>
       <span class="zhg-page-ctl" data-tip="每页显示张数">
         <span class="zhg-ctl-ico">☰</span>
         <button class="zhg-pg-btn" @click="changePageSize(-10)" :disabled="pageSize <= 10" data-tip="每页减少10张">−</button>
