@@ -1,7 +1,7 @@
 """Zhule Studio 后端：扫描词库、图片代理、重命名卡片、Studio 页面静态服务。
 
 词库目录约定（兼容两套命名）：
-  插件根 prompt/（ComfyUI-Zhule-Nodes/prompt，随插件走）
+  插件根 prompt/（ComfyUI-Zhule-Studio/prompt，随插件走）
     ├── 角色/                          ← Tab
     │   └── .../07_银狼LV.999@/         ← 中间层（chip，@/% 等后缀原样保留）
     │       └── 银狼LV.999_服装/         ← 卡片文件夹

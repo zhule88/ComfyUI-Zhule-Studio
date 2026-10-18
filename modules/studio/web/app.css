@@ -120,6 +120,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 }
 
 /* Chips */
+/* 词库主体（筛选分类区 + 卡片区）：切 tab 懒加载时以遮罩覆盖，避免闪现「数量 0」 */
+.bank-body { position: relative; flex: 1; min-height: 0;
+  display: flex; flex-direction: column; }
 .chips-wrap { flex-shrink: 0; background: var(--bg); border-bottom: 1px solid var(--border-2); }
 .chips-head { display: flex; align-items: center; gap: 10px; padding: 6px 18px 2px; }
 .chips-title { color: var(--text-3); font-size: 11px; flex-shrink: 0; }
@@ -177,10 +180,11 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card.file .card-body { color: var(--text-2); font-size: 12px; line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card.image { padding: 0; }
-.card-thumb-wrap { position: relative; width: 100%; aspect-ratio: 3 / 4;
-  background: #0b0e13; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.card-thumb { width: 100%; height: 100%; object-fit: cover; }
-.card-thumb-img { width: 100%; height: 100%; object-fit: cover; }
+.card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
+  background: #0b0e13; overflow: hidden; }
+/* 图片与占位底板绝对铺满容器（容器高度由 padding-top 撑起，不依赖 aspect-ratio 兼容性），
+   避免图标作为流内元素占位挤占图片空间 */
+.card-thumb, .card-thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .thumb-count { position: absolute; top: 38px; left: 6px;
   padding: 2px 7px; border-radius: 10px; background: rgba(0,0,0,0.65); color: #fff;
   font-size: 11px; font-weight: 600; z-index: 4; pointer-events: none; }

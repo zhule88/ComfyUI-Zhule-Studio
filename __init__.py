@@ -1,4 +1,4 @@
-"""ComfyUI-Zhule-Nodes 收集器。
+"""ComfyUI-Zhule-Studio 收集器。
 
 遍历 modules/ 命名空间包，汇总各子模块的节点映射，并触发路由注册。
 旧 nodes/ 目录保留不动（不再被引用），原 server.py 路由与工具已拆入各模块。

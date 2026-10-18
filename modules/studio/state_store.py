@@ -115,7 +115,7 @@ def _locate_comfy_user_dir():
             return candidate
     except Exception:
         pass
-    # 插件根 = custom_nodes/ComfyUI-Zhule-Nodes；user 目录 = ComfyUI 根/user
+    # 插件根 = custom_nodes/ComfyUI-Zhule-Studio；user 目录 = ComfyUI 根/user
     comfy_root = os.path.dirname(os.path.dirname(_PLUGIN_ROOT))
     candidate = os.path.join(comfy_root, "user")
     return candidate if os.path.isdir(candidate) else None

@@ -1,15 +1,4 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: f31316edd1bc287d4516025481a71e55_d62202a9c96911f18b7f525400393706
-    ReservedCode1: DU75vGyh8UYFVvs4tW8QaqDizc7HbACunOQvob28TKsj4iVPOTowhCUZs6bh44sKxoRqhhOpJvEMPNcJOfcoR10kYmSdb0eG+dz1mD4ej4R6BHzWH0LyMk85k8LvkmqGweNd0QWlTmDIuslqf6zKs+8vNXk4jT3bdd/9J2VjPjp1A6HFiZ7L4Bp3ZGE=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: f31316edd1bc287d4516025481a71e55_d62202a9c96911f18b7f525400393706
-    ReservedCode2: DU75vGyh8UYFVvs4tW8QaqDizc7HbACunOQvob28TKsj4iVPOTowhCUZs6bh44sKxoRqhhOpJvEMPNcJOfcoR10kYmSdb0eG+dz1mD4ej4R6BHzWH0LyMk85k8LvkmqGweNd0QWlTmDIuslqf6zKs+8vNXk4jT3bdd/9J2VjPjp1A6HFiZ7L4Bp3ZGE=
----
-
-# ComfyUI-Zhule-Nodes
+# ComfyUI-Zhule-Studio
 
 > 给 ComfyUI 装上「中文词库 + 图片图库 + 画师选择器」的一体化工具箱，让你告别手敲英文提示词。
 
@@ -25,7 +14,7 @@ AIGC:
 
 ## 一、安装
 
-1. 把 `ComfyUI-Zhule-Nodes` 整个文件夹放进 ComfyUI 的 `custom_nodes` 目录
+1. 把 `ComfyUI-Zhule-Studio` 整个文件夹放进 ComfyUI 的 `custom_nodes` 目录
 2. 完全关闭 ComfyUI，重新启动
 3. 启动完成后，节点菜单里会出现 `Zhule` 分类
 
@@ -156,7 +145,7 @@ AIGC:
 ## 七、目录说明（给想自己改内容的人）
 
 ```
-ComfyUI-Zhule-Nodes/
+ComfyUI-Zhule-Studio/
 ├─ prompt/                  # 中文词库内容（按分类放 txt）
 ├─ modules/
 │  ├─ studio/               # 词库 + 图库网页

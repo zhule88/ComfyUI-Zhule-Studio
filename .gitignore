@@ -8,3 +8,7 @@ __pycache__/
 
 # 本地提示词库参考图清单（含本地路径，仅本机使用，不上传）
 prompt/**/images.txt
+# 运行状态数据（临时快照，仅本机使用，不上传）
+modules/studio/state/
+# 图库索引缓存（本地生成，仅本机使用，不上传）
+modules/studio/gallery/

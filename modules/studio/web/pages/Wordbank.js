@@ -31,7 +31,6 @@ export default {
           </div>
           <button class="btn" @click="saveBankOrder" :disabled="bankSaving"
                   data-tip="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
-          <button class="btn" @click="load(true)" data-tip="强制重新扫描词库目录">⟳ 刷新词库</button>
         </div>
 
         <div class="tabs">
@@ -48,6 +47,7 @@ export default {
                @dragend="onTabDragEnd">{{ tabLabel(name) }}</div>
         </div>
 
+        <div class="bank-body">
         <div class="chips-wrap">
           <div class="chips-head">
             <span class="chips-title">筛选分类</span>
@@ -147,6 +147,10 @@ export default {
             <button class="btn" :disabled="pageIndex >= pageCount - 1" @click="goNextPage">下一页 ›</button>
             <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ filteredFiles.length }} 张</span>
           </div>
+        </div>
+        <div v-if="tabLoading" class="zhule-loader" style="background:rgba(26,29,35,0.88);z-index:40;">
+          <div class="loader"></div>
+        </div>
         </div>
 
         <div class="bottom">
@@ -398,6 +402,7 @@ export default {
     };
 
     const loaded = ref(false);
+    const tabLoading = ref(false);
     const error = ref(null);
     const tabs = ref([]);
     const bankData = ref({});
@@ -654,15 +659,8 @@ export default {
       return !!chipParentPath(depth);
     };
 
-    // 父文件夹明确（至少一层筛选选中）时才显示词条加号卡片
-    const canAddCard = computed(() => {
-      if (!data.activeTab) return false;
-      const sel = getSelections();
-      for (let i = 0; i < maxDepth.value; i++) {
-        if (Array.isArray(sel[i]) && sel[i].length) return true;
-      }
-      return false;
-    });
+    // 词条加号卡片：有活动 tab 即显示（tab 根或任意筛选层级下均可新增词条）
+    const canAddCard = computed(() => !!data.activeTab);
 
     const addCardIsTxt = computed(() => (addCardName.value || '').trim().toLowerCase().endsWith('.txt'));
 
@@ -680,7 +678,8 @@ export default {
       for (let i = 0; i < maxDepth.value; i++) {
         if (Array.isArray(sel[i]) && sel[i].length) keys.push(sel[i][0]);
       }
-      return keys.length ? keys.map(k => k.split('/').map(dispKey).join('/')).join('/') : '';
+      if (!keys.length) return tabLabel(data.activeTab);
+      return keys.map(k => k.split('/').map(dispKey).join('/')).join('/');
     });
 
     // 父文件夹相对 tab 的路径（供后端创建词条），如 'A/B'
@@ -1163,8 +1162,9 @@ export default {
         const pending = pendingChips.value.filter(p => p.depth === depth);
         pending.forEach(p => { if (!options.includes(p.key)) options.push(p.key); });
         if (!options.length) {
-          // 空层：仅当上层有明确选中的父分类时保留占位行（渲染「＋」与「全部」），否则终止后续层
-          if (depth > 0 && chipParentPath(depth)) {
+          // 空层：depth 0 为 tab 根，恒保留占位行（渲染「＋」与「全部」），以便在空大类下新建一级分类；
+          // 更深层仅当上层有明确选中的父分类时保留占位行，否则终止后续层
+          if (depth === 0 || (depth > 0 && chipParentPath(depth))) {
             lines.push([]);
             continue;
           }
@@ -1364,7 +1364,13 @@ const submitAddTab = async () => {
       data.activeTab = name;
       pageIndex.value = 0;
       // 该 tab 数据尚未加载时按分类局部拉取（首屏/懒加载路径）
-      if (!bankData.value[name]) load(false, name);
+      // 加载期间用遮罩覆盖「筛选分类区 + 卡片区」，避免闪现「数量 0」与空分类
+      if (!bankData.value[name]) {
+        tabLoading.value = true;
+        load(false, name).finally(() => {
+          if (data.activeTab === name) tabLoading.value = false;
+        });
+      }
     };
     const toggleChip = (depth, name) => {
       const sel = getSelections();
@@ -1968,7 +1974,7 @@ const submitAddTab = async () => {
     });
 
     return {
-      loaded, error, tabs, data, pref, drag, load,
+      loaded, tabLoading, error, tabs, data, pref, drag, load,
       editTarget, editName, editContent, editContentCn, editIsTxt, editing,
       openEdit, cancelEdit, submitEdit,
       delConfirm, askDeleteWord, confirmDeleteWord,

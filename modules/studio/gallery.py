@@ -304,8 +304,10 @@ def _extract_zhule_model(texts):
 def _backfill_tag_fields(full, texts):
     """存量迁移：从 prompt 元数据回填只读标签字段，并把手动标签中重复项移除。
 
-    仅在 zhule_prompt_tags / zhule_custom_tags 均为空时执行（旧版保存节点把它们写进了
-    zhule_tags，需迁移）；返回 (prompt_tags, custom_tags, manual_tags)。
+    仅当 zhule_prompt_tags / zhule_custom_tags 均为空、且 PNG 内带 prompt 元数据时执行
+    （早期保存节点未写入标签字段，从 prompt 的 ZhuleStudio 选中词快照回填只读标签，
+    供图库筛选使用）；同时剔除手动标签 zhule_tags 中与回填结果重复的项。
+    返回 (prompt_tags, custom_tags, manual_tags)。
     """
     prompt_tags = _clean_prompt_tags(_json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags"))
     custom_tags = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
@@ -480,24 +482,6 @@ def build_index(force=False):
 _index_building = False  # 后台重建进行中（防止并发重复触发）
 
 
-def _gallery_signature(root):
-    """图库根目录轻量签名：(文件数, 最新 mtime)。用于惰性重建判断。
-
-    只比较最新 mtime 会漏掉"文件数变化但新文件 mtime 更旧"的场景（如迁移复制保留原 mtime），
-    因此叠加文件数：任一维度变化都触发重建。
-    """
-    count = 0
-    latest = 0.0
-    try:
-        for fn in os.scandir(root):
-            if fn.is_file():
-                count += 1
-                latest = max(latest, fn.stat().st_mtime)
-    except OSError:
-        pass
-    return count, int(latest)
-
-
 def _bg_build_worker(force):
     """后台线程执行索引重建（build_index 自身更新 _index 与缓存文件）。"""
     global _index_building
@@ -518,13 +502,15 @@ def _start_bg_build(force=False):
 
 
 def get_index():
-    """获取索引；图库根目录签名变化时后台惰性重建（不阻塞请求）。
+    """获取索引。
 
-    返回值为当前内存索引：若无内存索引先尝试加载缓存；缓存也没有则同步全量构建（首次）。
-    签名变化时立即返回现有索引并触发后台重建，前端通过 building 字段轮询后刷新。
+    索引来源仅两种：
+    1. 守护线程 incremental_sync 增量同步（日常主力，覆盖增删改）；
+    2. 手动 rescan（设置面板『重建索引』按钮，全量遍历唯一入口）。
+    index.json 缺失/损坏/schema 不符时**不自动全量重建**——全量遍历属大范围操作，
+    只允许人工手动触发，此处返回空列表并提示用户手动重建。
     """
     global _index
-    root = _gallery_root()
     if _index is None:
         # 尝试从缓存加载
         try:
@@ -535,10 +521,8 @@ def get_index():
         except Exception:
             _index = None
         if _index is None:
-            return build_index()
-    count, latest = _gallery_signature(root)
-    if count != len(_index) or latest > (_index[0]["mtime"] if _index else 0):
-        _start_bg_build(force=False)
+            print("[ZhuleGallery] 索引缺失/损坏，跳过自动重建：请在设置面板手动点击『重建索引』")
+            return []
     return _index
 
 

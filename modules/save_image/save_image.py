@@ -257,7 +257,7 @@ class ZhuleSaveImage:
             },
             "optional": {
                 "自定义标签": ("STRING", {
-                    "multiline": True,
+                    "multiline": False,
                     "default": "",
                     "placeholder": "填写 JSON 数组字符串，如 [\"tag1\", \"tag2\"]",
                 }),
