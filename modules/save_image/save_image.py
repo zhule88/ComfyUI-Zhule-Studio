@@ -5,9 +5,11 @@
   * prompt / workflow：拖回画布还原工作流
   * zhule_model：优先取输入「自定义模型」，为空时从 prompt 提取主模型；写入前统一去扩展名后缀
   * zhule_loras：优先取输入「自定义lora」，为空时从 prompt 提取 LoRA 列表（数组）；写入前统一去扩展名后缀
-  * zhule_prompt_tags：保存时从出图时刻 workflow（ZhuleStudio 输入节点 _selected 快照）自动提取（数组，图库只读）
-  * zhule_custom_tags：来自可选输入 自定义标签（JSON 数组字符串，工作流自定义 tag，图库只读）
-  * zhule_tags：不再由保存节点写入（留给图库详情页手动打标，可增删）
+  * zhule_prompt_tags：保存时从出图时刻 workflow（ZhuleStudio 输入节点 _selected 快照）
+    自动提取的**词条 id 数组**（图库只读）。按 id 存而非词条名，词条改名/移动后标签不脱钩
+  * zhule_custom_tags：来自可选输入 自定义标签（JSON 数组字符串）；图库详情页在同一字段上增删，
+    是唯一的自定义标签字段（旧 zhule_tags 已并入本字段，存量图由全量重建时迁移）
+- 保存后直接把新图写入图库索引（zhule.db），图库不再靠守护线程扫盘发现新图
 """
 import json
 import os
@@ -114,74 +116,15 @@ def _parse_selected(raw):
     return []
 
 
-def _load_state_selected(bind_id):
-    """按ID读取 state 文件中的选中词条（与 ZhuleStudio 节点运行逻辑一致）。
-
-    返回 [{name, content}, ...]；无文件 / 解析失败 / 无词条返回 None。
-    """
-    if not bind_id:
-        return None
-    try:
-        from ..studio.state_store import load_state
-    except Exception:
-        try:
-            from modules.studio.state_store import load_state
-        except Exception:
-            return None
-    try:
-        payload = load_state(bind_id)
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        return None
-    selected = data.get("selected")
-    if not isinstance(selected, list):
-        return None
-    items = [s for s in selected if isinstance(s, dict) and s.get("content")]
-    return items or None
-
-
-def _backfill_studio_selected(prompt):
-    """兼容：ZhuleStudio 节点的词条经网页 state 文件驱动时，widget _selected 恒为 "[]"，
-    导致 PNG 元数据丢失实际选中词条。保存前用ID从 state 文件回填 _selected，
-    使 PNG 元数据自包含出图时刻的完整选中词条（[{name, content}, ...]）。
-    """
-    if not isinstance(prompt, dict):
-        return prompt
-    changed = False
-    for node in prompt.values():
-        if not isinstance(node, dict) or node.get("class_type") != "ZhuleStudio":
-            continue
-        inputs = node.get("inputs") or {}
-        # 已有词条快照则不覆盖
-        raw = inputs.get("_selected")
-        if isinstance(raw, list) and raw:
-            continue
-        if isinstance(raw, str) and raw.strip() and raw.strip() != "[]":
-            try:
-                if json.loads(raw):
-                    continue
-            except (json.JSONDecodeError, TypeError):
-                pass
-        items = _load_state_selected(inputs.get("ID"))
-        if not items:
-            continue
-        inputs["_selected"] = items
-        changed = True
-    return prompt if changed else prompt
-
-
-def _extract_prompt_tags(prompt):
-    """从执行 prompt JSON 提取提示词 tag 数组（与后端 gallery.py _extract_positive_prompt 同源还原逻辑）。
+def _extract_prompt_tag_ids(prompt):
+    """从执行 prompt JSON 提取提示词 tag 的**词条 id 数组**（与词条显示名解耦）。
 
     仅取 ZhuleStudio 输入节点 _selected 快照：
-    - 元素为 dict 时取 name（词条名 = 词条文件名/最后一级目录名）；
+    - 元素为 dict 时取 id（词条 id：图库按 id 存，词条改名/移动后标签不脱钩）；
+    - 旧数据只有 name 时回退取 name（重建索引时的存量迁移负责转成 id）；
     - 元素为纯字符串（旧格式，整段提示词文本）时原样保留，兼容历史工作流；
     - 无快照时返回空数组，不再把正向提示词文本（前置提示词）按逗号或段落拆成标签。
-    返回 list[str]。
+    返回 list[str]（元素为词条 id 字符串）。
     """
     if not isinstance(prompt, dict):
         return []
@@ -236,7 +179,11 @@ def _extract_prompt_tags(prompt):
     tags = []
     for item in data:
         if isinstance(item, dict):
-            # 优先词条名；无 name（旧数据）时跳过，不把提示词文本当标签
+            # 优先词条 id；旧数据无 id 时回退 name（由重建索引时的存量迁移转 id）
+            eid = str(item.get("id") or "").strip()
+            if eid:
+                tags.append(eid)
+                continue
             name = str(item.get("name") or "").strip()
             if name:
                 tags.append(name)
@@ -311,7 +258,6 @@ class ZhuleSaveImage:
         os.makedirs(output_dir, exist_ok=True)
 
         seq = self._next_seq(output_dir)
-        prompt = _backfill_studio_selected(prompt)
         model, loras = _extract_model_and_loras(prompt)
         # 手动输入优先：填了自定义模型/LoRA 就覆盖自动提取结果
         if manual_model:
@@ -324,9 +270,10 @@ class ZhuleSaveImage:
             model = _strip_ext(model)
         if loras:
             loras = [_strip_ext(x) for x in loras if _strip_ext(x)]
-        prompt_tags_list = _extract_prompt_tags(prompt)
+        prompt_tag_ids = _extract_prompt_tag_ids(prompt)
         custom_tags = _parse_tags(自定义标签)
 
+        saved = []
         for i, img in enumerate(图像):
             arr = (img.cpu().numpy() * 255).astype(np.uint8)
             image = Image.fromarray(arr)
@@ -344,19 +291,25 @@ class ZhuleSaveImage:
                 metadata.add_text("zhule_model", model)
             if loras:
                 metadata.add_text("zhule_loras", json.dumps(loras))
-            if prompt_tags_list:
+            if prompt_tag_ids:
                 metadata.add_text("zhule_prompt_tags",
-                                 json.dumps(prompt_tags_list))
+                                 json.dumps(prompt_tag_ids))
             if custom_tags:
                 metadata.add_text("zhule_custom_tags", json.dumps(custom_tags))
 
             image.save(full_path, pnginfo=metadata, compress_level=4)
+            saved.append((file_name, full_path))
             print(f"[ZhuleSaveImage] 保存 {file_name}  model={model or '-'} "
-                  f"loras={loras or '-'} prompt_tags={prompt_tags_list or '-'} "
+                  f"loras={loras or '-'} prompt_tags={prompt_tag_ids or '-'} "
                   f"tags={custom_tags or '-'}")
         print(f"[ZhuleSaveImage] 共保存 {len(图像)} 张 -> {output_dir}")
-        # 索引统一由 studio 守护线程维护（见 gallery.start_index_sync_watcher），
-        # save() 只负责写文件与元数据，不再耦合索引同步。
+        # 新图直接入图库索引（写入点维护，不再有守护线程扫盘）；图库模块缺失时静默跳过
+        if saved:
+            try:
+                from ..studio import gallery
+                gallery.index_new(saved)
+            except Exception:
+                pass
         return {}
 
 

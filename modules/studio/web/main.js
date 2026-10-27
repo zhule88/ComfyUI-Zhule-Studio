@@ -110,8 +110,40 @@ const App = {
           rebuilding.value = false;
         });
     }
+    // 词库去中文清理：扫描英文 prompt.txt，删除混入的中文字符（中文提示词文件跳过），仅设置面板保留入口
+    const wordbankCleaningCn = ref(false);
+    const wordbankCleanNotice = ref('');
+    function wordbankCleanCn() {
+      if (wordbankCleaningCn.value) return;
+      wordbankCleaningCn.value = true;
+      wordbankCleanNotice.value = '正在扫描英文提示词文件…';
+      fetch('/zhule_studio/api/wordbank/clean-cn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+        .then(async (resp) => {
+          const d = await resp.json();
+          if (!resp.ok) {
+            wordbankCleanNotice.value = (d && d.error) || '清理失败，请查看后端日志';
+            return;
+          }
+          const s = (d && d.stats) || {};
+          wordbankCleanNotice.value = '扫描 ' + (s.scanned || 0) + ' 个：清理 ' + (s.cleaned || 0)
+            + '，中文文件跳过 ' + (s.chinese_files || 0) + '，无中文 ' + (s.no_cn || 0)
+            + '，未变跳过 ' + (s.skipped_unchanged || 0);
+          setTimeout(() => { wordbankCleanNotice.value = ''; }, 8000);
+        })
+        .catch(() => {
+          wordbankCleanNotice.value = '清理失败：无法连接后端接口';
+        })
+        .finally(() => {
+          wordbankCleaningCn.value = false;
+        });
+    }
     return { showSettings, pref, TIME_FMTS, toggleField, setTimeFmt, setTagColor,
-      wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB };
+      wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
+      wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
   computed: {
     bindQuery() {
@@ -222,6 +254,12 @@ const App = {
                   </label>
                 </div>
                 <div class="settings-hint">开启后，在词库点击某个子分类会自动把整条父链一并选中；本项仅对词库生效。</div>
+                <div class="settings-row">
+                  <span class="settings-label">去中文清理</span>
+                  <button class="btn" :disabled="wordbankCleaningCn" @click="wordbankCleanCn">{{ wordbankCleaningCn ? '清理中…' : '开始清理' }}</button>
+                </div>
+                <div class="settings-hint">扫描英文 prompt.txt，删除混入的中文字符；中文提示词文件自动跳过。</div>
+                <div class="settings-hint" v-if="wordbankCleanNotice">{{ wordbankCleanNotice }}</div>
               </div>
             </template>
             <div class="settings-none" v-if="!isGallery && !isWordbank">当前页面暂无设置项</div>
@@ -233,3 +271,62 @@ const App = {
 };
 
 createApp(App).use(router).mount('#app');
+
+// ===== 全局 tooltip：fixed 顶层气泡，替代 CSS 伪元素方案 =====
+// 伪元素 ::after 的 z-index 只在自身 stacking context 内有效：若组件位于低层级上下文
+// （侧栏/面板/遮罩等），气泡即使 z-index 极高也会被更高层组件盖住。
+// 这里改为 body 下的 fixed 气泡，任何组件上悬停都浮在视口最顶层，永不被遮挡。
+(function () {
+  let tipEl = null;
+  let tipTimer = null;
+  let tipW = 0;
+  let tipH = 0;
+  function ensureTip() {
+    if (tipEl) return tipEl;
+    tipEl = document.createElement('div');
+    tipEl.className = 'zh-global-tip';
+    document.body.appendChild(tipEl);
+    return tipEl;
+  }
+  function positionTip(cx, cy) {
+    const el = ensureTip();
+    const pad = 12;
+    let left = cx + 14;
+    let top = cy + 16;
+    if (left + tipW > window.innerWidth - pad) left = cx - tipW - 14;
+    if (top + tipH > window.innerHeight - pad) top = cy - tipH - 16;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  }
+  function showTip(text, cx, cy) {
+    const el = ensureTip();
+    el.textContent = text;
+    el.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    tipW = r.width;
+    tipH = r.height;
+    positionTip(cx, cy);
+  }
+  function hideTip() {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+    if (tipEl) tipEl.style.display = 'none';
+  }
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target instanceof Element ? e.target.closest('[data-tip]') : null;
+    if (!t) return;
+    const text = t.getAttribute('data-tip');
+    if (!text) return;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => showTip(text, e.clientX, e.clientY), 220);
+  }, true);
+  document.addEventListener('mousemove', (e) => {
+    if (tipEl && tipEl.style.display === 'block') positionTip(e.clientX, e.clientY);
+  }, true);
+  document.addEventListener('mouseout', (e) => {
+    if (e.target instanceof Element && e.target.closest('[data-tip]')) hideTip();
+  }, true);
+  document.addEventListener('scroll', hideTip, true);
+  document.body.classList.add('zh-js-tip');
+})();

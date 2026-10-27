@@ -1,5 +1,6 @@
-// marqueeSelect.js — 带诊断日志的临时版本
+// marqueeSelect.js
 export function useMarqueeSelect(options = {}) {
+
   const {
     getContainer = null,
     selector = '.zhg-card',
@@ -12,7 +13,6 @@ export function useMarqueeSelect(options = {}) {
     marqueeClass = 'zhg-marquee',
   } = options;
 
-  const LOG = (...args) => console.log('[MARQUEE]', ...args);
 
   let marqueeEl = null;
   let active = false;
@@ -24,7 +24,6 @@ export function useMarqueeSelect(options = {}) {
 
   function findScrollEl(el) {
     if (!el || !el.parentElement) {
-      LOG('findScrollEl: el 或 parentElement 为空，返回 window');
       return window;
     }
     let p = el.parentElement;
@@ -33,13 +32,11 @@ export function useMarqueeSelect(options = {}) {
         const s = getComputedStyle(p);
         if ((s.overflowY === 'auto' || s.overflowY === 'scroll')
           && p.scrollHeight > p.clientHeight + 1) {
-          LOG('findScrollEl: 找到滚动容器', p.className, 'scrollTop=' + p.scrollTop);
           return p;
         }
       } catch (e) { }
       p = p.parentElement;
     }
-    LOG('findScrollEl: 没找到滚动容器，返回 window');
     return window;
   }
 
@@ -50,21 +47,35 @@ export function useMarqueeSelect(options = {}) {
     return { top: scrollEl.scrollTop, left: scrollEl.scrollLeft };
   }
 
-  function startViewport() {
-    const cur = readScroll();
-    return {
-      x: startX - (cur.left - startScrollLeft),
-      y: startY - (cur.top - startScrollTop),
-    };
-  }
-
+  // 视觉框使用视口坐标系（position:fixed 挂 body）+ 滚动补偿：
+  // 起点 = 按下时视口坐标减去滚动增量（滚动后仍钉在按下时的视口位置），终点 = 鼠标当前视口坐标。
+  // 滚动时视觉框保持钉在起点/鼠标位置，不会随内容跑走（修复长按后滚动导致框错位、滚到底出现空白假区域）。
+  // 框边界 clamp 到容器视口矩形；滚动后容器顶部滚出视口时框允许画到负坐标（视口外自动不可见），
+  // 与筛选区重叠的部分由 .zhg-td-filters（z-index 100）盖住，视觉上不会覆盖筛选区。
+  // 该视口矩形与 computeHits 的容器内容矩形在数学上等价（都减去当前滚动偏移），视觉与命中保持一致。
   function draw() {
     if (!marqueeEl) return;
-    const s = startViewport();
-    marqueeEl.style.left = Math.min(s.x, curX) + 'px';
-    marqueeEl.style.top = Math.min(s.y, curY) + 'px';
-    marqueeEl.style.width = Math.abs(curX - s.x) + 'px';
-    marqueeEl.style.height = Math.abs(curY - s.y) + 'px';
+    const cur = readScroll();
+    const vx0 = startX - (cur.left - startScrollLeft);
+    const vy0 = startY - (cur.top - startScrollTop);
+    let l = Math.min(vx0, curX);
+    let t = Math.min(vy0, curY);
+    let r = Math.max(vx0, curX);
+    let b = Math.max(vy0, curY);
+    const c = getContainer ? getContainer() : null;
+    if (c) {
+      const cr = c.getBoundingClientRect();
+      l = Math.max(l, cr.left);
+      t = Math.max(t, cr.top);
+      r = Math.min(r, cr.right);
+      b = Math.min(b, cr.bottom);
+      if (r < l) r = l;
+      if (b < t) b = t;
+    }
+    marqueeEl.style.left = l + 'px';
+    marqueeEl.style.top = t + 'px';
+    marqueeEl.style.width = (r - l) + 'px';
+    marqueeEl.style.height = (b - t) + 'px';
   }
 
   function loop() {
@@ -73,19 +84,50 @@ export function useMarqueeSelect(options = {}) {
     rafLoopId = requestAnimationFrame(loop);
   }
 
+  // 命中判断统一使用内容坐标系：
+  // - 命中框：起点内容坐标 = startX/startY + 按下时滚动偏移(startScroll*)，终点内容坐标 = curX/curY + 当前滚动(readScroll)。
+  //   旧实现 startViewport()/endViewport() 对滚动量做相反方向的减法补偿，两者相减后滚动被抵消，
+  //   命中框只剩鼠标位移大小；且命中框是内容坐标、却与 getBoundingClientRect() 的视口坐标矩形比较，坐标系不统一，
+  //   导致拖动过程中滚动过的区域全部选不中。
+  // - 卡片矩形：getBoundingClientRect() 返回视口坐标，统一加上当前滚动偏移转换为内容坐标后再比较。
+  // - draw() 视觉框仍用视口投影坐标（内容坐标 - 当前滚动），与命中框（内容坐标）数学等价：
+  //   视觉框视口范围 + 当前滚动 = 命中框内容范围，因此视觉与实际命中保持一致。
   function computeHits() {
     const c = getContainer ? getContainer() : null;
     const hits = new Set();
     if (!c) return hits;
-    const s = startViewport();
-    const l = Math.min(s.x, curX);
-    const t = Math.min(s.y, curY);
-    const r = Math.max(s.x, curX);
-    const b = Math.max(s.y, curY);
+    const cur = readScroll();
+    const sx = startX + startScrollLeft;
+    const sy = startY + startScrollTop;
+    const ex = curX + cur.left;
+    const ey = curY + cur.top;
+    let l = Math.min(sx, ex);
+    let t = Math.min(sy, ey);
+    let r = Math.max(sx, ex);
+    let b = Math.max(sy, ey);
+    const _cr = c.getBoundingClientRect();
+    // 命中框同样 clamp 到容器内容坐标，与视觉框（容器视口坐标）严格一致：
+    // 拖拽越出图片区域时，不把容器外的区域计入命中。
+    const cl = _cr.left + cur.left;
+    const ct = _cr.top + cur.top;
+    const crr = _cr.right + cur.left;
+    const cbb = _cr.bottom + cur.top;
+    l = Math.max(l, cl);
+    t = Math.max(t, ct);
+    r = Math.min(r, crr);
+    b = Math.min(b, cbb);
+    if (r < l) r = l;
+    if (b < t) b = t;
     c.querySelectorAll(selector).forEach((el) => {
       const rc = el.getBoundingClientRect();
-      if (rc.left < r && rc.right > l && rc.top < b && rc.bottom > t) {
-        const k = getKey(el);
+      const k = getKey(el);
+      // 卡片矩形转内容坐标后与命中框（同为内容坐标）比较
+      const rl = rc.left + cur.left;
+      const rt = rc.top + cur.top;
+      const rr = rc.right + cur.left;
+      const rb = rc.bottom + cur.top;
+      const _hit = rl < r && rr > l && rt < b && rb > t;
+      if (_hit) {
         if (k != null && k !== '') hits.add(k);
       }
     });
@@ -98,21 +140,12 @@ export function useMarqueeSelect(options = {}) {
   }
 
   function onPointerDown(e) {
-    LOG('=== pointerdown 触发 ===');
-    LOG('button=' + e.button + ' (应该=0)');
-    LOG('clientX=' + e.clientX + ' clientY=' + e.clientY);
-    LOG('target=', e.target && e.target.className);
-    LOG('target.closest(.zhg-card)=', !!(e.target && e.target.closest && e.target.closest('.zhg-card')));
 
-    if (e.button !== 0) { LOG('✗ 不是左键，放弃'); return; }
-    if (isInteractive && isInteractive(e)) { LOG('✗ 命中 isInteractive，放弃'); return; }
+    if (e.button !== 0) { return; }
+    if (isInteractive && isInteractive(e)) { return; }
 
     const gridEl = getContainer ? getContainer() : null;
-    LOG('gridEl 存在:', !!gridEl);
-    if (!gridEl) { LOG('✗ gridEl 为空，放弃'); return; }
-    LOG('gridEl.className:', gridEl.className);
-    LOG('gridEl 内 .zhg-card 数:', gridEl.querySelectorAll(selector).length);
-    LOG('gridEl.getBoundingClientRect:', gridEl.getBoundingClientRect().top, gridEl.getBoundingClientRect().left);
+    if (!gridEl) { return; }
 
     startX = e.clientX;
     startY = e.clientY;
@@ -123,7 +156,6 @@ export function useMarqueeSelect(options = {}) {
     const sc = readScroll();
     startScrollTop = sc.top;
     startScrollLeft = sc.left;
-    LOG('起始滚动:', sc);
 
     let moved = false;
     let cancelled = false;
@@ -142,14 +174,12 @@ export function useMarqueeSelect(options = {}) {
       const dy = ev.clientY - startY;
       const dist = Math.hypot(dx, dy);
       if (!moved && dist < threshold) {
-        LOG('onMove: 距离=' + dist.toFixed(1) + ' < 阈值 ' + threshold + '，忽略');
         return;
       }
 
       if (!moved) {
         moved = true;
         active = true;
-        LOG('✓ 进入拖拽模式，开始创建框');
         initialKeys = new Set();
         gridEl.querySelectorAll(selector).forEach((el) => {
           if (el.classList && el.classList.contains('sel')) {
@@ -160,12 +190,11 @@ export function useMarqueeSelect(options = {}) {
         marqueeEl = document.createElement('div');
         marqueeEl.className = marqueeClass;
         marqueeEl.style.position = 'fixed';
-        marqueeEl.style.zIndex = '9999';
+        marqueeEl.style.zIndex = '50';
         marqueeEl.style.pointerEvents = 'none';
+        // 挂在 body 上使用视口坐标：滚动时靠滚动补偿钉住起点位置，不随内容移动
         document.body.appendChild(marqueeEl);
-        LOG('✓ 框元素已 append 到 body，className=' + marqueeEl.className);
         draw();
-        LOG('✓ 首次 draw 完成，style=', marqueeEl.style.cssText);
         rafLoopId = requestAnimationFrame(loop);
       }
 
@@ -175,8 +204,6 @@ export function useMarqueeSelect(options = {}) {
     };
 
     const onUp = () => {
-      LOG('=== pointerup ===');
-      LOG('moved=' + moved);
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       if (escCancel) document.removeEventListener('keydown', onKeydown);
@@ -184,7 +211,6 @@ export function useMarqueeSelect(options = {}) {
 
       if (moved) {
         const hits = computeHits();
-        LOG('✓ 命中卡片数:', hits.size, Array.from(hits).slice(0, 5));
         if (onUpdate) onUpdate(hits);
         if (onEnd) onEnd({
           hitKeys: hits,

@@ -1,41 +1,48 @@
-"""Zhule Studio 后端：扫描词库、图片代理、重命名卡片、Studio 页面静态服务。
+"""Zhule Studio 后端：词库读写、参考图管理、图片代理、Studio 页面静态服务。
 
-词库目录约定（兼容两套命名）：
-  插件根 prompt/（ComfyUI-Zhule-Studio/prompt，随插件走）
-    ├── 角色/                          ← Tab
-    │   └── .../07_银狼LV.999@/         ← 中间层（chip，@/% 等后缀原样保留）
-    │       └── 银狼LV.999_服装/         ← 卡片文件夹
-    │           └── 银狼LV.999.txt      ← 卡片内容
-    └── 构图/
-        ├── 角度视角/01_正面平视/        ← 卡片文件夹（含 prompt.txt）
-        │   ├── prompt.txt             ← 显式内容文件（优先）
-        │   ├── prompt_cn.txt          ← 中文（可选）
-        │   └── images.txt             ← 每行一个相对 output/ 的图片路径（可选）
-        └── 景深层次/01_浅景深虚化.txt    ← 散放 txt：每个 txt 一张卡片
+数据源（SQLite 单库 modules/studio/zhule.db，数据层见 db.py）：
+  - 词库：表 prompt（父子层级树；entry 叶子为词条：en 英文提示词 / cn 中文 / sort_order 排序）
+  - 图库：表 gallery_image / gallery_tag
+  - 自定义标签：表 custom_tag
 
-命名：{数字}_{名字} 或 {数字} {名字}，无编号也支持。
-卡片判定：
-  1. 文件夹含 prompt.txt → 文件夹卡片（名字取文件夹名）
-  2. 文件夹无子目录且只含一个 txt → 文件夹卡片（名字取文件夹名）
-  3. 其余情况每个散 txt 各成一张卡片（名字取 txt 文件名，如"无.txt"）
-图片：images.txt 优先；否则卡片文件夹内的真实图片；再否则父目录图片（角色立绘）。
+词条卡片结构（由 DB 树还原，前端 Wordbank.js 消费）：
+  {name, number, rawName, relPath, chips, chipKeys, content, content_cn, images, mtime}
+  - relPath：词条在词库树中的原始路径（含编号前缀）
+  - mtime：取自 DB updated_at（按时间排序用）
+  - images：参考图路径数组（相对 output/zhule_studio/），按优先级：
+      1. 词条上传图  zhule_reference/<词条id>/<文件>（卡片详情页上传）
+      2. 图库反查图  zhule_img/<文件>（按词条名匹配图库 tag，只读，不可删）
+
+词库文本与 images.txt 均已不再落盘读写，词库目录仅作历史兼容保留。
 """
 import json
 import os
 import re
-import shutil
-import time
 
 from aiohttp import web
 
 from ..common.paths import _get_output_dir
-from . import state_store
+from . import db  # zhule.db 数据层（词库/图库读写统一走 SQLite）
 
 STUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.abspath(os.path.join(STUDIO_DIR, "web"))
 
-WORD_BANK_ROOT = os.path.abspath(os.path.join(STUDIO_DIR, "..", "..", "prompt"))
+# 词库根：随代码走，位于 modules/studio/prompt/
+_WB_ROOT = os.path.join(STUDIO_DIR, "prompt")
+
+
+def wb_root():
+    """返回词库根：modules/studio/prompt/。"""
+    return _WB_ROOT
+
+
 IMAGE_ROOT = _get_output_dir()
+# output 下统一收纳目录：zhule_img / zhule_thumbs / zhule_link / zhule_reference
+STUDIO_SUBDIR = "zhule_studio"
+# 词条参考图目录：output/zhule_studio/zhule_reference/<词条id>/
+REF_SUBDIR = "zhule_reference"
+# 模块级初始值（兼容外部 from .api import wb_root()）；函数内部应优先调用 wb_root() 动态解析
+WORD_BANK_ROOT = wb_root()
 
 NUMBER_PREFIX = re.compile(r"^(\d+)[_ ]+(.+)$")
 NUMBER_SEP = re.compile(r"^\d+([_ ])")
@@ -106,22 +113,6 @@ def _chip_keys(parts, end=None):
     return keys
 
 
-def _read(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception:
-        return ""
-
-
-def _read_lines(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return [l.strip() for l in f if l.strip()]
-    except Exception:
-        return []
-
-
 def _list_images(folder):
     """文件夹内直接存放的图片文件，稳定排序。"""
     try:
@@ -135,237 +126,202 @@ def _list_images(folder):
         return []
 
 
-def _bank_rel(folder):
-    return os.path.relpath(folder, WORD_BANK_ROOT).replace(os.sep, "/")
+def _ref_dir(entry_id):
+    """词条参考图目录：output/zhule_studio/zhule_reference/<词条id>/（不存在时由调用方创建）。"""
+    return os.path.join(IMAGE_ROOT, STUDIO_SUBDIR, REF_SUBDIR, str(entry_id))
 
 
-def _card_images(folder):
-    """词条卡片参考图数据源（按优先级）：
+def _card_images(node):
+    """词条卡片参考图数据源（按优先级），返回相对 output/zhule_studio/ 的路径数组。
 
-    1. 词条目录内本地上传图片（与 prompt.txt 同级，优先展示）；
-    2. 图库 index 反查：以卡片标识名（目录名去数字前缀）匹配图库 tags，
-       返回带 zhule_img/ 前缀的相对 output 路径（数据源为内存 index，守护线程维护正确性）；
-    3. 父目录图片（角色立绘，仅 Tab 之下的中间层）。
+    1. 词条上传图：zhule_reference/<词条id>/<文件>（卡片详情页上传，可删）；
+    2. 图库反查图：zhule_img/<文件>（按词条名匹配图库 tag，数据源为内存 index，只读）。
 
-    images.txt 中间产物已停用，不再读取/生成。
+    images.txt 与「词库目录内 / 父目录立绘图」机制均已停用，不再读取与生成。
     """
-    local = _list_images(folder)
-    if local:
-        rel = _bank_rel(folder)
-        return [rel + "/" + f for f in local]
+    nid = node.get("id")
+    if nid:
+        imgs = _list_images(_ref_dir(nid))
+        if imgs:
+            return [REF_SUBDIR + "/" + str(nid) + "/" + f for f in imgs]
 
-    name = parse_folder(os.path.basename(folder))[1]
+    name = node.get("name") or ""
     if name:
         from .gallery import get_tag_ref_index  # 延迟导入避免循环依赖
         refs = get_tag_ref_index().get(name)
         if refs:
             return refs
-
-    parent = os.path.dirname(folder)
-    parent_rel = _bank_rel(parent)
-    # 父目录必须是 Tab 之下的中间层（排除 Tab 本身，避免误吃 Tab 级图片）
-    if parent != WORD_BANK_ROOT and "/" in parent_rel:
-        pimgs = _list_images(parent)
-        if pimgs:
-            return [parent_rel + "/" + f for f in pimgs]
     return []
 
 
-def _card_mtime(path):
-    """返回卡片对应路径的 mtime 时间戳（供词库按时间排序），不存在时返回 0。"""
-    try:
-        return int(os.path.getmtime(path))
-    except OSError:
-        return 0
+def _node_raw_name(node):
+    """还原节点原始目录名（与磁盘一致）。
 
-
-def _folder_card(folder, rel, content_file):
-    """文件夹卡片：名字/编号取文件夹名，chips 为父目录链（Tab 之下、卡片文件夹之前的全部祖先层）。"""
-    folder_name = os.path.basename(folder)
-    number, display_name = parse_folder(folder_name)
-    parts = rel.replace(os.sep, "/").split("/") if rel else []
-    chips = [parse_folder(p)[1] for p in parts[1:-1]]
-
-    return {
-        "name": display_name,
-        "number": number,
-        "rawName": folder_name,
-        "relPath": rel.replace(os.sep, "/"),
-        "chips": chips,
-        "chipKeys": _chip_keys(parts, end=len(parts) - 1),
-        "content": _read(content_file),
-        "content_cn": _read(os.path.join(folder, CN_FILE)),
-        "images": _card_images(folder),
-        "mtime": _card_mtime(folder),
-    }
-
-
-def _txt_card(folder, rel, txt_file):
-    """散 txt 卡片：名字/编号取 txt 文件名，chips 为父目录链。
-
-    卡片层定位：优先取与 txt 同名的文件夹（标准结构 XX/XX.txt），
-    找不到则 txt 所在目录即卡片层。chips = Tab 之下、卡片层之前的全部祖先层。
+    sortOrder 为整数时按两位补零还原 f"{sortOrder:02d}_{name}"（全库前缀统一 2 位）；
+    旧缓存遗留字符串（含前导零）原样拼接；无 sortOrder 字段（无前缀节点）直接用 name。
     """
-    stem = os.path.splitext(txt_file)[0]
-    number, display_name = parse_folder(stem)
-    parts = rel.replace(os.sep, "/").split("/") if rel else []
-    _, stem_disp = parse_folder(stem)
-    entry_idx = -1
-    for i in range(len(parts) - 1, 0, -1):
-        if parse_folder(parts[i])[1] == stem_disp:
-            entry_idx = i
-            break
-    end = entry_idx if entry_idx > 0 else len(parts) - 1
-    chips = [parse_folder(p)[1] for p in parts[1:end]]
-
-    return {
-        "name": display_name,
-        "number": number,
-        "rawName": txt_file,
-        "relPath": (rel.replace(os.sep, "/") + "/" + txt_file),
-        "chips": chips,
-        "chipKeys": _chip_keys(parts, end=end),
-        "content": _read(os.path.join(folder, txt_file)),
-        "content_cn": "",
-        "images": [],
-        "mtime": _card_mtime(os.path.join(folder, txt_file)),
-    }
+    so = node.get("sortOrder")
+    nm = node.get("name") or ""
+    if so is None:
+        return nm
+    if isinstance(so, int):
+        return f"{so:02d}_{nm}"
+    return f"{so}_{nm}" if so else nm
 
 
-def _scan_tab(tab_path):
-    cards = []
-    for root, dirs, files in os.walk(tab_path):
-        # 目录按前缀编号排序（编号即顺序）：有编号在前按数字，无编号在后按显示名
-        dirs[:] = sorted([d for d in dirs if not d.startswith(".")],
-                         key=lambda x: (0 if parse_folder(x)[0] > 0 else 1,
-                                        parse_folder(x)[0], parse_folder(x)[1].lower(), x))
-        rel = os.path.relpath(root, WORD_BANK_ROOT)
-        if "/" not in rel and os.sep not in rel:
-            continue  # Tab 根目录本身
-
-        txts = [f for f in files
-                if not f.startswith(".")
-                and f.lower().endswith(".txt")
-                and f not in (CN_FILE, IMAGES_FILE)]
-        if not txts:
-            continue
-
-        if MAIN_FILE in txts:
-            # 显式 prompt.txt 文件夹卡片
-            cards.append(_folder_card(root, rel, os.path.join(root, MAIN_FILE)))
-        elif len(txts) == 1 and not dirs:
-            # 单子 txt 且无子目录：文件夹卡片（保留文件夹名差异，如 银狼LV.999_服装）
-            cards.append(_folder_card(root, rel, os.path.join(root, txts[0])))
-        else:
-            # 散 txt：每个 txt 一张卡片（如 景深层次/01_浅景深虚化.txt、腿部/无.txt）
-            txts.sort(key=lambda x: (parse_folder(os.path.splitext(x)[0])[1].lower(), x))
-            for t in txts:
-                cards.append(_txt_card(root, rel, t))
-
-    # 层级深度优先排序：完整相对路径按每段编号转数字逐段比较（父级分出先后后，
-    # 其全部后代子项整体排在下一个父级分支之前），等价于「先排完 半室外 的所有
-    # 子文件夹，再排 室内」；无编号段排在有编号段之后。
-    cards.sort(key=lambda c: _path_sort_key(c["relPath"]))
-    return cards
+def _wb_tab_ids(tree):
+    """顶层 tab 纯显示名 -> 节点 id 映射（前端切 tab 用 id 定位，展示/URL 用纯 name）。"""
+    out = {}
+    for node in tree:
+        nm = node.get("name") or ""
+        if nm:
+            out[nm] = node.get("id") or ""
+    return out
 
 
-# 词库扫描缓存：按 tab 粒度惰性缓存。仅当访问某个 tab 时才扫描该 tab，已加载 tab 常驻内存
-# （TTL 过期或目录签名变化时只重扫单个 tab，不再全量遍历所有分类）。
-_WB_TTL = 30
-_wb_tab_cache = {}
+def _wb_tab_name_by_id(tree, tab):
+    """tab 参数归一化：返回顶层 tab 纯显示名（name）。
 
+    优先级：① 纯显示名已存在直接短路；② 8 位 hex id → 该节点纯 name；
+    ③ 旧版带编号目录名（如 "01_角色"）→ 该节点纯 name（向后兼容旧存档/旧 URL）；
+    未知 id 原样返回（切片得空，前端会回退目录名）。
+    """
+    if not tab:
+        return tab
+    for node in tree:
+        if (node.get("name") or "") == tab:
+            return tab
+    for node in tree:
+        if node.get("id") and node.get("id") == tab:
+            return node.get("name") or tab
+    for node in tree:
+        if _node_raw_name(node) == tab:
+            return node.get("name") or tab
+    return tab
 
-def _wb_sig():
-    """轻量目录签名：根下每个直接子项（tab）的 mtime/size，返回 {name: sig} 供按 tab 失效。"""
-    sigs = {}
-    try:
-        for name in sorted(os.listdir(WORD_BANK_ROOT)):
-            p = os.path.join(WORD_BANK_ROOT, name)
-            try:
-                st = os.stat(p)
-                sigs[name] = f"{int(st.st_mtime)}:{st.st_size}"
-            except OSError:
-                pass
-    except OSError:
-        pass
-    return sigs
+def _cards_from_tree(tree):
+    """缓存树 → 与原扫描完全一致的 {tabs, data} 结构。
 
+    每张卡片字段：id/name/number/rawName/relPath/chips/chipKeys/content/
+    content_cn/images/mtime。id 为 DB 词条 id（提示词标签按 id 传递，词条改名/移动
+    后不脱钩）；rawName/relPath/chips/chipKeys 由节点原始目录名还原（与磁盘一致）；
+    images/mtime 实时读磁盘（参考图不参与缓存）。
+    tabs 数组与 data 键统一用顶层 tab 纯显示名（name，无编号前缀），
+    前端展示/定位不再出现 "01_角色" 拼接；卡片内部 rawName/relPath 仍为
+    带编号的原始目录名（磁盘定位用）。
 
-def _scan_one_tab(name, sigs):
-    """只扫描单个 tab 并写入按 tab 缓存。"""
-    _wb_tab_cache[name] = {
-        "ts": time.time(),
-        "sig": sigs.get(name),
-        "payload": _scan_tab(os.path.join(WORD_BANK_ROOT, name)),
-    }
-
-
-def scan_word_bank(force=False, tab=None):
-    if not os.path.isdir(WORD_BANK_ROOT):
-        return {"root": WORD_BANK_ROOT, "tabs": [], "data": {},
-                "error": "词库目录不存在: " + WORD_BANK_ROOT}
-
-    now = time.time()
-    sigs = _wb_sig()
-
-    # tabs 列表：根下目录（排除 . 开头），保持原有编号排序
+    节点格式兼容新旧两版：
+    - 新格式：sortOrder + name（sortOrder 为数字前缀字符串，name 为去前缀显示名）
+    - 旧格式：name 直接存原始目录名（含数字前缀），无 sortOrder/raw 字段
+    统一用 _node_raw_name 还原原始目录名，显示名/编号由 parse_folder(raw)
+    推导，保证两种缓存都能还原出一致卡片结构。
+    """
     tabs = []
-    for name in sorted(os.listdir(WORD_BANK_ROOT),
-                       key=lambda n: (0 if parse_folder(n)[0] > 0 else 1,
-                                      parse_folder(n)[0], parse_folder(n)[1].lower(), n)):
-        if not os.path.isdir(os.path.join(WORD_BANK_ROOT, name)) or name.startswith("."):
-            continue
-        tabs.append(name)
+    data = {}
 
-    if force:
-        _wb_tab_cache.clear()
-        if tab is None:
-            # 手动全量刷新：重建所有 tab
-            for name in tabs:
-                _scan_one_tab(name, sigs)
-            return {"root": WORD_BANK_ROOT, "tabs": tabs,
-                    "data": {n: list(_wb_tab_cache[n]["payload"]) for n in tabs}}
+    def collect(node, parts, out):
+        """按原 _folder_card/_txt_card 公式还原卡片字段。
 
-    result = {"root": WORD_BANK_ROOT, "tabs": tabs, "data": {}}
+        parts = 从 Tab 根到当前节点父级的原始目录名列表（不含当前节点）。
+        chips/chipKeys 由 parts 位置直接推导，与磁盘扫描结果逐字段一致。
+        """
+        raw = _node_raw_name(node)
+        children = node.get("children") or []
+        if node.get("type") == "entry":
+            rel = "/".join(parts + [raw]) if parts else raw
+            if raw.lower().endswith(".txt"):
+                # 散 txt 卡片：卡片层 = parts 中显示名与 txt stem 相同的层（原 _txt_card 逻辑）
+                stem = os.path.splitext(raw)[0]
+                stem_disp = parse_folder(stem)[1]
+                entry_idx = -1
+                for i in range(len(parts) - 1, 0, -1):
+                    if parse_folder(parts[i])[1] == stem_disp:
+                        entry_idx = i
+                        break
+                end = entry_idx if entry_idx > 0 else len(parts) - 1
+                out.append({
+                    "name": stem_disp,
+                    "id": node.get("id") or "",
+                    "number": parse_folder(stem)[0],
+                    "rawName": raw,
+                    "relPath": rel,
+                    "chips": [parse_folder(p)[1] for p in parts[1:end]],
+                    "chipKeys": _chip_keys(parts, end=end),
+                    "content": node.get("en") or "",
+                    "content_cn": "",
+                    "images": _card_images(node),
+                    "mtime": node.get("updatedAt") or 0,
+                })
+            else:
+                # 文件夹卡片（DB 中统一为 entry 节点）
+                # parts 不含卡片层，end=len(parts) 等价于原公式中的 len(parts)-1
+                end = len(parts)
+                out.append({
+                    "name": parse_folder(raw)[1],
+                    "id": node.get("id") or "",
+                    "number": parse_folder(raw)[0],
+                    "rawName": raw,
+                    "relPath": rel,
+                    "chips": [parse_folder(p)[1] for p in parts[1:end]],
+                    "chipKeys": _chip_keys(parts, end=end),
+                    "content": node.get("en") or "",
+                    "content_cn": node.get("cn") or "",
+                    "images": _card_images(node),
+                    "mtime": node.get("updatedAt") or 0,
+                })
+            # entry 带 children（含 prompt.txt 仍下钻，如 01_嘴部）：继续递归
+            if children:
+                for child in children:
+                    collect(child, parts + [raw], out)
+            return
+        for child in children:
+            collect(child, parts + [raw], out)
 
-    if tab is not None:
-        # 按需读：只保证目标 tab 数据
-        if tab not in tabs:
-            result["data"][tab] = []
-            return result
-        ent = _wb_tab_cache.get(tab)
-        if ent is None or ent["sig"] != sigs.get(tab) or (now - ent["ts"]) >= _WB_TTL:
-            _scan_one_tab(tab, sigs)
-        result["data"][tab] = list(_wb_tab_cache[tab]["payload"])
-        return result
-
-    # 无指定 tab（首屏/局部刷新）：返回已缓存 tab，未缓存时至少保证第一个 tab 有数据
-    for name, ent in _wb_tab_cache.items():
-        if name in tabs:
-            result["data"][name] = list(ent["payload"])
-    if not result["data"] and tabs:
-        _scan_one_tab(tabs[0], sigs)
-        result["data"][tabs[0]] = list(_wb_tab_cache[tabs[0]]["payload"])
-    return result
+    for tab_node in tree:
+        cards = []
+        collect(tab_node, [], cards)
+        tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
+        tabs.append(tab_disp)
+        data[tab_disp] = cards
+    return {"tabs": tabs, "data": data}
 
 
 # ============================================================
 # HTTP handlers
 # ============================================================
 async def get_wordbank(request):
-    force = request.query.get("refresh") == "1"
-    tab = request.query.get("tab")
-    return web.json_response(scan_word_bank(force=force, tab=(tab or None)))
+    """词库数据（DB 版）：数据源为 zhule.db（表 prompt），前端 Wordbank.js 零改动。
 
+    每次请求直读 DB fetch_tree() 组装卡片（DB 数据恒为最新，无缓存/force 语义），
+    不再扫描 prompt 文件夹、不再读写 wordbank_index.json。
+    """
+    tab = request.query.get("tab")
+    try:
+        tree = db.fetch_tree()
+    except Exception:
+        return web.json_response({"root": wb_root(), "tabs": [], "data": {},
+                                  "error": "词库数据读取失败"})
+    payload = _cards_from_tree(tree)
+    result = {"root": wb_root(), "tabs": payload["tabs"], "data": {},
+              "tab_ids": _wb_tab_ids(tree)}
+    tab = _wb_tab_name_by_id(tree, tab)
+    if tab is not None:
+        result["data"][tab] = payload["data"].get(tab, [])
+        return web.json_response(result)
+    # 无指定 tab（首屏/局部刷新）：与冷启动原行为一致，至少保证第一个 tab 有数据
+    if payload["tabs"]:
+        result["data"][payload["tabs"][0]] = payload["data"].get(payload["tabs"][0], [])
+    return web.json_response(result)
 
 async def get_image(request):
-    """先按相对 output/ 解析（index 反查的 zhule_img/ 路径），找不到再按相对词库根解析（文件夹内图片）。
+    """卡片图片代理：zhule_img/ 与 zhule_reference/ 前缀按 output/zhule_studio/ 解析。
 
-    图库物理目录已迁入 output/zhule_studio/ 下，zhule_img/ 前缀的 path 按新根解析。"""
+    zhule_img/ 为图库反查图，zhule_reference/ 为词条上传参考图。
+    """
     path = request.query.get("path", "")
-    roots = (IMAGE_ROOT, WORD_BANK_ROOT)
-    if path.startswith("zhule_img/"):
-        roots = (os.path.join(IMAGE_ROOT, "zhule_studio"), WORD_BANK_ROOT)
+    roots = (IMAGE_ROOT, wb_root())
+    if path.startswith("zhule_img/") or path.startswith(REF_SUBDIR + "/"):
+        roots = (os.path.join(IMAGE_ROOT, STUDIO_SUBDIR), wb_root())
     for root in roots:
         full = os.path.abspath(os.path.join(root, path))
         if _is_within(root, full) and os.path.isfile(full):
@@ -374,144 +330,64 @@ async def get_image(request):
 
 
 async def post_rename(request):
-    """
-    body: { path: "主题/02_沙滩/服饰/79 丝带边泳装", name: "丝带边泳装，轮廓以缎带饰边",
-            content?: "英文提示词", content_cn?: "中文提示词" }
-
-    取消编号排名逻辑：名字保存/改名时不再自动加编号前缀，重命名词条目录时用纯名字。
-    content/content_cn 可选：提供时同步写回提示词内容文件（文件夹卡片写 prompt.txt /
-    prompt_cn.txt；散 txt 卡片写回该 txt 文件本身，散 txt 不支持中文）。
-    """
+    """编辑词条（DB 版）：改名 name / 内容 en（content）/ 中文 cn（content_cn）写 zhule.db。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     rel_path = (body.get("path") or "").strip()
     name = (body.get("name") or "").strip()
-
     if not rel_path:
         return web.json_response({"error": "缺少 path"}, status=400)
     if not name:
         return web.json_response({"error": "名字不能为空"}, status=400)
-    if INVALID_NAME.search(name):
+    if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
-
-    old_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, rel_path))
-    if not _is_within(WORD_BANK_ROOT, old_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-
-    is_txt = rel_path.lower().endswith(".txt")
-    if is_txt:
-        if not os.path.isfile(old_full):
-            return web.json_response({"error": "文件不存在"}, status=404)
-        if os.path.basename(old_full) in (MAIN_FILE, CN_FILE, IMAGES_FILE):
-            return web.json_response({"error": "不能重命名系统文件"}, status=400)
-        ext = os.path.splitext(old_full)[1]
-        new_name = name + ext
-    else:
-        if not os.path.isdir(old_full):
-            return web.json_response({"error": "文件夹不存在"}, status=404)
-        new_name = name
-
-    parent = os.path.dirname(old_full)
-    new_full = os.path.join(parent, new_name)
-
-    if new_full != old_full and os.path.exists(new_full):
-        return web.json_response({"error": "目标已存在"}, status=409)
-
+    # 兼容旧散 txt 后缀（DB 中散 txt 已归一为 entry 节点，无 .txt 后缀）
+    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
+    node = db.node_by_raw_path(rel_path)
+    if node is None or node.get("type") != "entry":
+        return web.json_response({"error": "词条不存在"}, status=404)
+    nid = int(node["id"])
+    dup = db.sibling_dup(db.get_parent_id(nid), name, exclude_id=nid)
+    if dup is not None and dup != name:
+        return web.json_response({"error": "词条已存在: " + dup}, status=409)
     content = body.get("content")
     content_cn = body.get("content_cn")
-    has_content = isinstance(content, str)
-    has_content_cn = isinstance(content_cn, str)
-
-    # 内容文件定位（与扫描判定一致）：散 txt → 该 txt 本身；文件夹 → prompt.txt 优先，
-    # 否则唯一 txt；重命名后路径自动跟随新目录
-    content_target = None
-    if is_txt:
-        content_target = new_full
-    else:
-        if os.path.isfile(os.path.join(old_full, MAIN_FILE)):
-            content_target = os.path.join(old_full, MAIN_FILE)
-        else:
-            txts = [f for f in os.listdir(old_full)
-                    if not f.startswith(".")
-                    and f.lower().endswith(".txt")
-                    and f not in (CN_FILE, IMAGES_FILE)]
-            if len(txts) == 1:
-                content_target = os.path.join(old_full, txts[0])
-
-    try:
-        if new_full != old_full:
-            os.rename(old_full, new_full)
-        if has_content and content_target:
-            with open(content_target, "w", encoding="utf-8") as f:
-                f.write(content)
-        if has_content_cn and not is_txt:
-            with open(os.path.join(new_full, CN_FILE), "w", encoding="utf-8") as f:
-                f.write(content_cn)
-    except Exception as e:
-        return web.json_response({"error": "保存失败: " + str(e)}, status=500)
-
-    # 目录结构可能已变：使词库扫描缓存失效，保证下次刷新拿到最新数据
-    _wb_tab_cache.clear()
+    ok = db.update_node(
+        nid,
+        name=name,
+        en=(content if isinstance(content, str) else None),
+        cn=(content_cn if isinstance(content_cn, str) else None),
+    )
+    if not ok:
+        return web.json_response({"error": "更新失败"}, status=500)
     return web.json_response({"ok": True})
-
 
 async def post_wordbank_delete(request):
-    """body: { path } 删除词条（散 txt 文件或卡片目录及其文件）。
-
-    仅允许删除词条层（Tab 之下的卡片）；禁止删除 Tab 根目录、词库根目录及系统文件，
-    路径一律校验在词库根目录（插件 prompt/）之内。
-    """
+    """删除词条（DB 版）：递归删除该节点及其子树（zhule.db）。禁止删除顶层 Tab。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     rel_path = (body.get("path") or "").strip()
     if not rel_path:
         return web.json_response({"error": "缺少 path"}, status=400)
-
-    old_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, rel_path))
-    if not _is_within(WORD_BANK_ROOT, old_full) or old_full == os.path.abspath(WORD_BANK_ROOT):
-        return web.json_response({"error": "路径越界"}, status=403)
-
-    is_txt = rel_path.lower().endswith(".txt")
-    if is_txt:
-        if os.path.basename(old_full) in (MAIN_FILE, CN_FILE, IMAGES_FILE):
-            return web.json_response({"error": "不能删除系统文件"}, status=400)
-        if not os.path.isfile(old_full):
-            return web.json_response({"error": "文件不存在"}, status=404)
-    else:
-        if "/" not in rel_path:
-            return web.json_response({"error": "不能删除 Tab 根目录"}, status=400)
-        if not os.path.isdir(old_full):
-            return web.json_response({"error": "文件夹不存在"}, status=404)
-
-    try:
-        if is_txt:
-            os.remove(old_full)
-        else:
-            shutil.rmtree(old_full)
-    except OSError as e:
-        return web.json_response({"error": "删除失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True})
-
+    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
+    node, _, is_root = db.resolve_path(rel_path)
+    if node is None:
+        return web.json_response({"error": "词条不存在"}, status=404)
+    if is_root:
+        return web.json_response({"error": "不能删除 Tab 根目录"}, status=400)
+    count = db.delete_subtree(int(node["id"]))
+    return web.json_response({"ok": True, "deleted": count})
 
 async def post_wordbank_tab_create(request):
-    """body: { name } 在词库根新建一个 Tab 大类目录（纯名字，无编号）。
-
-    校验：非空、无非法字符、不以点开头、显示名不与其他 Tab 重复（含编号前缀的
-    显示名去重，避免出现“角色”与“01_角色”两个同名大类）。
-    """
+    """新建 Tab 大类（DB 版）：INSERT 顶层 category 节点，sort_order 取同层 max+1。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     name = (body.get("name") or "").strip()
     if not name:
         return web.json_response({"error": "分类名不能为空"}, status=400)
@@ -519,262 +395,135 @@ async def post_wordbank_tab_create(request):
         return web.json_response({"error": "名字含非法字符"}, status=400)
     if name.startswith("."):
         return web.json_response({"error": "名字不能以点开头"}, status=400)
-
-    new_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, name))
-    if not _is_within(WORD_BANK_ROOT, new_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-
-    if os.path.exists(new_full):
-        return web.json_response({"error": "分类已存在: " + name}, status=400)
-    if os.path.isdir(WORD_BANK_ROOT):
-        for n in os.listdir(WORD_BANK_ROOT):
-            if n.startswith("."):
-                continue
-            if not os.path.isdir(os.path.join(WORD_BANK_ROOT, n)):
-                continue
-            _, disp = parse_folder(n)
-            if disp.lower() == name.lower():
-                return web.json_response({"error": "分类已存在: " + disp}, status=400)
-
-    try:
-        os.makedirs(new_full)
-    except OSError as e:
-        return web.json_response({"error": "创建失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True, "tab": name})
-
+    dup = db.sibling_dup(None, name)
+    if dup is not None:
+        return web.json_response({"error": "分类已存在: " + dup}, status=400)
+    nid, ok = db.insert_node(None, "category", name)
+    if not ok:
+        return web.json_response({"error": "创建失败"}, status=500)
+    return web.json_response({"ok": True, "tab": name, "id": str(nid)})
 
 async def post_wordbank_chip_create(request):
-    """body: { tab, parent, name } 在指定大类下新建一个小类（子分类）目录。
-
-    tab 为大类目录名（词库根的直接子目录）；parent 为相对 tab 的父路径
-    （如 "A/B"，空串表示直接建在 tab 下）；name 为小类名（纯名字，无编号）。
-    """
+    """新建小类（DB 版）：body { tab, parent, name }，定位父节点后 INSERT category。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     tab = (body.get("tab") or "").strip().strip("/")
     parent = (body.get("parent") or "").strip().strip("/")
     name = (body.get("name") or "").strip()
-
     if not tab:
         return web.json_response({"error": "缺少 tab"}, status=400)
     if not name:
         return web.json_response({"error": "分类名不能为空"}, status=400)
-    if INVALID_NAME.search(name):
+    if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
-    if name.startswith("."):
-        return web.json_response({"error": "名字不能以点开头"}, status=400)
-    if INVALID_NAME.search(parent.replace("/", "")):
-        return web.json_response({"error": "父路径含非法字符"}, status=400)
-
-    tab_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, tab))
-    if not _is_within(WORD_BANK_ROOT, tab_full) or tab_full == os.path.abspath(WORD_BANK_ROOT):
-        return web.json_response({"error": "路径越界"}, status=403)
-    if not os.path.isdir(tab_full):
-        return web.json_response({"error": "大类不存在: " + tab}, status=404)
-
-    parent_full = os.path.abspath(os.path.join(tab_full, parent)) if parent else tab_full
-    if not _is_within(tab_full, parent_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-    if not os.path.isdir(parent_full):
+    rel = "/".join([p for p in (tab + "/" + parent if parent else tab).split("/") if p])
+    node, _, _ = db.resolve_path(rel)
+    if node is None:
         return web.json_response({"error": "父分类不存在"}, status=404)
-
-    new_full = os.path.join(parent_full, name)
-    if os.path.exists(new_full):
-        return web.json_response({"error": "分类已存在: " + name}, status=400)
-
-    # 同级显示名去重（含编号前缀，如“氛围”与“01_氛围”视为重名）
-    try:
-        for n in os.listdir(parent_full):
-            if n.startswith("."):
-                continue
-            if not os.path.isdir(os.path.join(parent_full, n)):
-                continue
-            _, disp = parse_folder(n)
-            if disp.lower() == name.lower():
-                return web.json_response({"error": "分类已存在: " + disp}, status=400)
-    except OSError:
-        pass
-
-    try:
-        os.makedirs(new_full)
-    except OSError as e:
-        return web.json_response({"error": "创建失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True})
-
+    nid = int(node["id"])
+    dup = db.sibling_dup(nid, name)
+    if dup is not None:
+        return web.json_response({"error": "分类已存在: " + dup}, status=400)
+    new_id, ok = db.insert_node(nid, "category", name)
+    if not ok:
+        return web.json_response({"error": "创建失败"}, status=500)
+    return web.json_response({"ok": True, "id": str(new_id)})
 
 async def post_wordbank_card_create(request):
-    """body: { tab, parent, name, content, content_cn } 在父分类下新建词条卡片。
+    """新建词条（DB 版）：body { tab, parent, name, content, content_cn }。
 
-    name 以 .txt 结尾 → 创建散 txt 文件；否则创建文件夹卡片（目录 + prompt.txt，
-    可选 prompt_cn.txt）。
+    兼容旧散 txt 语义：name 以 .txt 结尾时去掉后缀（词库归一化为 entry 节点），
+    散 txt 仍不支持中文（content_cn 非空则 400）。
     """
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     tab = (body.get("tab") or "").strip().strip("/")
     parent = (body.get("parent") or "").strip().strip("/")
     name = (body.get("name") or "").strip()
     content = body.get("content")
     content_cn = body.get("content_cn")
-
     if not tab:
         return web.json_response({"error": "缺少 tab"}, status=400)
     if not name:
         return web.json_response({"error": "名字不能为空"}, status=400)
-    if INVALID_NAME.search(name):
+    if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
-    if name.startswith("."):
-        return web.json_response({"error": "名字不能以点开头"}, status=400)
-    if INVALID_NAME.search(parent.replace("/", "")):
-        return web.json_response({"error": "父路径含非法字符"}, status=400)
-
-    tab_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, tab))
-    if not _is_within(WORD_BANK_ROOT, tab_full) or tab_full == os.path.abspath(WORD_BANK_ROOT):
-        return web.json_response({"error": "路径越界"}, status=403)
-    if not os.path.isdir(tab_full):
-        return web.json_response({"error": "大类不存在: " + tab}, status=404)
-
-    parent_full = os.path.abspath(os.path.join(tab_full, parent)) if parent else tab_full
-    if not _is_within(tab_full, parent_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-    if not os.path.isdir(parent_full):
-        return web.json_response({"error": "父分类不存在"}, status=404)
-
     is_txt = name.lower().endswith(".txt")
     if is_txt:
-        if not os.path.splitext(name)[0]:
+        stem = os.path.splitext(name)[0]
+        if not stem:
             return web.json_response({"error": "名字不能为空"}, status=400)
         if isinstance(content_cn, str) and content_cn.strip():
             return web.json_response({"error": "散 txt 卡片暂不支持中文提示词"}, status=400)
-
-    new_full = os.path.join(parent_full, name)
-    if os.path.exists(new_full):
-        return web.json_response({"error": "词条已存在: " + name}, status=400)
-
-    # 卡片显示名去重：文件夹卡片与散 txt 的显示名均与同级已有卡片比对
-    if os.path.isdir(parent_full):
-        try:
-            for n in os.listdir(parent_full):
-                if n.startswith("."):
-                    continue
-                p = os.path.join(parent_full, n)
-                if os.path.isdir(p):
-                    _, disp = parse_folder(n)
-                    if disp.lower() == name.lower():
-                        return web.json_response({"error": "词条已存在: " + disp}, status=400)
-                elif n.lower().endswith(".txt"):
-                    _, disp = parse_folder(os.path.splitext(n)[0])
-                    if disp.lower() == name.lower():
-                        return web.json_response({"error": "词条已存在: " + disp}, status=400)
-        except OSError:
-            pass
-
-    try:
-        if is_txt:
-            with open(new_full, "w", encoding="utf-8") as f:
-                f.write(content if isinstance(content, str) else "")
-        else:
-            os.makedirs(new_full)
-            with open(os.path.join(new_full, MAIN_FILE), "w", encoding="utf-8") as f:
-                f.write(content if isinstance(content, str) else "")
-            if isinstance(content_cn, str) and content_cn.strip():
-                with open(os.path.join(new_full, CN_FILE), "w", encoding="utf-8") as f:
-                    f.write(content_cn)
-    except OSError as e:
-        return web.json_response({"error": "创建失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True})
-
+        name = stem
+    rel = "/".join([p for p in (tab + "/" + parent if parent else tab).split("/") if p])
+    node, _, _ = db.resolve_path(rel)
+    if node is None:
+        return web.json_response({"error": "父分类不存在"}, status=404)
+    nid = int(node["id"])
+    dup = db.sibling_dup(nid, name)
+    if dup is not None:
+        return web.json_response({"error": "词条已存在: " + dup}, status=400)
+    new_id, ok = db.insert_node(
+        nid, "entry", name,
+        en=(content if isinstance(content, str) else ""),
+        cn=(content_cn if isinstance(content_cn, str) else ""),
+    )
+    if not ok:
+        return web.json_response({"error": "创建失败"}, status=500)
+    return web.json_response({"ok": True, "id": str(new_id)})
 
 async def post_wordbank_image(request):
-    """body: { path, image, action, name } 删除卡片图片 / 取消作为参考图。
+    """删除词条参考图：物理删除 output/zhule_studio/zhule_reference/<词条id>/ 下的图片。
 
-    action=delete：物理删除图片；若该图由 images.txt 引入，同时移出行列表。
-    action=unref：仅把该图从 images.txt 取消（不再作为参考图，文件保留）。
-    返回更新后的卡片图片列表（同 _card_images 兜底规则）。
+    仅支持 action=delete；images.txt 机制已移除，unref 不再支持。
+    图库反查图（zhule_img/ 前缀）来源于图库本体，不允许在此删除。
     """
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     rel_path = (body.get("path") or "").strip()
     image = (body.get("image") or "").strip()
-    action = (body.get("action") or "").strip()
+    action = (body.get("action") or "delete").strip()
     if not rel_path or not image:
         return web.json_response({"error": "缺少 path 或 image"}, status=400)
-    if action not in ("delete", "unref"):
-        return web.json_response({"error": "action 仅支持 delete/unref"}, status=400)
-
-    card_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, rel_path))
-    if not _is_within(WORD_BANK_ROOT, card_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-
-    folder = os.path.dirname(card_full) if os.path.isfile(card_full) else card_full
-    if not os.path.isdir(folder):
-        return web.json_response({"error": "卡片目录不存在"}, status=404)
-
-    txt_path = os.path.join(folder, IMAGES_FILE)
-    lines = _read_lines(txt_path)
-
-    if image in lines:
-        # 图片由 images.txt 引入：delete 删物理文件 + 移行；unref 仅移行
-        if action == "delete":
-            deleted = False
-            for root in (IMAGE_ROOT, WORD_BANK_ROOT):
-                full = os.path.abspath(os.path.join(root, image))
-                if _is_within(root, full) and os.path.isfile(full):
-                    try:
-                        os.remove(full)
-                        deleted = True
-                    except OSError as e:
-                        return web.json_response({"error": "删除文件失败: " + str(e)}, status=500)
-                    break
-            if not deleted:
-                return web.json_response({"error": "图片文件不存在: " + image}, status=404)
-        new_lines = [l for l in lines if l != image]
-        if new_lines:
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(new_lines) + "\n")
-        elif os.path.isfile(txt_path):
-            os.remove(txt_path)
-    else:
-        # 兜底图片（文件夹内 / 父目录）：仅支持物理删除
-        if action == "unref":
-            return web.json_response({"error": "该图片不在 images.txt 中，无法取消参考"}, status=400)
-        full = os.path.abspath(os.path.join(WORD_BANK_ROOT, image))
-        if not _is_within(WORD_BANK_ROOT, full) or not os.path.isfile(full):
-            return web.json_response({"error": "图片文件不存在: " + image}, status=404)
-        try:
-            os.remove(full)
-        except OSError as e:
-            return web.json_response({"error": "删除文件失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True, "images": _card_images(folder)})
+    if action != "delete":
+        return web.json_response({"error": "images.txt 已移除，仅支持 action=delete"}, status=400)
+    prefix = REF_SUBDIR + "/"
+    if not image.startswith(prefix):
+        return web.json_response({"error": "图库反查图不可删除，仅可删除词条上传的参考图"}, status=400)
+    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
+    node, _, _ = db.resolve_path(rel_path)
+    if node is None:
+        return web.json_response({"error": "词条不存在"}, status=404)
+    # 路径形如 zhule_reference/<词条id>/<文件>：校验 id 归属，防跨词条删除
+    parts = image[len(prefix):].split("/")
+    if len(parts) < 2 or parts[0] != str(node["id"]):
+        return web.json_response({"error": "图片不属于该词条"}, status=403)
+    folder = _ref_dir(node["id"])
+    full = os.path.abspath(os.path.join(folder, *parts[1:]))
+    if not _is_within(folder, full):
+        return web.json_response({"error": "图片路径越界"}, status=403)
+    if not os.path.isfile(full):
+        return web.json_response({"error": "图片文件不存在"}, status=404)
+    try:
+        os.remove(full)
+    except OSError as e:
+        return web.json_response({"error": "删除文件失败: " + str(e)}, status=500)
+    return web.json_response({"ok": True, "images": _card_images(node)})
 
 
 async def post_wordbank_image_upload(request):
-    """body(multipart): path=词条relPath, file=图片文件。
-
-    将参考图保存到词条目录（与 prompt.txt 同级），不写 images.txt，
-    不参与图库 output 逻辑。返回更新后的卡片图片列表（同 _card_images 兜底规则）。
-    """
+    """上传词条参考图：写入 output/zhule_studio/zhule_reference/<词条id>/（目录自动创建）。"""
     try:
         reader = await request.multipart()
     except Exception:
         return web.json_response({"error": "multipart 解析失败"}, status=400)
-
     rel_path = None
     file_field = None
     while True:
@@ -787,24 +536,23 @@ async def post_wordbank_image_upload(request):
             file_field = part
     if not rel_path or file_field is None:
         return web.json_response({"error": "缺少 path 或 file"}, status=400)
-
-    card_full = os.path.abspath(os.path.join(WORD_BANK_ROOT, rel_path))
-    if not _is_within(WORD_BANK_ROOT, card_full):
-        return web.json_response({"error": "路径越界"}, status=403)
-    folder = os.path.dirname(card_full) if os.path.isfile(card_full) else card_full
-    if not os.path.isdir(folder):
-        return web.json_response({"error": "卡片目录不存在"}, status=404)
-
+    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
+    node, _, _ = db.resolve_path(rel_path)
+    if node is None:
+        return web.json_response({"error": "词条不存在"}, status=404)
     filename = os.path.basename(file_field.filename or "")
     if not filename:
         return web.json_response({"error": "缺少文件名"}, status=400)
     ext = os.path.splitext(filename)[1].lower()
     if ext not in IMAGE_EXTS:
         return web.json_response({"error": "仅支持图片文件: " + "/".join(sorted(IMAGE_EXTS))}, status=400)
-
-    # 重名防覆盖：追加序号
+    folder = _ref_dir(node["id"])
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+        return web.json_response({"error": "创建参考图目录失败: " + str(e)}, status=500)
     target = os.path.abspath(os.path.join(folder, filename))
-    if not _is_within(WORD_BANK_ROOT, target):
+    if not _is_within(folder, target):
         return web.json_response({"error": "文件名非法"}, status=400)
     if os.path.exists(target):
         stem, _ = os.path.splitext(filename)
@@ -812,7 +560,6 @@ async def post_wordbank_image_upload(request):
         while os.path.exists(os.path.join(folder, f"{stem}_{i}{ext}")):
             i += 1
         target = os.path.join(folder, f"{stem}_{i}{ext}")
-
     try:
         with open(target, "wb") as f:
             while True:
@@ -822,108 +569,21 @@ async def post_wordbank_image_upload(request):
                 f.write(chunk)
     except Exception as e:
         return web.json_response({"error": "保存文件失败: " + str(e)}, status=500)
-
-    _wb_tab_cache.clear()
-    return web.json_response({"ok": True, "images": _card_images(folder)})
-
-
-# ============================================================
-# 词库排序保存：手动触发，按整个树的新顺序把编号写回目录
-# ============================================================
-def _same_numbered(name, idx, disp):
-    """name 是否已等于第 idx 位目标名（兼容 {数字}_{名} 与 {数字} {名}）。"""
-    return name == f"{idx:02d}_{disp}" or name == f"{idx} {disp}"
-
-
-def _renumber_bank_layer(base, rels):
-    """按 rels 顺序重命名 base 下的子项（目录 + 散 txt），生成连续编号。
-
-    两阶段重命名防冲突（全部先转临时名再写回编号名），任一步失败回滚原名。
-    返回实际重命名条目数；顺序未变且编号已连续时返回 0（避免无谓重命名）。
-    """
-    items = []
-    try:
-        for e in os.scandir(base):
-            if e.name.startswith("."):
-                continue
-            if e.is_dir(follow_symlinks=False):
-                items.append(e.name)
-            elif e.is_file(follow_symlinks=False) and e.name.lower().endswith(".txt") \
-                    and e.name not in (MAIN_FILE, CN_FILE, IMAGES_FILE):
-                items.append(e.name)
-    except OSError:
-        return 0
-    if not items:
-        return 0
-
-    ordered = []
-    seen = set()
-    for r in rels:
-        if r in items and r not in seen:
-            ordered.append(r)
-            seen.add(r)
-    rest = [n for n in items if n not in seen]
-    rest.sort(key=lambda n: _seg_key(n))
-    ordered.extend(rest)
-
-    # 顺序与编号均无需变化则跳过
-    changed = False
-    for idx, n in enumerate(ordered, start=1):
-        num, disp = parse_folder(n)
-        if not _same_numbered(n, idx, disp):
-            changed = True
-            break
-    if not changed:
-        return 0
-
-    tmp_list = []
-    renamed = []
-    stamp = int(time.time() * 1000)
-    try:
-        # 阶段1：全部转临时名
-        for i, n in enumerate(ordered):
-            tmp = os.path.join(base, f".__zhule_sort_{stamp}_{i:04d}")
-            os.rename(os.path.join(base, n), tmp)
-            tmp_list.append((tmp, n))
-        # 阶段2：按新序写回连续编号
-        for idx, (tmp, n) in enumerate(tmp_list, start=1):
-            _, disp = parse_folder(n)
-            final = os.path.join(base, f"{idx:02d}_{disp}")
-            os.rename(tmp, final)
-            renamed.append((final, tmp, n))
-    except OSError:
-        # 回滚：final -> tmp，然后 tmp -> 原名
-        for final, tmp, _n in reversed(renamed):
-            try:
-                os.rename(final, tmp)
-            except OSError:
-                pass
-        for tmp, n in reversed(tmp_list):
-            try:
-                os.rename(tmp, os.path.join(base, n))
-            except OSError:
-                pass
-        raise
-    return len(ordered)
+    return web.json_response({"ok": True, "images": _card_images(node)})
 
 
 async def post_wordbank_sort_save(request):
-    """body: { order: { 父相对路径(词库根下, ""表示根): [子项原始名...], ... } }
+    """排序保存（DB 版）：按 order 顺序给各层节点写连续 sort_order，不再重命名目录。
 
-    手动触发「排序保存」：按整个树的新顺序把顺序写回并覆盖文件夹——对每个父目录，
-    其子目录/散 txt 按列表顺序重命名为连续编号（两阶段防冲突，失败回滚）。
-    仅处理前端提交的层级；未出现在列表中的现有子项按原规则排到末尾。
+    body: { order: { 父相对路径(""=根): [子项原始名...], ... } }
     """
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-
     order = body.get("order")
     if not isinstance(order, dict):
         return web.json_response({"error": "order 必须为对象"}, status=400)
-
-    base_root = os.path.realpath(WORD_BANK_ROOT)
     total = 0
     layers = 0
     errors = []
@@ -943,21 +603,15 @@ async def post_wordbank_sort_save(request):
             if r not in clean:
                 clean.append(r)
         if parent:
-            full = os.path.realpath(os.path.join(base_root, parent))
-            if not _is_within(base_root, full) or not os.path.isdir(full):
-                errors.append(f"层级「{parent}」目录不存在或越界")
+            node, _, _ = db.resolve_path(parent)
+            if node is None:
+                errors.append(f"层级「{parent}」不存在")
                 continue
-            base = full
+            n = db.reorder_layer(int(node["id"]), clean)
         else:
-            base = base_root
-        try:
-            n = _renumber_bank_layer(base, clean)
-            total += n
-            layers += 1
-        except OSError as e:
-            errors.append(f"层级「{parent or '(根)'}」重命名失败: {e}")
-
-    _wb_tab_cache.clear()
+            n = db.reorder_top(clean)
+        total += n
+        layers += 1
     try:
         from . import gallery as _gal
         _gal._tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})
@@ -965,130 +619,19 @@ async def post_wordbank_sort_save(request):
         pass
     return web.json_response({"ok": True, "layers": layers, "renamed": total,
                               "errors": errors})
-    """body: { path: 词条相对路径, image: images.txt 中的图片路径, action: "delete"|"unref", name?: 词条名 }
 
-    action=delete：从磁盘删除该图片文件（先按相对 output/ 解析，再按相对词库根解析，
-                   均做越界校验），并从词条目录 images.txt 移除该行。
-    action=unref ：取消作为参考图——从图片 PNG 元数据（zhule_prompt_tags / zhule_tags /
-                   zhule_custom_tags）中移除词条名，并同步移除 images.txt 该行。
-    返回 { ok, images }：images 为更新后的剩余图片列表，前端单卡片刷新用。
-    """
+async def post_wordbank_clean_cn(request):
+    """去中文清理（DB 版）：遍历 zhule.db 的 en 字段，移除中文字符与中文标点。"""
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "JSON 解析失败"}, status=400)
+        body = {}
+    updated, total = db.clean_en_cn()
+    return web.json_response({"ok": True, "stats": {
+        "scanned": total, "checked": total, "cleaned": updated,
+        "skipped_unchanged": 0, "chinese_files": 0, "no_cn": 0, "errors": 0,
+    }})
 
-    rel_path = (body.get("path") or "").strip()
-    image = (body.get("image") or "").strip()
-    action = (body.get("action") or "").strip()
-    name = (body.get("name") or "").strip()
-
-    if not rel_path or not image:
-        return web.json_response({"error": "缺少 path/image"}, status=400)
-    if action not in ("delete", "unref"):
-        return web.json_response({"error": "action 必须是 delete 或 unref"}, status=400)
-    if action == "unref" and not name:
-        return web.json_response({"error": "缺少 name"}, status=400)
-
-    folder = os.path.abspath(os.path.join(WORD_BANK_ROOT, rel_path))
-    if not _is_within(WORD_BANK_ROOT, folder) or folder == os.path.abspath(WORD_BANK_ROOT):
-        return web.json_response({"error": "路径越界"}, status=403)
-    if not os.path.isdir(folder):
-        return web.json_response({"error": "词条目录不存在"}, status=404)
-
-    lines = _read_lines(os.path.join(folder, IMAGES_FILE))
-    if image not in lines:
-        return web.json_response({"error": "该图片不在词条的 images.txt 中"}, status=400)
-
-    # 解析图片真实路径：优先相对 output/（images.txt 约定），其次相对词库根（兼容旧结构）
-    img_full = None
-    for root in (IMAGE_ROOT, WORD_BANK_ROOT):
-        cand = os.path.abspath(os.path.join(root, image))
-        if _is_within(root, cand) and os.path.isfile(cand):
-            img_full = cand
-            break
-    if img_full is None:
-        return web.json_response({"error": "图片文件不存在"}, status=404)
-
-    if action == "delete":
-        try:
-            os.remove(img_full)
-        except OSError as e:
-            return web.json_response({"error": "图片删除失败: " + str(e)}, status=500)
-    else:
-        # 取消参考图：移除 PNG 元数据中等于词条名的 tag（JSON 数组格式）
-        from . import png_text
-        texts = png_text.read_png_text(img_full)
-        updates = {}
-        for kw in ("zhule_prompt_tags", "zhule_tags", "zhule_custom_tags"):
-            raw = texts.get(kw)
-            if not raw:
-                continue
-            try:
-                arr = json.loads(raw)
-                if not isinstance(arr, list):
-                    continue
-            except Exception:
-                continue
-            clean = [str(t) for t in arr if str(t).strip() and str(t).strip() != name]
-            if len(clean) != len(arr):
-                updates[kw] = json.dumps(clean, ensure_ascii=False)
-        if updates and not png_text.write_png_text(img_full, updates):
-            return web.json_response({"error": "PNG 元数据写入失败"}, status=500)
-
-    # 同步 images.txt：移除该行
-    remaining = [l for l in lines if l != image]
-    try:
-        with open(os.path.join(folder, IMAGES_FILE), "w", encoding="utf-8") as f:
-            f.write("\n".join(remaining) + ("\n" if remaining else ""))
-    except OSError as e:
-        return web.json_response({"error": "images.txt 写入失败: " + str(e)}, status=500)
-
-    return web.json_response({"ok": True, "images": remaining})
-
-
-# ============================================================
-# 状态落盘：网页选词变化 → 本地 json（按ID），节点执行时读取
-# ============================================================
-async def post_state_save(request):
-    """body: { bindId: "ID", data: { prompt, ... } }"""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "JSON 解析失败"}, status=400)
-
-    bind_id = (body.get("bindId") or "").strip()
-    if not state_store.valid_id(bind_id):
-        return web.json_response({"error": "ID非法"}, status=400)
-    data = body.get("data")
-    if data is None:
-        return web.json_response({"error": "缺少 data"}, status=400)
-
-    if not state_store.save_state(bind_id, data):
-        return web.json_response({"error": "写入失败"}, status=500)
-    return web.json_response({"ok": True})
-
-
-async def post_state_delete(request):
-    """body: { bindId: "ID" }"""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "JSON 解析失败"}, status=400)
-
-    bind_id = (body.get("bindId") or "").strip()
-    if not state_store.valid_id(bind_id):
-        return web.json_response({"error": "ID非法"}, status=400)
-    return web.json_response({"ok": state_store.delete_state(bind_id)})
-
-
-async def get_state_list(request):
-    return web.json_response({"files": state_store.list_state()})
-
-
-# ============================================================
-# Studio 页面静态服务
-# ============================================================
 async def get_index(request):
     index = os.path.join(WEB_DIR, "index.html")
     if not os.path.isfile(index):
@@ -1109,3 +652,4 @@ async def get_static(request):
     if ctype:
         return web.FileResponse(full, headers={"Content-Type": ctype})
     return web.FileResponse(full)
+

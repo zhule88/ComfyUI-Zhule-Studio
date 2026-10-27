@@ -52,44 +52,15 @@ class ZhuleStudio:
             parts.append(item.get("content", ""))
         return ", ".join(p for p in parts if p)
 
-    def _load_state_selected(self, bind_id=""):
-        """有ID且存在 state 文件时，返回网页最近保存的选中词列表；无则返回 None。
-
-        方案：网页选词防抖写入 modules/studio/state/<ID>.json，
-        节点运行时临时读取（画布手动 Run 也读最新）；widget _selected 仅作无文件时的兜底。
-        """
-        if not bind_id:
-            return None
-        try:
-            from .state_store import load_state
-        except Exception:
-            try:
-                from modules.studio.state_store import load_state
-            except Exception:
-                return None
-        try:
-            payload = load_state(bind_id)
-        except Exception:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            return None
-        selected = data.get("selected")
-        if not isinstance(selected, list):
-            return None
-        return [s for s in selected if isinstance(s, dict) and s.get("content")]
-
     def encode(self, clip, ID="", 前置提示词="", 负面提示词="", _selected="[]"):
-        remote = self._load_state_selected(ID)
-        if remote is not None:
-            # 网页有保存记录（含清空）→ 以它为准；None 表示无文件才退回 widget _selected
-            items = remote
-            selected = ", ".join(s["content"] for s in remote)
-        else:
-            items = self._parse_items(_selected)
+        items = self._parse_items(_selected)
+        if items:
+            # widget _selected 有词条（词库页驱动时 studio.js 已写入本轮真实 items，
+            # 含遍历/随机池抽出的校服词条）→ 以它为准，避免 state 文件滞后导致出图雷同
             selected = self._parse_selected(_selected)
+        else:
+            # widget 为空（新节点/画布手动 Run）：无词条，不拼接提示词
+            selected = ""
         if 前置提示词 and selected:
             positive = 前置提示词 + ", " + selected
         else:

@@ -31,7 +31,7 @@ const TagNode = {
         padding: Math.round(5 * scale) + 'px ' + Math.round(12 * scale) + 'px',
       };
     };
-    function onLeft() { emit('add', props.node.name); }
+    function onLeft() { emit('add', props.node); }
     function onCtx(e) {
       e.preventDefault();
       if (e.ctrlKey) {
@@ -105,7 +105,7 @@ export default {
     );
 
     // 左键：放置到外部过滤区（待生效），父组件决定新增/恢复/移除
-    function setFilter(name) { emit('add', name); }
+    function setFilter(node) { emit('add', node); }
     // 面板内已放置标签：点击移除
     function removeFilter(name) {
       const t = props.selected.find((x) => x.name === name);

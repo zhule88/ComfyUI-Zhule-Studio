@@ -85,13 +85,14 @@ async function handleRunMessage(msg) {
   }
 
   // 写入网页选词；显式保证前端序列化进 prompt（勿依赖 hidden 默认行为）
-  // 对象格式 {name, content}：name=词条名（节点 tags 输出 / SaveImage 提取标签用），content=提示词文本
+  // 对象格式 {id, name, content}：id=词条 id（SaveImage 提取提示词标签用，词条改名/移动不脱钩），
+  // name=词条名（节点 tags 输出用），content=提示词文本
   const items = Array.isArray(msg.items) ? msg.items.map((s) => {
     if (s && typeof s === 'object' && !Array.isArray(s)) {
-      return { name: String(s.name || ''), content: String(s.content || '') };
+      return { id: String(s.id || ''), name: String(s.name || ''), content: String(s.content || '') };
     }
-    // 兼容纯字符串消息：无 name 时节点 tags 输出为空，SaveImage 回退存原字符串
-    return { name: '', content: String(s) };
+    // 兼容纯字符串消息：无 id/name 时节点 tags 输出为空，SaveImage 回退存原字符串
+    return { id: '', name: '', content: String(s) };
   }) : [];
   w.value = JSON.stringify(items);
   if (!w.options) w.options = {};

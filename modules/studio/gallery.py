@@ -1,20 +1,22 @@
 """Zhule Gallery 后端：图片索引、聚合元数据、缩略图缓存、打标（写 PNG 元数据）。
 
 数据模型（与 ZhuleSaveImage v2 / 图库字段化架构一致）：
-- 图片元数据存在 PNG tEXt chunk：zhule_model / zhule_loras / zhule_tags / zhule_prompt_tags /
+- 图片元数据存在 PNG tEXt chunk：zhule_model / zhule_loras / zhule_prompt_tags /
   zhule_custom_tags / prompt / workflow
-- 标签三类分源：
-  * zhule_tags：图库详情页手动打标（可增删）
-  * zhule_prompt_tags：ZhuleStudio 提示词选中词（保存时写入，图库只读）
-  * zhule_custom_tags：工作流自定义 tag（SaveImage tags 端口写入，图库只读）
+- 标签两源（zhule_tags 已废弃并并入 zhule_custom_tags，见 _backfill_tag_fields 存量迁移）：
+  * zhule_prompt_tags：ZhuleStudio 提示词选中词（保存时写入，图库只读，可按项删）
+  * zhule_custom_tags：自定义标签（SaveImage 自定义标签端口 + 图库详情页打标，可增删）
 - 图库根目录：output/zhule_studio/zhule_img（只扫这一个目录，历史旧目录一律忽略）
-- 索引：启动/刷新时扫描图库根目录读取元数据，json 缓存到本模块 gallery/index.json
+- 索引：由写入点维护（SaveImage 入库 / 删图 / 打标各自行级写库），落 zhule.db
+  gallery_image/gallery_tag；全量遍历仅由设置面板『重建索引』手动触发，无守护线程轮询
 - 用户自定义 tag 分组：gallery/meta.json
 - 打标：写 PNG tEXt chunk（不重编码像素），保留原 mtime
 
 索引记录：
   key: 相对图库根目录的 posix 路径（唯一）
-  mtime/size/name/model/loras/tags/hasWF/hasPrompt
+  mtime/size/name/model/loras/tags/prompt/hasPrompt
+  prompt 为 PNG tEXt prompt 原文（落 zhule.db gallery_image.prompt，避免重复读 PNG）；
+  hasPrompt 由 prompt 非空推导；hasWF 不再落库，详情接口实时读 PNG workflow 推导
   tags 为三源合并（供筛选/搜索）；详情接口按来源分开返回
 """
 import asyncio
@@ -29,15 +31,16 @@ import shutil
 import folder_paths
 from aiohttp import web
 
+from . import db
 from . import png_text
-from .api import WORD_BANK_ROOT, parse_folder, _path_sort_key
+from .api import _path_sort_key, _node_raw_name
 from ..common.paths import _get_output_dir
 
 GALLERY_DIR = os.path.dirname(os.path.abspath(__file__))
-INDEX_FILE = os.path.join(GALLERY_DIR, "gallery", "index.json")
-META_FILE = os.path.join(GALLERY_DIR, "gallery", "meta.json")
-STUDIO_SUBDIR = "zhule_studio"  # output 下统一收纳目录：zhule_img / zhule_thumbs / zhule_link
-SCHEMA_VERSION = 3  # 图库数据迁入 output/zhule_studio 下
+# 图库索引已迁移 SQLite（zhule.db gallery_image / gallery_tag 表），不再读写 cache/gallery_index.json。
+# 自定义标签字典+分组也已迁入 zhule.db custom_tag 表，不再读写 gallery/meta.json。
+STUDIO_SUBDIR = "zhule_studio"  # output 下统一收纳目录：zhule_img / zhule_thumbs / zhule_link / zhule_reference
+SCHEMA_VERSION = 4  # schema4：records[].tags 元素升级为 {id,name}（id 定位、name 展示/过滤）；读取兼容 schema3 字符串数组
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 _SKIP_DIRS = {"thumbnails", "zhule_thumbs", "prompt_csv", "zhule image"}
@@ -64,30 +67,6 @@ def _safe_full(rel):
 
 
 # ==================== 索引 ====================
-
-def _default_meta():
-    return {"tags": [], "updatedAt": ""}
-
-
-def load_meta():
-    try:
-        with open(META_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict) and isinstance(data.get("tags"), list):
-            return data
-    except Exception:
-        pass
-    return _default_meta()
-
-
-def save_meta(meta):
-    os.makedirs(os.path.dirname(META_FILE), exist_ok=True)
-    meta["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    tmp = META_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, META_FILE)
-
 
 def _tag_groups(meta):
     """name -> group 映射。"""
@@ -200,20 +179,6 @@ def _split_tags(raw):
     return [line.strip() for line in s.splitlines() if line.strip()]
 
 
-def _merge_tag_sources(texts):
-    """合并三源标签（手动优先），去重保持顺序，返回字符串数组（索引/筛选用）。"""
-    manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
-    prompt = _clean_prompt_tags(_json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags"))
-    custom = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
-    seen = set()
-    merged = []
-    for n in manual + prompt + custom:
-        if n not in seen:
-            seen.add(n)
-            merged.append(n)
-    return merged
-
-
 def _extract_selected_names(pt):
     """从 PNG 内 prompt JSON 提取 ZhuleStudio 选中词 name 数组（提示词标签来源）。"""
     if not pt:
@@ -232,15 +197,9 @@ def _extract_selected_names(pt):
                 sel = []
             if not isinstance(sel, list):
                 return []
-            # 兼容：网页经 state 文件驱动时 widget _selected 恒为 "[]"，PNG 元数据丢失词条。
-            # 用ID从 state 文件兜底读取（与 ZhuleStudio 节点运行逻辑一致）。
+            # 空快照（新节点/手动 Run 未选词）直接返回空，不再从 state 文件兜底
             if not sel:
-                try:
-                    from .state_store import load_state
-                    payload = load_state(str((node.get("inputs") or {}).get("ID") or ""))
-                    sel = (payload or {}).get("data", {}).get("selected") or []
-                except Exception:
-                    sel = []
+                return []
             names = []
             for s in sel:
                 if isinstance(s, dict):
@@ -305,34 +264,53 @@ def _extract_zhule_model(texts):
 
 
 def _backfill_tag_fields(full, texts):
-    """存量迁移：从 prompt 元数据回填只读标签字段，并把手动标签中重复项移除。
+    """存量迁移：把提示词标签的老「词条名」转成词条 id，并把废弃键 zhule_tags 并入自定义标签。
 
-    仅当 zhule_prompt_tags / zhule_custom_tags 均为空、且 PNG 内带 prompt 元数据时执行
-    （早期保存节点未写入标签字段，从 prompt 的 ZhuleStudio 选中词快照回填只读标签，
-    供图库筛选使用）；同时剔除手动标签 zhule_tags 中与回填结果重复的项。
-    返回 (prompt_tags, custom_tags, manual_tags)。
+    三件事，都遵循「仅在确实有变化时才写 PNG」（全量重建时避免无谓重写每张图）：
+    1. zhule_prompt_tags 里是老词条名时，按词库反查转成 id 写回（id 化迁移）；
+    2. 早期保存节点未写标签字段时，从 prompt 的 ZhuleStudio 选中词快照回填；
+    3. zhule_tags（旧手动打标键）已废弃：并入 zhule_custom_tags 后删除该键。
+    返回 (prompt_ids, custom_tags)，prompt_ids 为词条 id 字符串数组。
     """
-    prompt_tags = _clean_prompt_tags(_json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags"))
+    raw_pt = _json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags")
+    pids, legacy_names = _split_tag_ids(raw_pt)
     custom_tags = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
     manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
-    if not prompt_tags and not custom_tags and texts.get("prompt"):
+    backfill_hit = False
+    if not raw_pt and not custom_tags and texts.get("prompt"):
         sel = _extract_selected_names(texts.get("prompt"))
         if sel:
-            prompt_tags = sel
+            legacy_names = _clean_prompt_tags(sel)
+            backfill_hit = True
         custom = _extract_save_tags(texts.get("prompt"))
         if custom:
             custom_tags = custom
-    keep = [t for t in manual if t not in prompt_tags and t not in custom_tags]
+            backfill_hit = True
+    # 老词条名 -> id（词库里已删的词条转不出 id，读取侧跳过即可，不写回空数组）
+    if legacy_names:
+        idx = _tag_id_index()
+        for n in legacy_names:
+            i = idx.get(n)
+            if i and i not in pids:
+                pids.append(i)
+    # 旧手动标签并入自定义标签（去重保序）
+    merged = list(custom_tags)
+    for t in manual:
+        if t not in merged:
+            merged.append(t)
     updates = {}
-    if prompt_tags:
-        updates["zhule_prompt_tags"] = json.dumps(prompt_tags, ensure_ascii=False)
-    if custom_tags:
-        updates["zhule_custom_tags"] = json.dumps(custom_tags, ensure_ascii=False)
-    if len(keep) != len(manual):
-        updates["zhule_tags"] = json.dumps(keep, ensure_ascii=False)
+    # 仅确实拿到 id 时才写回：老名全部失落（词条已删）时不覆盖，避免把数据写成空
+    if (legacy_names or backfill_hit) and pids:
+        updates["zhule_prompt_tags"] = json.dumps(pids, ensure_ascii=False)
+    if manual:
+        # 有旧手动标签：并入后整体重写，并删除废弃键（write_png_text 中 None 表示删除）
+        updates["zhule_custom_tags"] = json.dumps(merged, ensure_ascii=False)
+        updates["zhule_tags"] = None
+    elif backfill_hit and custom_tags:
+        updates["zhule_custom_tags"] = json.dumps(merged, ensure_ascii=False)
     if updates and not png_text.write_png_text(full, updates):
         print(f"[ZhuleGallery] 标签字段迁移失败: {full}")
-    return prompt_tags, custom_tags, keep
+    return pids, merged
 
 
 def _extract_positive_prompt(pt):
@@ -397,22 +375,7 @@ def _extract_positive_prompt(pt):
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             data = None
-    # 兼容：网页经 state 文件驱动时 widget _selected 恒为 "[]"，PNG 元数据丢失词条。
-    # 用ID从 state 文件兜底读取（与 ZhuleStudio 节点运行逻辑一致），
-    # 使旧图也能还原完整提示词。
-    if not isinstance(data, list) or not data:
-        try:
-            from .state_store import load_state
-        except Exception:
-            load_state = None
-        if load_state is not None:
-            try:
-                payload = load_state(str(inputs.get("ID") or ""))
-                sel = (payload or {}).get("data", {}).get("selected")
-                if isinstance(sel, list):
-                    data = [s for s in sel if isinstance(s, dict) and s.get("content")]
-            except Exception:
-                data = None
+    # 快照为空（新节点/手动 Run 未选词）不再从 state 文件兜底
     parts = []
     if isinstance(data, list):
         for item in data:
@@ -435,50 +398,20 @@ def build_index(force=False):
     """全量重建索引（只扫 zhule_image）。返回索引列表。"""
     global _index, _index_built_at, _index_rev
     root = _gallery_root()
-    meta = load_meta()
-    groups = _tag_groups(meta)
     records = []
+    # 复用 _make_record：与单点写入完全同一套字段逻辑（含存量迁移、id->名字还原）
     for rel, full in _scan_images(root):
         try:
-            st = os.stat(full)
-        except OSError:
+            records.append(_make_record(rel, full))
+        except Exception:
             continue
-        texts = png_text.read_png_text(full)
-        model = _extract_zhule_model(texts)
-        loras = _json_list(texts.get("zhule_loras"), "zhule_loras")
-        # 存量迁移 + 三源合并（手动优先，供筛选/搜索）
-        _pt, _ct, _mt = _backfill_tag_fields(full, texts)
-        tags = _mt + [t for t in (_pt + _ct) if t not in _mt]
-        wf = texts.get("workflow")
-        pt = texts.get("prompt")
-        records.append({
-            "key": rel,
-            "name": os.path.basename(full),
-            "mtime": int(st.st_mtime),
-            "size": st.st_size,
-            "model": model,
-            "loras": loras,
-            "tags": tags,
-            "hasWF": bool(wf),
-            "hasPrompt": bool(pt),
-            "tg": [groups.get(t, "其他") for t in tags],
-        })
     # 按时间倒序缓存
     records.sort(key=lambda r: r["mtime"], reverse=True)
     _index = records
     _index_rev += 1
     _index_built_at = time.time()
-    try:
-        os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
-        payload = {"schema": SCHEMA_VERSION, "builtAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                   "count": len(records), "records": records}
-        with _rename_lock:
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-    except Exception as e:
-        print(f"[ZhuleGallery] 索引缓存写入失败: {e}")
+    if not _write_index_cache():
+        print("[ZhuleGallery] 索引缓存写入失败（zhule.db 图库表）")
     print(f"[ZhuleGallery] 索引重建完成: {len(records)} 张")
     return records
 
@@ -508,33 +441,31 @@ def _start_bg_build(force=False):
 def get_index():
     """获取索引。
 
-    索引来源仅两种：
-    1. 守护线程 incremental_sync 增量同步（日常主力，覆盖增删改）；
-    2. 手动 rescan（设置面板『重建索引』按钮，全量遍历唯一入口）。
-    index.json 缺失/损坏/schema 不符时**不自动全量重建**——全量遍历属大范围操作，
-    只允许人工手动触发，此处返回空列表并提示用户手动重建。
+    索引由「写入点」维护：SaveImage 保存即入库、删图与打标各自行级写库，
+    无守护线程轮询磁盘。
+    库为空/不可用时**不自动全量重建**——全量遍历属大范围操作，只允许人工在
+    设置面板点『重建索引』，此处返回空列表并提示用户。
     """
     global _index, _index_rev
     if _index is None:
-        # 尝试从缓存加载
+        # 尝试从 DB 加载（zhule.db 图库表）
         try:
-            with open(INDEX_FILE, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            if payload.get("schema") == SCHEMA_VERSION and isinstance(payload.get("records"), list):
-                _index = payload["records"]
-                _index_rev += 1
+            records = db.gallery_load_records()
         except Exception:
-            _index = None
-        if _index is None:
-            print("[ZhuleGallery] 索引缺失/损坏，跳过自动重建：请在设置面板手动点击『重建索引』")
+            records = None
+        if not records:
+            # 表缺失时 DB 层会自建空表并返回 []，此处统一按「索引为空」处理
+            print("[ZhuleGallery] 索引为空/不可用，跳过自动重建：请在设置面板手动点击『重建索引』")
             return []
+        _index = records
+        _index_rev += 1
     return _index
 
 
 def get_tag_ref_index():
     """tag -> [带 zhule_img/ 前缀的相对 output 路径] 反向引用索引（词库参考图数据源）。
 
-    以内存 _index 为唯一事实源（守护线程增量同步维护其正确性），一次遍历构建
+    以内存 _index 为唯一事实源（写入点行级写库维护其正确性），一次遍历构建
     {tag: [path, ...]} 并按 _index_rev 版本号失效重建，避免词库每卡片 O(N) 全扫。
     索引不可用（缺失/损坏未重建）时返回空 dict。
     """
@@ -572,7 +503,7 @@ def aggregate(records):
             model_count[r["model"]] = model_count.get(r["model"], 0) + 1
         for l in r.get("loras", []):
             lora_count[l] = lora_count.get(l, 0) + 1
-    meta = load_meta()
+    meta = db.custom_tag_meta()
     groups = _tag_groups(meta)
     tags = [{"name": n, "count": c, "group": groups.get(n, "其他")}
             for n, c in tag_count.items()]
@@ -629,115 +560,75 @@ def _split_csv(raw):
 
 
 # ==================== 标签层级树（基于词库 prompt 目录） ====================
-# 词库目录结构与 api.py 卡片判定保持一致：
-#   顶层 = Tab 目录；中间层 = 普通子目录；卡片层 = 词条（叶子）。
-# 判定叶子：目录含 prompt.txt，或目录无子目录且恰有一个非系统 txt（文件夹卡片）；
-#   其余散 txt 单独成叶。
-_TREE_TTL = 30
+_TREE_TTL = 600
 _tree_cache = {"ts": 0.0, "sig": None, "tree": None, "anc": None}
-_TREE_SKIP = {"__pycache__"}
-
-
-# ==================== 标签树排序（编号即顺序） ====================
-
-def _within_bank(rel):
-    """rel（相对词库根）是否位于词库目录内，防路径穿越。"""
-    base = os.path.realpath(WORD_BANK_ROOT)
-    full = os.path.realpath(os.path.join(base, rel))
-    try:
-        return os.path.commonpath([base, full]) == base
-    except ValueError:
-        return False
-
-
-def _dir_sort_key(name):
-    """按文件夹前缀编号排序：有编号在前按数字（去零），无编号在后按名称。"""
-    num, disp = parse_folder(name)
-    return (0 if num > 0 else 1, num, disp.lower(), disp)
 
 
 def _tree_sig():
-    """轻量目录签名：词库根目录与直接子项（tab）的 mtime/size。"""
-    parts = []
+    """词库树签名：zhule.db 数据版本号（词库每次写操作递增），驱动 TTL 缓存失效。
+
+    不再扫描词库磁盘目录（词库已切 DB，无目录变更可观察）。"""
     try:
-        parts.append(str(os.stat(WORD_BANK_ROOT).st_mtime))
-        for name in sorted(os.listdir(WORD_BANK_ROOT)):
-            p = os.path.join(WORD_BANK_ROOT, name)
-            try:
-                st = os.stat(p)
-                parts.append(f"{name}:{int(st.st_mtime)}:{st.st_size}")
-            except OSError:
-                pass
-    except OSError:
-        pass
-    return "|".join(parts)
+        return "db:" + str(db.version())
+    except Exception:
+        return "db:?"
 
 
-def _tree_leaf_dir(dirpath):
-    """目录是否为词条（卡片）层：含 prompt.txt，或无子目录且恰有一个非系统 txt。"""
+def _wb_tree_data():
+    """读 zhule.db 词库树（db.fetch_tree()）；读取失败返回 None。
+
+    薄封装仅为兼容旧调用点把「读树失败」表达成 None，不再有任何扫盘回退。
+    """
     try:
-        entries = list(os.scandir(dirpath))
-    except OSError:
-        return True
-    files = [e for e in entries if e.is_file(follow_symlinks=False)]
-    dirs = [e for e in entries if e.is_dir(follow_symlinks=False)]
-    for f in files:
-        if f.name == "prompt.txt":
-            return True
-    if not dirs:
-        txts = [f for f in files if f.name.lower().endswith(".txt")
-                and f.name not in ("prompt_cn.txt", "images.txt")]
-        if len(txts) == 1:
-            return True
-    return False
+        return db.fetch_tree()
+    except Exception:
+        return None
 
 
-def _build_tag_tree():
-    """扫描词库目录，返回 (tree, ancestors)。
-    tree: [{name, rel, depth, leaf, children}]（顶层为 tab）
-    ancestors: name -> tuple(祖先显示名)（不含自身；仅记录有目录归属的节点）
+def _tag_tree_from_cache(tree_nodes):
+    """由 zhule.db 词库树构造标签树 (tree, ancestors)。
+
+    tree 元素：{id, name, rel, depth, leaf, children}；
+    rel 由父链原始节点名还原；id 为词条 id（词条改名/移动后不脱钩）。
     """
     tree = []
     anc = {}
 
-    def walk(dirpath, depth, anc_names):
-        nodes = []
-        parent_rel = os.path.relpath(dirpath, WORD_BANK_ROOT).replace(os.sep, "/")
-        if parent_rel == ".":
-            parent_rel = ""
-        try:
-            entries = sorted(os.scandir(dirpath), key=lambda e: _dir_sort_key(e.name))
-        except OSError:
-            return nodes
-        for e in entries:
-            if e.name.startswith(".") or e.name in _TREE_SKIP:
-                continue
-            if e.name in ("prompt.txt", "prompt_cn.txt", "images.txt"):
-                continue
-            if e.is_dir(follow_symlinks=False):
-                _, disp = parse_folder(e.name)
-                rel = os.path.relpath(e.path, WORD_BANK_ROOT).replace(os.sep, "/")
-                children = walk(e.path, depth + 1, anc_names + [disp])
-                leaf = _tree_leaf_dir(e.path)
-                node = {"name": disp, "rel": rel, "depth": depth,
-                        "leaf": leaf, "children": children if not leaf else []}
-                nodes.append(node)
-                if anc_names:
-                    anc[disp] = tuple(anc_names)
-            elif e.name.lower().endswith(".txt"):
-                stem = os.path.splitext(e.name)[0]
-                _, disp = parse_folder(stem)
-                rel = os.path.relpath(e.path, WORD_BANK_ROOT).replace(os.sep, "/")
-                node = {"name": disp, "rel": rel, "depth": depth,
-                        "leaf": True, "children": []}
-                nodes.append(node)
-                if anc_names:
-                    anc[disp] = tuple(anc_names)
-        return nodes
+    def build(nodes, depth, anc_names, parent_rawnames):
+        out = []
+        for nd in nodes or []:
+            raw = _node_raw_name(nd)
+            disp = nd.get("name") or raw
+            rel = "/".join(parent_rawnames + [raw])
+            if nd.get("type") == "entry":
+                node = {"id": nd.get("id") or "", "name": disp, "rel": rel,
+                        "depth": depth, "leaf": True, "children": []}
+            else:
+                kids = build(nd.get("children") or [], depth + 1,
+                             anc_names + [disp], parent_rawnames + [raw])
+                node = {"id": nd.get("id") or "", "name": disp, "rel": rel,
+                        "depth": depth, "leaf": False, "children": kids}
+            out.append(node)
+            if anc_names:
+                anc[disp] = tuple(anc_names)
+        return out
 
-    if os.path.isdir(WORD_BANK_ROOT):
-        tree = walk(WORD_BANK_ROOT, 0, [])
+    for top in tree_nodes or []:
+        raw = _node_raw_name(top)
+        disp = top.get("name") or raw
+        kids = build(top.get("children") or [], 1, [disp], [raw])
+        tree.append({"id": top.get("id") or "", "name": disp, "rel": raw,
+                     "depth": 0, "leaf": not bool(kids), "children": kids})
     return tree, anc
+
+
+def _build_tag_tree():
+    """返回 (tree, ancestors)，数据源为 zhule.db 的 prompt 表（不再扫盘）。
+
+    tree: [{id, name, rel, depth, leaf, children}]（顶层为 tab）
+    ancestors: name -> tuple(祖先显示名)（不含自身；仅记录有目录归属的节点）
+    """
+    return _tag_tree_from_cache(db.fetch_tree())
 
 
 def get_tag_tree(force=False):
@@ -753,14 +644,383 @@ def get_tag_tree(force=False):
     return tree, anc
 
 
-def _tag_hit(tag, rec_tags, anc):
-    """标签命中：直接匹配 或 图片某直接 tag 的祖先归属包含该标签。"""
-    if tag in rec_tags:
+# ==================== 词条中文提示词索引（tag -> prompt_cn.txt 首行） ====================
+# 图库 tag 与词库词条同源（词条名 = 目录名去数字前缀），中文提示词框按 tag 拼接展示，
+# 直接复用词库词条目录下的 prompt_cn.txt 首行。TTL + 目录签名缓存，与标签树策略一致。
+# 数据源为 zhule.db prompt 表，TTL 缓存（已无扫盘回退）。
+_TAG_CN_CACHE = {"ts": 0.0, "sig": None, "data": None}
+
+
+def _tag_cn_index():
+    """词条显示名 -> 中文提示词（cn 首行），读 zhule.db prompt 表 + TTL 缓存。"""
+    now = time.time()
+    sig = _tree_sig()
+    if _TAG_CN_CACHE["data"] is not None \
+            and _TAG_CN_CACHE["sig"] == sig \
+            and (now - _TAG_CN_CACHE["ts"]) < _TREE_TTL:
+        return _TAG_CN_CACHE["data"]
+    data = db.tag_cn_index()
+    _TAG_CN_CACHE.update({"ts": now, "sig": sig, "data": data})
+    return data
+
+
+# ==================== 词条英文提示词索引（tag -> prompt.txt 全文） ====================
+# 图库详情英文提示词高亮按英文词条文本在 promptPreview 中子串匹配，
+# 词条名是中文目录名，直接匹配英文永不命中，故读词条目录下 prompt.txt 作英文词条文本。
+# 数据源为 zhule.db prompt 表，TTL 缓存（已无扫盘回退）。
+_TAG_EN_CACHE = {"ts": 0.0, "sig": None, "data": None}
+
+
+def _tag_en_index():
+    """词条显示名 -> 英文提示词（en 全文），读 zhule.db prompt 表 + TTL 缓存。"""
+    now = time.time()
+    sig = _tree_sig()
+    if _TAG_EN_CACHE["data"] is not None \
+            and _TAG_EN_CACHE["sig"] == sig \
+            and (now - _TAG_EN_CACHE["ts"]) < _TREE_TTL:
+        return _TAG_EN_CACHE["data"]
+    data = db.tag_en_index()
+    _TAG_EN_CACHE.update({"ts": now, "sig": sig, "data": data})
+    return data
+
+
+# ==================== 词条 id 索引（name <-> id，id 定位核心） ====================
+# 图库提示词标签在 PNG 里按 id 存，词条改名/移动后标签不脱钩；
+# 两个索引均由 zhule.db 的词库树提供（id 为 prompt 表自增 id）。
+# 注：name->id 仅供存量数据（PNG 里存的是老词条名）迁移时使用，新链路无需反查。
+_TAG_ID_CACHE = {"ts": 0.0, "sig": None, "data": None}
+_TAG_NAME_CACHE = {"ts": 0.0, "sig": None, "data": None}
+
+
+def _tag_id_index():
+    """词条显示名 -> id 映射（entry 节点），带 TTL + 目录签名缓存。"""
+    now = time.time()
+    sig = _tree_sig()
+    if _TAG_ID_CACHE["data"] is not None \
+            and _TAG_ID_CACHE["sig"] == sig \
+            and (now - _TAG_ID_CACHE["ts"]) < _TREE_TTL:
+        return _TAG_ID_CACHE["data"]
+    data = db.tag_id_index()
+    _TAG_ID_CACHE.update({"ts": now, "sig": sig, "data": data})
+    return data
+
+
+def _tag_name_index():
+    """词条 id -> 显示名映射（entry 节点），带 TTL + 数据签名缓存。
+
+    提示词标签在 PNG 内按 id 持久化，本索引负责把 id 还原成展示名。
+    """
+    now = time.time()
+    sig = _tree_sig()
+    if _TAG_NAME_CACHE["data"] is not None \
+            and _TAG_NAME_CACHE["sig"] == sig \
+            and (now - _TAG_NAME_CACHE["ts"]) < _TREE_TTL:
+        return _TAG_NAME_CACHE["data"]
+    # 由 db 的 name->id 索引反置；同名的以先出现的为准
+    data = {}
+    for n, i in db.tag_id_index().items():
+        data.setdefault(str(i), n)
+    _TAG_NAME_CACHE.update({"ts": now, "sig": sig, "data": data})
+    return data
+
+
+def _tag_name(eid):
+    """按词条 id 还原显示名；词条已删除/未收录返回空串。"""
+    return _tag_name_index().get(str(eid)) or ""
+
+
+def _split_tag_ids(raw):
+    """拆分提示词标签数组：纯数字串视为词条 id，其余视为历史词条名（存量数据）。
+
+    新写入的 PNG 全部是 id；老图存的是名字，迁移后仍可能有未能转 id 的残留。
+    """
+    ids, names = [], []
+    for x in raw or []:
+        s = str(x).strip()
+        if not s:
+            continue
+        if s.isdigit():
+            ids.append(s)
+        else:
+            names.append(s)
+    return ids, names
+
+
+def _remove_prompt_tags(cur, names):
+    """按展示名从提示词标签数组里删除条目。
+
+    PNG 内提示词标签是词条 id，而前端删除时给的是展示名，故须把名字映射回 id 再比对
+    （直接按名字过滤会一个都删不掉）。同时兼容数组里残留的老名字。
+    """
+    rm = {n for n in (names or []) if n}
+    if not rm:
+        return [str(x).strip() for x in cur or [] if str(x).strip()]
+    out = []
+    for x in cur or []:
+        s = str(x).strip()
+        if not s or s in rm:
+            continue
+        if s.isdigit() and _tag_name(s) in rm:
+            continue
+        out.append(s)
+    return out
+
+
+def _rec_custom_tag_ids(rec):
+    """返回 rec 的 custom 类 name->custom_id 映射（与 tagIds 并存，自定义标签定位用）。
+
+    仅对「非词条」标签填充：custom 类标签在 custom_tag 字典表有独立 id，
+    改名/层级调整后展示名经 JOIN 实时更新，无需 id 归并兜底。
+    """
+    custom_ids = rec.setdefault("customTagIds", {})
+    idx = db.custom_tag_id_index()
+    for n in rec.get("tags") or []:
+        if n not in custom_ids and n not in (rec.get("tagIds") or {}):
+            i = idx.get(n)
+            if i:
+                custom_ids[n] = i
+    return custom_ids
+
+
+def _lookup_custom_tag_id(name, rel):
+    """详情/编辑时取 custom 类 tag 的 id：优先图库索引记录持久化的 customTagIds，
+    否则反查 custom_tag 字典表（name -> custom_id）。"""
+    try:
+        if _index is not None:
+            for r in _index:
+                if r.get("key") == rel:
+                    got = (r.get("customTagIds") or {}).get(name)
+                    if got:
+                        return got
+                    break
+    except Exception:
+        pass
+    return db.custom_tag_id_index().get(name) or ""
+
+
+def _tag_cn(name):
+    """词条 tag 的中文提示词：词库词条中文优先，未命中查内置常用标签翻译表，仍无则空串。"""
+    r = _tag_cn_index().get(name) or _TAG_CN_FALLBACK.get(name, "")
+    return r
+
+
+def _tag_en(name):
+    """词条 tag 的英文提示词：词库词条 prompt.txt 全文，词库未收录则空串（前端回退 tag 名）。"""
+    r = _tag_en_index().get(name) or ""
+    return r
+
+
+# ==================== 常用标签中文翻译表（词库未收录时的兜底） ====================
+# 图库详情中文提示词框按 tag 拼接，词库词条未覆盖的通用标签在此查中文，
+# 覆盖数量/姿势/表情/服饰/场景/视角/画质等高频 AI 绘图标签。key 一律小写。
+_TAG_CN_FALLBACK = {
+    "1girl": "少女", "1boy": "少年", "solo": "单人", "multiple girls": "多名少女",
+    "multiple boys": "多名少年", "group": "多人", "no humans": "无人",
+    # 姿势
+    "standing": "站立", "sitting": "坐着", "lying": "躺卧", "kneeling": "跪姿",
+    "walking": "行走", "running": "奔跑", "jumping": "跳跃", "dancing": "跳舞",
+    "bending over": "弯腰", "bending forward": "前倾", "leaning forward": "前倾",
+    "looking at viewer": "看向观众", "looking away": "视线移开", "looking down": "低头看",
+    "looking up": "仰头看", "looking back": "回头", "head tilt": "歪头",
+    "arms up": "举起双臂", "arms crossed": "双臂交叉", "hands on hips": "叉腰",
+    "hand on own face": "手抚脸颊", "hand on own chest": "手放胸前",
+    "finger to own mouth": "手指抵唇", "peace sign": "比V手势", "v sign": "比V手势",
+    "thumbs up": "竖大拇指", "heart hands": "比心", "salute": "敬礼",
+    "hugging self": "抱臂", "squatting": "蹲下", "spread legs": "双腿张开",
+    "kneeling on one knee": "单膝跪地", "crossed legs": "跷二郎腿", "leg up": "抬腿",
+    "skirt lift": "掀起裙子", "lifting hem": "掀起衣摆", "dress lift": "提起裙摆",
+    "straddling": "跨坐", "on all fours": "四肢着地", "crawling": "匍匐",
+    "upside down": "倒立", "back arched": "弓背", "arched back": "弓背",
+    "from behind": "背后视角", "from above": "俯视", "from below": "仰视",
+    "pov": "第一人称视角", "first-person view": "第一人称视角", "profile": "侧面",
+    "side view": "侧面", "back view": "背面", "reflection": "倒影",
+    "mirror": "镜子", "in front of mirror": "镜子前", "mirror reflection": "镜中倒影",
+    "selfie": "自拍",
+    # 表情
+    "smile": "微笑", "happy": "开心", "sad": "悲伤", "crying": "哭泣", "tears": "流泪",
+    "angry": "生气", "pout": "噘嘴", "blush": "脸红", "embarrassed": "害羞",
+    "shy": "害羞", "shy smile": "羞笑", "flirty": "挑逗", "teasing": "挑逗",
+    "smug": "得意", "confident": "自信", "serious": "严肃", "surprised": "惊讶",
+    "shocked": "震惊", "scared": "害怕", "sleepy": "困倦", "tired": "疲惫",
+    "bored": "无聊", "annoyed": "不耐烦", "disgusted": "厌恶", "worried": "担忧",
+    "thinking": "思考", "confused": "困惑", "excited": "兴奋", "laughing": "大笑",
+    "grin": "咧嘴笑", "winking": "眨眼", "wink": "眨眼", "open mouth": "张嘴",
+    "tongue out": "吐舌", "sticking out tongue": "吐舌", "drooling": "流口水",
+    "licking lips": "舔嘴唇", "biting lip": "咬唇", "seductive": "魅惑",
+    "seductive smile": "魅惑微笑", "gentle smile": "温柔微笑", "evil smile": "坏笑",
+    # 身材与裸露
+    "flat chest": "平胸", "breasts": "胸部", "breasts exposed": "胸部裸露",
+    "exposed breasts": "裸露胸部", "nipples": "乳头", "nipples hard": "乳头挺立",
+    "nipple piercing": "乳头钉", "areolae": "乳晕", "cleavage": "乳沟",
+    "sideboob": "侧乳", "underboob": "下乳", "large breasts": "巨乳",
+    "small breasts": "贫乳", "navel": "肚脐", "belly": "腹部", "abs": "腹肌",
+    "midriff": "露腰", "panties": "内裤", "thong": "丁字裤",
+    # 服饰
+    "skirt": "裙子", "mini skirt": "迷你裙", "dress": "连衣裙",
+    "swimsuit": "泳装", "bikini": "比基尼", "one-piece swimsuit": "连体泳衣",
+    "school uniform": "校服", "sailor uniform": "水手服", "maid": "女仆装",
+    "maid outfit": "女仆装", "kimono": "和服", "yukata": "浴衣", "qipao": "旗袍",
+    "cheongsam": "旗袍", "armor": "铠甲", "military uniform": "军装", "suit": "西装",
+    "lab coat": "白大褂", "coat": "外套", "jacket": "夹克", "hoodie": "连帽衫",
+    "sweater": "毛衣", "cardigan": "开衫", "shirt": "衬衫", "white shirt": "白衬衫",
+    "t-shirt": "T恤", "tank top": "背心", "crop top": "露脐装", "blouse": "罩衫",
+    "jeans": "牛仔裤", "shorts": "短裤", "stockings": "长筒袜", "thighhighs": "过膝袜",
+    "kneehighs": "及膝袜", "pantyhose": "连裤袜", "socks": "袜子",
+    "thighhigh boots": "过膝靴", "boots": "靴子", "shoes": "鞋子", "heels": "高跟鞋",
+    "barefoot": "赤脚", "gloves": "手套", "hat": "帽子", "cap": "鸭舌帽",
+    "beret": "贝雷帽", "hood": "兜帽", "hair ribbon": "发带", "hair bow": "发饰",
+    "ribbon": "缎带", "lace": "蕾丝", "frills": "荷叶边", "ruffles": "褶边",
+    "bow": "蝴蝶结", "collar": "衣领", "necktie": "领带", "choker": "项圈",
+    "necklace": "项链", "earrings": "耳环", "ring": "戒指", "bracelet": "手链",
+    "glasses": "眼镜", "sunglasses": "墨镜", "monocle": "单片眼镜", "eyepatch": "眼罩",
+    "mask": "面具", "scarf": "围巾", "apron": "围裙", "backpack": "背包",
+    # 发型
+    "ahoge": "呆毛", "twintails": "双马尾", "ponytail": "马尾", "braid": "辫子",
+    "side braid": "侧辫", "buns": "丸子头", "hair bun": "丸子头", "hime cut": "公主切",
+    "short hair": "短发", "long hair": "长发", "medium hair": "中长发",
+    "straight hair": "直发", "wavy hair": "卷发", "curly hair": "卷发",
+    "messy hair": "凌乱头发", "hair between eyes": "中分", "bangs": "刘海",
+    "sidelocks": "鬓发", "drills": "钻头卷发", "two-tone hair": "双色发",
+    "gradient hair": "渐变发", "low twintails": "低双马尾",
+    "blonde hair": "金发", "brown hair": "棕发", "black hair": "黑发",
+    "white hair": "白发", "silver hair": "银发", "red hair": "红发",
+    "pink hair": "粉发", "blue hair": "蓝发", "green hair": "绿发",
+    "purple hair": "紫发", "orange hair": "橙发", "gray hair": "灰发",
+    # 兽耳/异形
+    "cat ears": "猫耳", "fox ears": "狐耳", "wolf ears": "狼耳",
+    "rabbit ears": "兔耳", "elf ears": "精灵耳", "pointy ears": "尖耳",
+    "animal ears": "兽耳", "tail": "尾巴", "cat tail": "猫尾", "fox tail": "狐尾",
+    "wings": "翅膀", "angel wings": "天使翅膀", "demon wings": "恶魔翅膀",
+    "halo": "光环", "horns": "角", "devil horns": "恶魔角", "aura": "气场",
+    # 光影/氛围
+    "glowing": "发光", "glow": "辉光", "sparkles": "闪光", "particles": "粒子",
+    "magic": "魔法", "fire": "火焰", "flame": "火焰", "water": "水", "rain": "雨",
+    "lightning": "闪电", "wind": "风", "petals": "花瓣", "cherry blossoms": "樱花",
+    "sakura": "樱花", "leaves": "树叶", "stars": "星星", "moon": "月亮",
+    "crescent moon": "新月", "sun": "太阳", "sunset": "日落", "sunrise": "日出",
+    "sky": "天空", "clouds": "云", "night": "夜晚", "night sky": "夜空",
+    "indoors": "室内", "outdoors": "室外", "forest": "森林", "mountain": "山",
+    "beach": "海滩", "ocean": "海洋", "sea": "海", "lake": "湖", "river": "河流",
+    "city": "城市", "street": "街道", "building": "建筑", "castle": "城堡",
+    "temple": "寺庙", "shrine": "神社", "room": "房间", "bedroom": "卧室",
+    "bathroom": "浴室", "kitchen": "厨房", "classroom": "教室", "library": "图书馆",
+    "stage": "舞台", "balcony": "阳台", "window": "窗户", "door": "门", "stairs": "楼梯",
+    "grass": "草地", "flower field": "花田", "flower garden": "花园", "garden": "花园",
+    "snow": "雪", "snowing": "下雪", "winter": "冬天", "autumn": "秋天",
+    "spring": "春天", "summer": "夏天", "day": "白天", "dusk": "黄昏", "dawn": "黎明",
+    "neon lights": "霓虹灯", "light rays": "光线", "lens flare": "镜头光晕",
+    "bokeh": "散景", "depth of field": "景深", "blur": "模糊", "motion blur": "动态模糊",
+    "fisheye": "鱼眼", "wide shot": "广角", "close-up": "特写", "full body": "全身",
+    "upper body": "上半身", "upper half": "上半身", "bust shot": "半身像",
+    "headshot": "头部特写", "face": "脸部", "face focus": "面部特写",
+    "eye focus": "眼睛特写", "cowboy shot": "中景", "backlight": "逆光",
+    "rim light": "轮廓光", "silhouette": "剪影", "shadow": "阴影",
+    "cinematic": "电影感", "cinematic lighting": "电影布光", "dramatic lighting": "戏剧性布光",
+    "soft lighting": "柔和光线", "hard lighting": "硬光", "volumetric lighting": "体积光",
+    "atmospheric": "氛围感", "moody": "忧郁", "dark": "黑暗", "gloomy": "阴沉",
+    "photorealistic": "写实", "realistic": "写实", "watercolor": "水彩",
+    "oil painting": "油画", "anime style": "动漫风格", "3d": "三维", "cg": "CG",
+    "pixel art": "像素画", "sketch": "素描", "lineart": "线稿", "monochrome": "单色",
+    "greyscale": "灰度", "sepia": "棕褐色", "colorful": "多彩", "vibrant": "鲜艳",
+    "pastel": "柔和色", "film grain": "胶片颗粒", "vintage": "复古", "retro": "复古",
+    "futuristic": "未来感", "sci-fi": "科幻", "fantasy": "奇幻", "horror": "恐怖",
+    "gothic": "哥特", "cyberpunk": "赛博朋克", "steampunk": "蒸汽朋克",
+    "wuxia": "武侠", "xianxia": "仙侠", "fantasy setting": "奇幻背景",
+    "medieval": "中世纪", "modern": "现代", "historical": "历史", "ancient": "古代",
+    "desert": "沙漠", "cave": "洞穴", "volcano": "火山", "waterfall": "瀑布",
+    "bridge": "桥", "road": "道路", "train": "火车", "airplane": "飞机", "ship": "船",
+    "car": "汽车", "bicycle": "自行车", "motorcycle": "摩托车", "umbrella": "伞",
+    "parasol": "阳伞",
+    # 画质/质量
+    "masterpiece": "杰作", "best quality": "最佳画质", "high quality": "高质量",
+    "highres": "高分辨率", "ultra detailed": "超精细", "detailed": "精细",
+    "intricate details": "复杂细节", "extremely detailed": "极致细节",
+    "absurdres": "超高清", "8k": "8K", "4k": "4K", "2k": "2K",
+    "wallpaper": "壁纸", "official art": "官方插画", "original": "原创",
+    "highly detailed": "高度精细", "sharp focus": "锐利对焦",
+    "depth of field": "景深", "dynamic angle": "动态视角", "dynamic pose": "动态姿势",
+}
+
+
+def _id_name_map():
+    """当前词库缓存树 id -> 显示名（扫盘回退且无 id 时为空）。"""
+    m = {}
+    tree = _wb_tree_data()
+    if not tree:
+        return m
+
+    def walk(nodes):
+        for n in nodes:
+            nid = n.get("id")
+            if nid:
+                m[str(nid)] = n.get("name", "")
+            walk(n.get("children") or [])
+
+    walk(tree)
+    return m
+
+
+def _tag_id_global():
+    """tag 名 -> id 全集：当前词库缓存（name->id）+ 图库索引持久化 tagIds（历史旧名）。
+
+    词条改名后旧名仍保留在既有图片记录的 tagIds 中，据此可实现「旧 name 图片
+    按新 name 过滤仍命中」（定位用 id、展示用 name）。
+    """
+    m = {}
+    try:
+        m.update(_tag_id_index())
+    except Exception:
+        pass
+    try:
+        if _index is not None:
+            for r in _index:
+                for n, i in (r.get("tagIds") or {}).items():
+                    if i and n not in m:
+                        m[n] = str(i)
+    except Exception:
+        pass
+    return m
+
+
+def _tag_hit(tag, rec_tags, anc, rel_map=None):
+    """标签命中：直接匹配 或 图片某直接 tag 的祖先归属包含该标签；
+    带 rel（词条相对路径）时按 rel 子树精确匹配，仅命中该层级分支下的词条。
+
+    id 归并兜底：词条改名/移动后，图片上仍存旧 name，而筛选用的是新 name；
+    通过 tagIds 把双方归并到同一 id 后仍可命中（定位用 id、展示用 name）。
+    """
+    if isinstance(tag, tuple):
+        name, rel = tag
+    else:
+        name, rel = tag, None
+    if rel and rel_map:
+        for rt in rec_tags:
+            r = rel_map.get(rt)
+            if r and (r == rel or r.startswith(rel + "/")):
+                return True
+        return False
+    if name in rec_tags:
         return True
     if anc:
         for rt in rec_tags:
-            if tag in anc.get(rt, ()):
+            if name in anc.get(rt, ()):
                 return True
+    # id 归并兜底
+    try:
+        gid = _tag_id_global()
+        tid = gid.get(name)
+        if tid:
+            id_name = _id_name_map()
+            for rt in rec_tags:
+                rtid = gid.get(rt)
+                if rtid and rtid == tid:
+                    return True
+                if anc and rtid:
+                    cur = id_name.get(rtid)
+                    if cur and name in anc.get(cur, ()):
+                        return True
+    except Exception:
+        pass
     return False
 
 
@@ -783,6 +1043,7 @@ def _deepest_tag_rel(rec_tags, tag, anc, rel_map):
 
     用于「目录序」：筛选某个标签后，卡片按其命中最深词条的目录编号顺序排列，
     例如筛选「蒙德」时，01_琴% 目录的图排在 02_丽莎% 之前。
+    词条改名后经 id 归并兜底，旧 name 图片仍可按当前名定位 rel。
     """
     best = None
     for rt in rec_tags:
@@ -790,15 +1051,50 @@ def _deepest_tag_rel(rec_tags, tag, anc, rel_map):
             rel = rel_map.get(rt)
             if rel and (best is None or rel.count("/") > best.count("/")):
                 best = rel
+    if best:
+        return best
+    try:
+        gid = _tag_id_global()
+        tid = gid.get(tag)
+        if tid:
+            id_name = _id_name_map()
+            for rt in rec_tags:
+                rtid = gid.get(rt)
+                if rtid != tid:
+                    continue
+                cur = id_name.get(rtid)
+                if not cur:
+                    continue
+                if tag == cur or tag in anc.get(cur, ()):
+                    rel = rel_map.get(cur)
+                    if rel and (best is None or rel.count("/") > best.count("/")):
+                        best = rel
+    except Exception:
+        return ""
     return best or ""
 
 
 def _matches(rec, tags, models, loras, q, anc=None, tag_mode="and"):
     if tags:
         rec_tags = set(rec.get("tags", []))
+        # 提示词标签在 PNG 内按 id 存：按 id 筛选可不受词条改名影响（改名后无需重建索引）
+        # 两路取 id：_make_record 内存记录带 promptIds；DB 加载记录只有 tagIds(name->id)
+        rec_ids = {str(x).strip() for x in (rec.get("promptIds") or []) if str(x).strip()}
+        rec_ids |= {str(v).strip() for v in (rec.get("tagIds") or {}).values()
+                    if str(v).strip()}
         if anc is None:
             _, anc = get_tag_tree()
-        hits = [_tag_hit(t, rec_tags, anc) for t in tags]
+        rel_map = None
+        if any(isinstance(t, tuple) for t in tags):
+            rel_map = _tag_rel_map(get_tag_tree()[0])
+        hits = []
+        for t in tags:
+            n = t[0] if isinstance(t, tuple) else t
+            # 纯数字串视为词条 id，直接对 promptIds 匹配；其余走显示名/祖先匹配
+            if isinstance(n, str) and n.isdigit():
+                hits.append(n in rec_ids)
+            else:
+                hits.append(_tag_hit(t, rec_tags, anc, rel_map))
         # and：满足全部已启用 tag（默认）；or：满足任一即可
         if tag_mode == "or":
             if not any(hits):
@@ -823,7 +1119,9 @@ def _matches(rec, tags, models, loras, q, anc=None, tag_mode="and"):
 
 async def get_gallery(request):
     """列表：?page=&pageSize=&sort=&q=&tags=&models=&loras="""
+    _t0 = time.perf_counter()
     records = get_index()
+    _t_idx = time.perf_counter() - _t0
     try:
         page = max(1, int(request.query.get("page", 1)))
     except ValueError:
@@ -834,7 +1132,13 @@ async def get_gallery(request):
         page_size = 60
     sort = request.query.get("sort", "time_desc")
     q = (request.query.get("q") or "").strip()
-    tags = _split_csv(request.query.get("tags"))
+    tags = []
+    for t in _split_csv(request.query.get("tags")):
+        if "|" in t:
+            n, _, r = t.partition("|")
+            tags.append((n, r))
+        else:
+            tags.append(t)
     models = _split_csv(request.query.get("models"))
     loras = _split_csv(request.query.get("loras"))
     tag_mode = (request.query.get("mode") or "and").strip().lower()
@@ -855,7 +1159,8 @@ async def get_gallery(request):
         # 目录序：单选标签时按词条目录编号顺序（琴% 在 丽莎% 前）；否则按图片输出目录路径序
         if len(tags) == 1:
             rel_map = _tag_rel_map(get_tag_tree()[0])
-            keyf = lambda r: _path_sort_key(_deepest_tag_rel(r.get("tags", []), tags[0], anc, rel_map))
+            tg0 = tags[0][0] if isinstance(tags[0], tuple) else tags[0]
+            keyf = lambda r: _path_sort_key(_deepest_tag_rel(r.get("tags", []), tg0, anc, rel_map))
         else:
             keyf = lambda r: _path_sort_key(r.get("key", ""))
         filtered.sort(key=keyf, reverse=(sort == "dir_desc"))
@@ -888,109 +1193,64 @@ async def get_gallery_tagtree(request):
     })
 
 
-async def post_gallery_tagtree_order(request):
-    """按拖拽后的新顺序重命名该层目录（编号即顺序，目录名写入连续编号）。
-    body: {"parent": str, "rels": [str,...]}，parent 为该层父节点 rel（顶层为 ""）。
-    重命名采用两阶段防冲突：先全部转为临时名，再按新序写回连续编号。
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "无效的 JSON"}, status=400)
-    parent = (body.get("parent") or "").strip().replace("\\", "/")
-    rels = body.get("rels")
-    if not isinstance(rels, list):
-        return web.json_response({"ok": False, "error": "rels 必须为数组"}, status=400)
-    clean = []
-    seen = set()
-    for r in rels:
-        if isinstance(r, str):
-            r = r.strip().replace("\\", "/")
-            if r and r not in seen and _within_bank(r):
-                clean.append(r)
-                seen.add(r)
-    # 定位目标层目录
-    if parent:
-        if not _within_bank(parent):
-            return web.json_response({"ok": False, "error": "parent 越界"}, status=400)
-        base = os.path.realpath(os.path.join(WORD_BANK_ROOT, parent))
-    else:
-        base = os.path.realpath(WORD_BANK_ROOT)
-    if not os.path.isdir(base):
-        return web.json_response({"ok": False, "error": "目录不存在"}, status=404)
-    try:
-        _renumber_layer(base, clean)
-    except OSError as e:
-        return web.json_response({"ok": False, "error": f"重命名失败: {e}"}, status=500)
-    # 编号/排序变化立即生效：清空标签树缓存
-    _tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})
-    return web.json_response({"ok": True, "parent": parent, "count": len(clean)})
+# 详情接口内存缓存：按 (rel, mtime, size) 缓存，打标/改名/删除会保留原 mtime，需手动失效
+_detail_cache = {}
+_DETAIL_CACHE_MAX = 300
 
-
-def _renumber_layer(base, rels):
-    """按 rels 顺序重命名 base 下的子目录，生成连续编号（两阶段防冲突）。
-    rels 为前端新顺序（该层全部节点 rel，含 txt 散卡片）。只重命名目录，
-    txt 散卡片保持原名（无编号时排序靠后）。子目录若不在 rels 中，按名称序补到末尾。
-    """
-    dirs = []
-    for e in os.scandir(base):
-        if e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
-            dirs.append(e.name)
-    if not dirs:
+def _drop_detail_cache(rel=None):
+    """清除详情缓存。rel 为 None 时全清；否则仅删该 rel 的缓存项。"""
+    if rel is None:
+        _detail_cache.clear()
         return
-    dirs.sort(key=_dir_sort_key)
-    # 按 rels 顺序排列（只取目录项），其余补末尾
-    ordered = []
-    seen = set()
-    for r in rels:
-        name = os.path.basename(r)
-        if name in dirs and name not in seen:
-            ordered.append(name)
-            seen.add(name)
-    for n in dirs:
-        if n not in seen:
-            ordered.append(n)
-    # 阶段1：全部转临时名，避免目标名冲突
-    tmp_names = []
-    for i, n in enumerate(ordered):
-        tmp = os.path.join(base, f".__zhule_ren_{i:04d}")
-        os.rename(os.path.join(base, n), tmp)
-        tmp_names.append((tmp, n))
-    # 阶段2：按新序写回连续编号（与 display name 拼接）
-    for idx, (tmp, n) in enumerate(tmp_names, start=1):
-        _, disp = parse_folder(n)
-        new_name = f"{idx:02d}_{disp}"
-        os.rename(tmp, os.path.join(base, new_name))
+    for key in [k for k in _detail_cache if k[0] == rel]:
+        _detail_cache.pop(key, None)
 
 
 async def get_gallery_detail(request):
-    """单图详情：完整 PNG 元数据（workflow/prompt 只回存在标志与预览）。"""
+    """单图详情：完整 PNG 元数据（workflow/prompt 只回存在标志与预览）。重复打开走内存缓存，避免反复读大图。"""
     rel = (request.query.get("path") or "").strip()
     full = _safe_full(rel)
     if not full or not os.path.isfile(full):
         return web.json_response({"error": "文件不存在"}, status=404)
+    try:
+        st = os.stat(full)
+    except OSError:
+        return web.json_response({"error": "文件不存在"}, status=404)
+    cache_key = (rel, st.st_mtime, st.st_size)
+    hit = _detail_cache.get(cache_key)
+    if hit is not None:
+        return web.json_response(hit)
     texts = png_text.read_png_text(full)
     wf = texts.get("workflow") or ""
     pt = texts.get("prompt") or ""
-    st = os.stat(full)
-    # 三源标签按来源标记：手动可增删，提示词/自定义只读
-    manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
-    prompt = _clean_prompt_tags(_json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags"))
+    # 两源标签按来源标记：custom 类（自定义标签）可增删排在前面；prompt 类（词库词条）只读
+    # 提示词标签在 PNG 内是词条 id，展示时经 id 还原名字（词条改名后标签跟着变）
+    pids, legacy = _split_tag_ids(_json_list(texts.get("zhule_prompt_tags"),
+                                             "zhule_prompt_tags"))
     custom = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
     seen = set()
     tags = []
-    for n in manual:
-        tags.append({"name": n, "prompt": False, "custom": False})
-        seen.add(n)
-    for n in prompt:
-        if n not in seen:
-            tags.append({"name": n, "prompt": True, "custom": False})
-            seen.add(n)
     for n in custom:
-        if n not in seen:
-            tags.append({"name": n, "prompt": False, "custom": True})
+        tags.append({"id": _lookup_custom_tag_id(n, rel), "name": n, "prompt": False,
+                     "custom": True, "cn": _tag_cn(n), "en": _tag_en(n)})
+        seen.add(n)
+    for eid in pids:
+        n = _tag_name(eid)
+        if n and n not in seen:
+            # id 由 PNG 直接给出，无需按名字反查
+            tags.append({"id": eid, "name": n, "prompt": True,
+                         "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
             seen.add(n)
-    return web.json_response({
+    # 存量 PNG 里存的仍是老词条名（ID 化只改了 DB 侧，PNG 未回写）：按名字展示，
+    # 与 _normalize 写入侧一样补做 name->id 反查，否则这批标签在详情里会整批消失
+    if legacy:
+        id_idx = _tag_id_index()
+        for n in legacy:
+            if n and n not in seen:
+                tags.append({"id": id_idx.get(n) or "", "name": n, "prompt": True,
+                             "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
+                seen.add(n)
+    data = {
         "path": rel,
         "name": os.path.basename(full),
         "mtime": int(st.st_mtime),
@@ -1002,7 +1262,11 @@ async def get_gallery_detail(request):
         "workflowSize": len(wf),
         "hasPrompt": bool(pt),
         "promptPreview": _extract_positive_prompt(pt) or pt[:MAX_WORKFLOW_PREVIEW],
-    })
+    }
+    if len(_detail_cache) >= _DETAIL_CACHE_MAX:
+        _detail_cache.clear()
+    _detail_cache[cache_key] = data
+    return web.json_response(data)
 
 
 async def get_gallery_workflow(request):
@@ -1072,24 +1336,14 @@ async def post_gallery_delete(request):
     except OSError as e:
         return web.json_response({"error": f"删除失败: {e}"}, status=500)
 
-    # 刷新内存索引与索引缓存
+    # 更新内存索引 + 行级删除（只删这一行，不做全表替换）
     global _index, _index_rev
     if _index is not None:
         _index = [r for r in _index if r.get("key") != rel]
         _index_rev += 1
-        try:
-            with open(INDEX_FILE, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            payload["records"] = _index
-            payload["count"] = len(_index or [])
-            payload["builtAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-        except Exception as e:
-            print(f"[ZhuleGallery] 索引缓存写入失败: {e}")
+    db.gallery_delete_records([rel])
 
+    _drop_detail_cache(rel)
     return web.json_response({"ok": True, "path": rel})
 
 
@@ -1144,27 +1398,17 @@ async def _post_gallery_batch_delete_impl(request):
         except Exception as e:
             failed.append({"path": rel, "error": f"删除异常: {e}"})
 
-    # 刷新内存索引与索引缓存
+    # 更新内存索引 + 行级删除（只删这几行，不做全表替换）
     global _index, _index_rev
     delset = set(deleted)
     if _index is not None:
         _index = [r for r in _index if r.get("key") not in delset]
         _index_rev += 1
-    try:
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        recs = payload.get("records")
-        if isinstance(recs, list):
-            payload["records"] = [r for r in recs if r.get("key") not in delset]
-            payload["count"] = len(payload["records"])
-            payload["builtAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-    except Exception as e:
-        print(f"[ZhuleGallery] 索引缓存写入失败: {e}")
+    if deleted:
+        db.gallery_delete_records(deleted)
 
+    for _r in deleted:
+        _drop_detail_cache(_r)
     return web.json_response({
         "ok": True,
         "count": len(deleted),
@@ -1291,19 +1535,20 @@ async def post_gallery_tag(request):
         return web.json_response({"error": "标签名不能为空"}, status=400)
     if len(name) > 60 or len(group) > 30:
         return web.json_response({"error": "名称过长"}, status=400)
-    meta = load_meta()
-    for t in meta["tags"]:
-        if t.get("name") == name:
-            t["group"] = group
-            save_meta(meta)
-            return web.json_response({"ok": True, "created": False})
-    meta["tags"].append({"name": name, "group": group})
-    save_meta(meta)
-    return web.json_response({"ok": True, "created": True})
+    # 自定义标签字典+分组落在 zhule.db custom_tag 表，不再写 gallery/meta.json
+    created = db.custom_tag_set_group(name, group)
+    return web.json_response({"ok": True, "created": created})
+
+
+def _norm_tag_names(v):
+    """归一化标签名数组 → set[str]；非法返回 None。"""
+    if not isinstance(v, list):
+        return None
+    return {str(x).strip() for x in v if str(x).strip()}
 
 
 async def post_gallery_annotate(request):
-    """body: { path, tags?: [str] } 打标（写 PNG 元数据）。"""
+    """body: { path, tags?: [str], remove_prompt?: [str], remove_custom?: [str] } 打标/删标（写 PNG 元数据）。"""
     try:
         body = await request.json()
     except Exception:
@@ -1313,6 +1558,9 @@ async def post_gallery_annotate(request):
     if not full or not os.path.isfile(full):
         return web.json_response({"error": "文件不存在"}, status=404)
 
+    # 自定义标签为唯一可写标签字段：tags 全量重写，remove_custom 按名过滤
+    texts = png_text.read_png_text(full)
+    custom_cur = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
     updates = {}
     if "tags" in body:
         tags = body.get("tags")
@@ -1321,49 +1569,45 @@ async def post_gallery_annotate(request):
         clean = [str(x).strip() for x in tags if str(x).strip()]
         if len(clean) > 100:
             return web.json_response({"error": "标签过多"}, status=400)
-        updates["zhule_tags"] = json.dumps(clean, ensure_ascii=False)
+        custom_cur = clean
+        updates["zhule_custom_tags"] = json.dumps(clean, ensure_ascii=False)
+    if body.get("remove_custom") is not None:
+        names = _norm_tag_names(body.get("remove_custom"))
+        if names is None:
+            return web.json_response({"error": "remove_custom 必须是字符串数组"}, status=400)
+        custom_cur = [x for x in custom_cur if x not in names]
+        updates["zhule_custom_tags"] = json.dumps(custom_cur, ensure_ascii=False)
+    if body.get("remove_prompt") is not None:
+        names = _norm_tag_names(body.get("remove_prompt"))
+        if names is None:
+            return web.json_response({"error": "remove_prompt 必须是字符串数组"}, status=400)
+        cur = _json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags")
+        updates["zhule_prompt_tags"] = json.dumps(
+            _remove_prompt_tags(cur, names), ensure_ascii=False)
     if not updates:
         return web.json_response({"error": "没有可更新字段"}, status=400)
 
     if not png_text.write_png_text(full, updates):
         return web.json_response({"error": "PNG 元数据写入失败"}, status=500)
 
-    # 更新内存索引与索引缓存
-    global _index
-    if _index is not None:
-        texts = png_text.read_png_text(full)
-        for r in _index:
-            if r.get("key") == rel:
-                r["model"] = _extract_zhule_model(texts)
-                r["loras"] = _json_list(texts.get("zhule_loras"), "zhule_loras")
-                r["tags"] = _merge_tag_sources(texts)
-                meta = load_meta()
-                groups = _tag_groups(meta)
-                r["tg"] = [groups.get(t, "其他") for t in r["tags"]]
-                break
-    # 更新缓存文件（仅当索引文件存在时）
+    # 更新内存索引 + 行级写回（只写这一张，不做全表替换）
+    global _index, _index_rev
     try:
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        recs = payload.get("records")
-        if isinstance(recs, list):
-            texts = png_text.read_png_text(full)
-            for r in recs:
+        rec = _make_record(rel, full)
+    except OSError:
+        rec = None
+    if rec is not None:
+        if _index is not None:
+            for i, r in enumerate(_index):
                 if r.get("key") == rel:
-                    r["model"] = _extract_zhule_model(texts)
-                    r["loras"] = _json_list(texts.get("zhule_loras"), "zhule_loras")
-                    r["tags"] = _merge_tag_sources(texts)
-                    meta = load_meta()
-                    groups = _tag_groups(meta)
-                    r["tg"] = [groups.get(t, "其他") for t in r["tags"]]
+                    _index[i] = rec
                     break
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-    except Exception:
-        pass
+            else:
+                _index.insert(0, rec)
+            _index_rev += 1
+        db.gallery_upsert_records([rec])
 
+    _drop_detail_cache(rel)
     return web.json_response({"ok": True})
 
 
@@ -1463,21 +1707,11 @@ def _do_rename_work(kind, old, new, base_old):
             r["model"] = new
         else:
             r["loras"] = _json_list(updates["zhule_loras"], "zhule_loras")
-    # 3) 写回索引缓存（防并发覆盖）
-    try:
-        with _rename_lock:
-            with open(INDEX_FILE, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            payload["records"] = records
-            payload["count"] = len(records)
-            payload["builtAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-    except Exception as e:
-        print(f"[ZhuleGallery] 后台重命名索引缓存写入失败: {e}")
+    # 3) 写回索引缓存（zhule.db 图库表）
+    if not db.gallery_save_records(records):
+        print(f"[ZhuleGallery] 后台重命名索引缓存写入失败（zhule.db 图库表）")
     print(f"[ZhuleGallery] 后台重命名完成: kind={kind} {old}->{new} updated={updated} file_renamed={renamed_file}")
+    _drop_detail_cache()  # 重命名会批量改写多图元数据且保留 mtime，详情缓存全部失效
     _rename_state["done"] = True
     _rename_state["updated"] = updated
     _rename_state["renamed_file"] = renamed_file
@@ -1522,39 +1756,24 @@ async def post_gallery_rename(request):
 
 
 # ---------------------------------------------------------------------------
-# 实时同步：守护线程专门维护索引，增量对比磁盘与索引，覆盖保存/删除/改 tag 及一切外部改动
-# ---------------------------------------------------------------------------
-_sync_lock = threading.Lock()
-_sync_watcher_started = False
-
-
-def _disk_scan(root):
-    """轻量扫描图库根目录：文件名 -> (size, mtime)。不读 PNG 元数据，毫秒级。"""
-    disk = {}
-    try:
-        with os.scandir(root) as it:
-            for e in it:
-                try:
-                    if e.is_file():
-                        st = e.stat()
-                        disk[e.name] = (st.st_size, int(st.st_mtime))
-                except OSError:
-                    continue
-    except OSError:
-        pass
-    return disk
-
-
 def _make_record(rel, full):
     """按 build_index 同款字段逻辑构造单条索引记录（只处理一张图）。"""
     st = os.stat(full)
     texts = png_text.read_png_text(full)
     model = _extract_zhule_model(texts)
     loras = _json_list(texts.get("zhule_loras"), "zhule_loras")
-    _pt, _ct, _mt = _backfill_tag_fields(full, texts)
-    tags = _mt + [t for t in (_pt + _ct) if t not in _mt]
-    groups = _tag_groups(load_meta())
-    return {
+    # 落库只存正面提示词文本：整份 workflow/prompt JSON 由详情接口实时读 PNG，不落库
+    _pp = _extract_positive_prompt(texts.get("prompt")) or ""
+    # 提示词标签按词条 id 传递；_backfill 顺带把存量的老词条名转成 id 并写回 PNG
+    pids, custom_tags = _backfill_tag_fields(full, texts)
+    # id -> 显示名：词条改名后展示名实时跟着变，标签不脱钩
+    tag_ids = {}
+    for _i in pids:
+        _n = _tag_name(_i)
+        if _n:
+            tag_ids[_n] = _i
+    tags = list(custom_tags) + [n for n in tag_ids if n not in custom_tags]
+    rec = {
         "key": rel,
         "name": os.path.basename(full),
         "mtime": int(st.st_mtime),
@@ -1562,113 +1781,89 @@ def _make_record(rel, full):
         "model": model,
         "loras": loras,
         "tags": tags,
+        "tagIds": tag_ids,
+        "customTags": list(custom_tags),
+        "customTagIds": {},
+        "promptIds": pids,
         "hasWF": bool(texts.get("workflow")),
-        "hasPrompt": bool(texts.get("prompt")),
-        "tg": [groups.get(t, "其他") for t in tags],
+        "hasPrompt": bool(_pp),
+        "prompt": _pp,
     }
-
-
-def _load_index_cache():
-    """从 index.json 加载缓存索引到内存（守护线程惰性启动时用）。"""
-    global _index, _index_rev
-    try:
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload.get("records"), list) and payload.get("schema") == SCHEMA_VERSION:
-            _index = payload["records"]
-            _index_rev += 1
-            return True
-    except Exception:
-        pass
-    return False
+    # tagIds 已由 id 直接得来，无需 _rec_tag_ids 按名字反查
+    _rec_custom_tag_ids(rec)
+    return rec
 
 
 def _write_index_cache():
-    """原子写回 index.json（.tmp + os.replace，与 build_index 同款）。"""
+    """全量写回 zhule.db 图库表（gallery_image / gallery_tag）。
+
+    内存内部格式（tags 为 name 字符串数组 + tagIds/customTagIds）直接交给 DB 层：
+    prompt 类标签按词库显示名反查 id 落 prompt_id 外键；custom 类标签按
+    custom_tag 字典反查/插入落 custom_id 外键。
+    """
     try:
-        os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
-        payload = {"schema": SCHEMA_VERSION,
-                   "builtAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                   "count": len(_index), "records": _index}
-        with _rename_lock:
-            tmp = INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            os.replace(tmp, INDEX_FILE)
-        return True
+        return db.gallery_save_records(_index)
     except Exception as e:
-        print(f"[ZhuleGallery] 索引增量写盘失败: {e}")
+        print(f"[ZhuleGallery] 索引缓存写入失败（zhule.db 图库表）: {e}")
         return False
 
 
-def incremental_sync():
-    """增量同步：对比图库磁盘与索引，增删改后原子写回 index.json。
+def index_new(pairs):
+    """保存节点写入新图后直接入库：pairs = [(rel, full), ...]。
 
-    磁盘有索引无 -> 新增；磁盘无索引有 -> 删除；
-    size/mtime 变化 -> 重读该图元数据更新记录。
-    返回 (added, removed, updated)；无变化返回 None；全量重建进行中返回 None（下一轮再同步）。
+    图库索引由「写入点」维护——SaveImage 入库 / 删图 / 打标各自直接写库，
+    不再有守护线程轮询磁盘。本函数只 upsert 传入的这几条，不做全表替换。
+    内存索引未加载时跳过（下次打开图库页会从 DB 读到最新数据）。
+    返回入库条数。
     """
     global _index, _index_rev
-    if _index_building:
-        return None
-    with _sync_lock:
-        root = _gallery_root()
-        disk = _disk_scan(root)
-        if not disk:
-            return None
-        if _index is None:
-            if not _load_index_cache():
-                return None
-        by_key = {r["key"]: r for r in _index}
-        added, updated = [], []
-        for rel, (size, mtime) in disk.items():
-            rec = by_key.get(rel)
-            if rec is None:
-                full = _safe_full(rel)
-                if full and os.path.isfile(full):
-                    try:
-                        added.append(_make_record(rel, full))
-                    except Exception:
-                        continue
-            elif rec.get("size") != size or rec.get("mtime") != mtime:
-                full = _safe_full(rel)
-                if full and os.path.isfile(full):
-                    try:
-                        updated.append(_make_record(rel, full))
-                    except Exception:
-                        continue
-        removed = [r for r in _index if r["key"] not in disk]
-        if not added and not removed and not updated:
-            return None
-        upd_map = {r["key"]: r for r in updated}
-        new_index = []
-        for r in _index:
-            if r["key"] not in disk:
-                continue
-            new_index.append(upd_map.get(r["key"], r))
-        new_index.extend(added)
-        new_index.sort(key=lambda r: r["mtime"], reverse=True)
-        _index = new_index
+    recs = []
+    for rel, full in pairs or []:
+        try:
+            recs.append(_make_record(rel, full))
+        except OSError:
+            continue
+    if not recs:
+        return 0
+    db.gallery_upsert_records(recs)
+    if _index is not None:
+        for rec in recs:
+            for i, r in enumerate(_index):
+                if r.get("key") == rec["key"]:
+                    _index[i] = rec
+                    break
+            else:
+                _index.append(rec)
+        _index.sort(key=lambda r: r["mtime"], reverse=True)
         _index_rev += 1
-        _write_index_cache()
-        print(f"[ZhuleGallery] 增量同步完成: +{len(added)} -{len(removed)} ~{len(updated)}")
-        return len(added), len(removed), len(updated)
+    return len(recs)
 
 
-def start_index_sync_watcher(interval=3.0):
-    """启动后台守护线程：定时增量同步磁盘与索引，覆盖一切针对图库文件夹的操作。"""
-    global _sync_watcher_started
-    if _sync_watcher_started:
+_warmup_started = False
+
+
+def warmup_tag_caches():
+    """后台预热图库详情依赖的标签翻译索引与标签树。
+
+    _tag_cn_index()/_tag_en_index() 首次调用会全量 os.walk 词库目录构建映射
+    （实测各约 1.5s/1.7s），get_gallery_detail 未命中缓存时会对每张图逐个 tag
+    调用 _tag_cn/_tag_en。在插件路由注册阶段后台预热这两个索引，使首次点击
+    图库图片时命中内存缓存，将首点延迟从秒级降到毫秒级。
+    失败静默，不阻塞插件启动。
+    """
+    try:
+        _tag_cn_index()
+        _tag_en_index()
+        get_tag_tree()
+    except Exception:
+        pass
+
+
+def start_warmup():
+    """启动后台预热线程（幂等，可重复调用）。"""
+    global _warmup_started
+    if _warmup_started:
         return
-    _sync_watcher_started = True
-
-    def _loop():
-        while True:
-            try:
-                incremental_sync()
-            except Exception:
-                pass
-            time.sleep(interval)
-
-    threading.Thread(target=_loop, daemon=True, name="zhule-index-sync").start()
-    print(f"[ZhuleGallery] 索引实时同步守护已启动 interval={interval}s")
+    _warmup_started = True
+    threading.Thread(target=warmup_tag_caches, daemon=True, name="zhule-gallery-warmup").start()
+    print("[ZhuleGallery] 标签索引后台预热已启动")
