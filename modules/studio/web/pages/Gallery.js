@@ -1,8 +1,8 @@
-import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode } from './galleryCommon.js';
+import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, ConfirmDialog } from './galleryCommon.js';
 
 export default {
   name: 'Gallery',
-  components: { TagTreePanel, OutNode, DetailTagNode },
+  components: { TagTreePanel, OutNode, DetailTagNode, ConfirmDialog },
   template: `
     <div class="page active gallery-page">
     <div class="zhg-toolbar">
@@ -170,17 +170,11 @@ export default {
                         :data-tip="'提示词标签（运行时注入，只读）左键查看词条，右键临时改色'">
                     {{ t.name }}
                   </span>
-                  <!-- 自定义标签（叶子平铺）：父级仅分组容器不展示，直接显示叶子名，如 '测试/喜欢' 只显示 '喜欢' -->
-                  <span class="zhg-tag hl-custom"
-                        :class="tagThemeClass"
-                        :style="t.style || {}"
-                        v-for="t in customFlatTags" :key="'dtc'+t.name"
-                        :data-tip="'自定义标签，右键临时改色，✕ 取消关联'"
-                        @click.stop="editDetailTag(t)" @contextmenu.prevent="pickTagColor(t, $event)">
-                    {{ t.display }}
-                    <span class="zhg-tag-del" @click.stop="askDeleteTag(t)"> ✕</span>
-                  </span>
-                  <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
+                  <!-- 自定义标签（层级树）：父级分组（如 '测试'）可展开，叶子（如 '喜欢'）才是可编辑标签 -->
+                  <detail-tag-node v-for="t in customDetailTree" :key="t.path" :node="t" :depth="0"
+                                   :theme-cls="tagThemeClass"
+                                   @edit="editDetailTag" @delete="askDeleteTag"></detail-tag-node>
+                  <span v-if="!promptDetailTags.length && !customDetailTree.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
                 </div>
               </div>
               <div class="zhg-detail-tag-add">
@@ -207,39 +201,18 @@ export default {
       </div>
     </div>
 
-    <div class="zhg-del-mask" v-if="delTarget" @click.self="cancelDelete">
-      <div class="zhg-del-box">
-        <div class="zhg-del-title">确认删除图片</div>
-        <div class="zhg-del-msg">将删除该图片文件及其缩略图，此操作不可撤销。<br><b>{{ delTarget.name }}</b></div>
-        <div class="zhg-del-actions">
-          <button class="btn zhg-mini" @click="cancelDelete">取消</button>
-          <button class="zhg-del-btn-danger" @click="confirmDelete">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <confirm-dialog :show="!!delTarget" title="确认删除图片" @confirm="confirmDelete" @cancel="cancelDelete">
+      <div class="zhg-del-msg">将删除该图片文件及其缩略图，此操作不可撤销。<br><b>{{ delTarget && delTarget.name }}</b></div>
+    </confirm-dialog>
 
-    <div class="zhg-del-mask" v-if="delBatchOpen" @click.self="cancelBatchDelete">
-      <div class="zhg-del-box">
-        <div class="zhg-del-title">确认批量删除</div>
-        <div class="zhg-del-msg">是否删除选中的 <b>{{ selected.size }}</b> 张图片？<br>将删除图片文件及其缩略图，此操作不可撤销。</div>
-        <div class="zhg-del-actions">
-          <button class="btn zhg-mini" @click="cancelBatchDelete">取消</button>
-          <button class="zhg-del-btn-danger" @click="confirmBatchDelete">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <confirm-dialog :show="delBatchOpen" title="确认批量删除" @confirm="confirmBatchDelete" @cancel="cancelBatchDelete">
+      <div class="zhg-del-msg">是否删除选中的 <b>{{ selected.size }}</b> 张图片？<br>将删除图片文件及其缩略图，此操作不可撤销。</div>
+    </confirm-dialog>
 
     <!-- 标签删除确认弹窗：简单询问是否移除当前标签，自定义标签只显叶子名 -->
-    <div class="zhg-del-mask" v-if="tagDeleteTarget" @click.self="cancelDeleteTag">
-      <div class="zhg-del-box">
-        <div class="zhg-del-title">确认删除{{ tagDeleteLabel }}</div>
-        <div class="zhg-del-msg">是否移除当前标签「{{ tagDeleteDisplay }}」？</div>
-        <div class="zhg-del-actions">
-          <button class="btn zhg-mini" @click="cancelDeleteTag">取消</button>
-          <button class="zhg-del-btn-danger" @click="confirmDeleteTag">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <confirm-dialog :show="!!tagDeleteTarget" :title="'确认删除' + tagDeleteLabel" @confirm="confirmDeleteTag" @cancel="cancelDeleteTag">
+      <div class="zhg-del-msg">是否移除当前标签「{{ tagDeleteDisplay }}」？</div>
+    </confirm-dialog>
 
     <div class="edit-overlay" v-if="renameOpen" @click.self="cancelRename">
       <div class="edit-dialog">
@@ -286,16 +259,9 @@ export default {
     </div>
 
     <!-- 词条删除确认：与词库编辑弹窗删除一致 -->
-    <div class="zhg-del-mask" v-if="editWbDeleteTarget" @click.self="cancelDeleteEditWb">
-      <div class="zhg-del-box">
-        <div class="zhg-del-title">确认删除词条</div>
-        <div class="zhg-del-msg">将删除词库词条「<b>{{ editWbDeleteTarget.name }}</b>」及其提示词文件，此操作不可撤销。</div>
-        <div class="zhg-del-actions">
-          <button class="btn zhg-mini" @click="cancelDeleteEditWb">取消</button>
-          <button class="zhg-del-btn-danger" :disabled="editWbDeleting" @click="confirmDeleteEditWb">{{ editWbDeleting ? '删除中…' : '确认删除' }}</button>
-        </div>
-      </div>
-    </div>
+    <confirm-dialog :show="!!editWbDeleteTarget" title="确认删除词条" :busy="editWbDeleting" @confirm="confirmDeleteEditWb" @cancel="cancelDeleteEditWb">
+      <div class="zhg-del-msg">将删除词库词条「<b>{{ editWbDeleteTarget && editWbDeleteTarget.name }}</b>」及其提示词文件，此操作不可撤销。</div>
+    </confirm-dialog>
 
     <transition name="toast">
       <div v-if="toast" class="zhg-toast" :class="'toast-' + toastType" @click="toast = ''">

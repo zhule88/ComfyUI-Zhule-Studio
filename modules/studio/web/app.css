@@ -625,11 +625,18 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start;
   max-width: 16em;
   padding: 8px 12px;
-  background: var(--primary-dim);
-  border: 1px solid var(--primary);
+  background: color-mix(in srgb, var(--tag-bg, var(--primary)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-bg, var(--primary)) 46%, transparent);
   border-radius: 14px;
   animation: zhg-kids-in 0.15s ease;
 }
+/* 外部过滤区 chip 边框跟随 --tag-bg（zhg-out-tag 为 OutNode 专属标记，编辑面板已选区不受影响）：
+   on=生效(实线全色) / off=待生效(虚线半透明)，背景仍由主题类按 --tag-bg 接管 */
+.zhg-sel-tag.zhg-out-tag:hover { border-color: var(--tag-bg, var(--primary)); }
+.zhg-sel-tag.zhg-out-tag.on { border-color: var(--tag-bg, var(--primary)); }
+.zhg-sel-tag.zhg-out-tag.on:hover { border-color: var(--tag-bg, var(--primary)); }
+.zhg-sel-tag.zhg-out-tag.off { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 45%, transparent); border-style: dashed; }
+.zhg-sel-tag.zhg-out-tag.off:hover { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 62%, transparent); }
 .zhg-out-arrow { font-size: 0.9em; color: var(--text-3); margin-left: 2px; }
 @keyframes zhg-kids-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 
@@ -1052,14 +1059,22 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 8px 0; gap: 10px; }
 .color-popup-label { flex: none; font-size: 13px; color: var(--text); }
 .color-popup-pick { display: inline-flex; align-items: center; gap: 8px; flex: none; }
-.color-popup-swatch { width: 22px; height: 22px; border-radius: 6px; flex: none;
-  background: var(--swatch, #2a9d8f); border: 1px solid var(--border); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+.color-popup-swatch { display: inline-flex; align-items: center; justify-content: center; position: relative;
+  width: 26px; height: 26px; border-radius: 6px; flex: none; cursor: pointer;
+  background: var(--swatch, #2a9d8f); border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); transition: box-shadow .12s; }
+.color-popup-swatch:hover { box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
 .color-popup-btn { padding: 5px 12px; font-size: 12px; color: var(--text);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: all 0.12s; }
 .color-popup-btn:hover { color: var(--accent, #4f8cff); border-color: var(--accent, #4f8cff); }
-/* 隐藏原生取色器：始终留在文档流中以保持可点击，透明且极小不影响布局 */
-.color-popup-input { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.color-popup-rnd { display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-2); color: var(--text-2); cursor: pointer; transition: all 0.12s; }
+.color-popup-rnd:hover { color: var(--accent, #4f8cff); border-color: var(--accent, #4f8cff); }
+/* 隐藏原生取色器：置于色块 label 内绝对定位，透明且零尺寸不占布局；点击色块由浏览器原生触发取色器 */
+.color-popup-input { position: absolute; opacity: 0; width: 0; height: 0; border: 0; padding: 0; pointer-events: none; }
 .color-popup-hint { font-size: 11px; color: var(--text-2); margin-top: 10px; line-height: 1.6; }
+.color-popup-level-hint { font-size: 11px; color: var(--text-2); margin: 8px 0 2px; line-height: 1.6; }
 /* ===== Tooltip 统一（data-tip 驱动，替代原生 title 白底气泡）===== */
 [data-tip] { position: relative; }
 [data-tip]::after {

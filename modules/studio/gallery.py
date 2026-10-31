@@ -309,7 +309,7 @@ def _backfill_tag_fields(full, texts):
             custom_tags.append(_cur)
     manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
     backfill_hit = False
-    if not refs and not custom_tags and texts.get("prompt"):
+    if not refs and texts.get("prompt"):
         sel = _extract_selected_names(texts.get("prompt"))
         if sel:
             legacy_names = _clean_prompt_tags(sel)

@@ -10,7 +10,7 @@ const DEFAULT_PREF = {
     tagTheme: 'light', tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
-    // 标签颜色配置（方案E）：level=simple 简单模式（全局一套规则）/ complex 分区模式（各区独立）
+    // 标签颜色配置（方案E）：level=simple 全局模式（所有标签一套规则）/ complex 分区模式（各区独立）
     // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
     // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
     tagColor: {
@@ -174,6 +174,30 @@ const App = {
       pref.value.gallery.tagColor.areas[colorPopupArea.value].seed = (seed || '').trim();
       savePref();
     }
+    // 分区异色种子：一键随机刷新（替代原清空式「重置」）
+    function randomAreaSeed() {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let s = '';
+      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      pref.value.gallery.tagColor.areas[colorPopupArea.value].seed = s;
+      savePref();
+      return s;
+    }
+    function randomHexColor() {
+      const chars = '0123456789abcdef';
+      let s = '#';
+      for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      return s;
+    }
+    // 方案E 弹窗「随机换色」：全局同色 / 分区同色各一键随机
+    function randomGlobalColor() {
+      pref.value.gallery.tagColor.globalColor = randomHexColor();
+      savePref();
+    }
+    function randomAreaColor() {
+      pref.value.gallery.tagColor.areas[colorPopupArea.value].color = randomHexColor();
+      savePref();
+    }
     // 设置面板大类折叠：状态写入 common.collapsedGroups，随 pref 持久化并广播
     function isCollapsed(key) {
       const c = pref.value.common.collapsedGroups;
@@ -279,7 +303,7 @@ const App = {
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
-      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed,
+      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
@@ -367,15 +391,6 @@ const App = {
                   <span class="settings-seed-box">
                     <button class="settings-seed-rnd" data-tip="设置标签颜色方案" @click="colorPopupOpenFor('detail')">
                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
-                    </button>
-                  </span>
-                </div>
-                <div class="settings-row" v-if="pref.gallery.tagColor && pref.gallery.tagColor.level === 'simple' && pref.gallery.tagColor.globalMode === 'diff'">
-                  <span class="settings-label">随机颜色种子</span>
-                  <span class="settings-seed-box">
-                    <input class="settings-seed-input" :value="pref.gallery.tagSeed" @change="setTagSeed($event.target.value)" spellcheck="false" />
-                    <button class="settings-seed-rnd" data-tip="换一组随机颜色" @click="randomTagSeed()">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
                   </span>
                 </div>
@@ -483,9 +498,10 @@ const App = {
           </div>
           <div class="color-popup-body">
             <div class="color-popup-seg">
-              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'simple' }" @click="setTagColorLevel('simple')">简单</button>
+              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'simple' }" @click="setTagColorLevel('simple')">全局</button>
               <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'complex' }" @click="setTagColorLevel('complex')">分区</button>
             </div>
+            <div class="color-popup-level-hint">全局：所有标签统一按下方规则配色；分区：详情区/编辑区/词库/过滤区各自独立配色。</div>
             <template v-if="pref.gallery.tagColor.level === 'simple'">
               <div class="color-popup-row">
                 <span class="color-popup-label">模式</span>
@@ -497,10 +513,13 @@ const App = {
               <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'same'">
                 <span class="color-popup-label">颜色</span>
                 <div class="color-popup-pick">
-                  <span class="color-popup-swatch" :style="{ '--swatch': pref.gallery.tagColor.globalColor }"></span>
-                  <button class="color-popup-btn" @click="$refs.globalColorInput && $refs.globalColorInput.click()">选择颜色</button>
-                  <input ref="globalColorInput" type="color" :value="pref.gallery.tagColor.globalColor"
-                         @input="setGlobalTagColor($event.target.value)" class="color-popup-input" />
+                  <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': pref.gallery.tagColor.globalColor }">
+                    <input type="color" class="color-popup-input" :value="pref.gallery.tagColor.globalColor"
+                           @input="setGlobalTagColor($event.target.value)" />
+                  </label>
+                  <button class="color-popup-rnd" data-tip="随机换色" @click="randomGlobalColor()">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  </button>
                 </div>
               </div>
               <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'diff'">
@@ -510,7 +529,7 @@ const App = {
                   <button class="color-popup-btn" @click="randomTagSeed()">随机</button>
                 </div>
               </div>
-              <div class="color-popup-hint">异色：每标签按种子散列出稳定颜色，换种子整套换色；同色：全部标签统一一色。</div>
+              <div class="color-popup-hint">异色：按种子给每个标签散列稳定颜色，换种子整套换色；同色：全部标签统一一色，点色块取色或点刷新随机换色。</div>
             </template>
             <template v-else>
               <div class="color-popup-seg color-popup-area-seg">
@@ -528,20 +547,25 @@ const App = {
               <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'same'">
                 <span class="color-popup-label">颜色</span>
                 <div class="color-popup-pick">
-                  <span class="color-popup-swatch" :style="{ '--swatch': pref.gallery.tagColor.areas[colorPopupArea].color }"></span>
-                  <button class="color-popup-btn" @click="$refs.areaColorInput && $refs.areaColorInput.click()">选择颜色</button>
-                  <input ref="areaColorInput" type="color" :value="pref.gallery.tagColor.areas[colorPopupArea].color"
-                         @input="setAreaTagColor($event.target.value)" class="color-popup-input" />
+                  <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': pref.gallery.tagColor.areas[colorPopupArea].color }">
+                    <input type="color" class="color-popup-input" :value="pref.gallery.tagColor.areas[colorPopupArea].color"
+                           @input="setAreaTagColor($event.target.value)" />
+                  </label>
+                  <button class="color-popup-rnd" data-tip="随机换色" @click="randomAreaColor()">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  </button>
                 </div>
               </div>
               <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'diff'">
                 <span class="color-popup-label">种子</span>
                 <div class="color-popup-pick">
                   <input class="settings-seed-input" :value="pref.gallery.tagColor.areas[colorPopupArea].seed" @change="setAreaTagSeed($event.target.value)" spellcheck="false" />
-                  <button class="color-popup-btn" @click="setAreaTagSeed('')">重置</button>
+                  <button class="color-popup-rnd" data-tip="随机刷新种子" @click="randomAreaSeed()">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  </button>
                 </div>
               </div>
-              <div class="color-popup-hint">分区模式：四个区域可分别设「异色（按种子散列）/ 同色（统一一色）」；区域种子留空时沿用全局种子。</div>
+              <div class="color-popup-hint">四个区域分别配色，每区可选「异色（按种子散列）/ 同色（统一一色）」；区域种子留空时沿用全局种子。</div>
             </template>
           </div>
         </div>

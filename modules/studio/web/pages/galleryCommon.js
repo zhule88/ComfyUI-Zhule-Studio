@@ -12,7 +12,7 @@ import { useRoute, useRouter } from 'vue-router';
 import TagTreePanel from './tagTreePanel.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
 
-export { TagTreePanel, OutNode, DetailTagNode };
+export { TagTreePanel, OutNode, DetailTagNode, ConfirmDialog };
 
 // 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无 '/' 时原样返回）
 export function leafName(n) {
@@ -130,7 +130,7 @@ const OutNode = {
   },
   template: `
     <div class="zhg-out-wrap" :class="{ open: expanded }">
-      <span class="zhg-sel-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }]" :style="chipStyle()"
+      <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }]" :style="chipStyle()"
             :data-tip="(isActive(node.name) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
         {{ leafName(node.name) }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
@@ -145,7 +145,7 @@ const OutNode = {
 };
 
 // 详情自定义标签层级树节点（递归）：custom_tag 按 parent_id 层级还原展示。
-// 叶子/带标签节点渲染为可交互 chip（左键静默、右键临时改色、✕ 取消关联）；
+// 叶子/带标签节点渲染为可交互 chip（左键编辑词条、右键删除，删除确认遵循 pref.common.noDeleteConfirm）；
 // 纯容器节点（仅路径中的中间层级）渲染分组标题，点击展开/收起。
 const DetailTagNode = {
   name: 'DetailTagNode',
@@ -154,11 +154,11 @@ const DetailTagNode = {
     depth: { type: Number, default: 0 },
     themeCls: { type: String, default: '' },
   },
-  emits: ['edit', 'delete', 'pick'],
+  emits: ['edit', 'delete'],
   setup(props, { emit }) {
     const expanded = ref(false);
     const hasKids = () => props.node.children && props.node.children.length;
-    return { expanded, hasKids };
+    return { expanded, hasKids, emit };
   },
   template: `
     <div class="zhg-dtag-wrap" :class="{ open: expanded }">
@@ -167,15 +167,39 @@ const DetailTagNode = {
       </span>
       <span v-else class="zhg-tag hl-custom" :class="[themeCls]"
             :style="node.style || {}"
-            :data-tip="'自定义标签，右键临时改色，✕ 取消关联'"
-            @click.stop="emit('edit', node.tag)" @contextmenu.prevent="emit('pick', node.tag)">
+            :data-tip="'自定义标签，左键编辑词条，右键删除（遵循删除确认设置）'"
+            @click.stop="emit('edit', node.tag)" @contextmenu.prevent="emit('delete', node.tag)">
         {{ node.name }}
         <span v-if="hasKids()" class="zhg-dtag-arrow" @click.stop="expanded = !expanded">{{ expanded ? '▾' : '▸' }}</span>
-        <span class="zhg-tag-del" @click.stop="emit('delete', node.tag)"> ✕</span>
       </span>
       <div class="zhg-dtag-kids" v-if="expanded" :style="{ marginLeft: (depth + 1) * 12 + 'px' }">
         <detail-tag-node v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" :theme-cls="themeCls"
-                         @edit="emit('edit', $event)" @delete="emit('delete', $event)" @pick="emit('pick', $event)"></detail-tag-node>
+                         @edit="emit('edit', $event)" @delete="emit('delete', $event)"></detail-tag-node>
+      </div>
+    </div>
+  `,
+};
+
+// 通用删除确认弹框：图片 / 批量 / 标签 / 词条等删除操作共用。
+// 是否弹出由各 ask* 入口按 pref.common.noDeleteConfirm 判断，组件只负责展示与确认/取消。
+const ConfirmDialog = {
+  name: 'ConfirmDialog',
+  props: {
+    show: { type: Boolean, default: false },
+    title: { type: String, default: '' },
+    busy: { type: Boolean, default: false },
+    confirmText: { type: String, default: '确认删除' },
+  },
+  emits: ['confirm', 'cancel'],
+  template: `
+    <div class="zhg-del-mask" v-if="show" @click.self="$emit('cancel')">
+      <div class="zhg-del-box">
+        <div class="zhg-del-title">{{ title }}</div>
+        <slot></slot>
+        <div class="zhg-del-actions">
+          <button class="btn zhg-mini" @click="$emit('cancel')">取消</button>
+          <button class="zhg-del-btn-danger" :disabled="busy" @click="$emit('confirm')">{{ busy ? '删除中…' : confirmText }}</button>
+        </div>
       </div>
     </div>
   `,
@@ -205,7 +229,7 @@ const DEFAULT_PREF = {
     tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
-    // 标签颜色配置（方案E）：level=simple 简单模式（全局一套规则）/ complex 分区模式（各区独立）
+    // 标签颜色配置（方案E）：level=simple 全局模式（所有标签一套规则）/ complex 分区模式（各区独立）
     // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
     // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
     tagColor: {
@@ -1529,7 +1553,7 @@ export function useGalleryCommon(opts = {}) {
     loading, loadingMore, allLoaded, dirty, tagPanelOpen, detail,
     quickTag, toast, toastType, toastIcon, delTarget, mainEl, gridEl,
     leafName, cardTags,
-    hasFilter, uniqueDetailTags, promptDetailTags, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
+    hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,

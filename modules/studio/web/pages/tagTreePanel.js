@@ -12,16 +12,32 @@ function leafName(n) {
   while (i >= 0 && !parts[i]) i--;
   return i >= 0 ? parts[i] : s;
 }
-// 递归收集树中所有叶子节点（自定义标签只平铺叶子，父级仅分组容器不展示）。
-// 叶子 name 统一为完整路径（'测试/喜欢'），展示时由 leafName 取末段，保证过滤/移除逻辑与
-// currentTags 分支一致（外部过滤区与存储关联均以完整路径为准）。
-function collectLeaves(ns) {
-  const out = [];
-  for (const n of ns || []) {
-    if (n.children && n.children.length) out.push(...collectLeaves(n.children));
-    else out.push({ ...n, name: n.rel || n.name });
+// 递归构建自定义标签层级树（完整路径 '测试/喜欢' → 父'测试'分组 + 子'喜欢'叶子）。
+// 节点与全量自定义树同构 {name, rel, leaf, isCustom, id, children}；叶子携带原始标签对象 tag（含 id）。
+// 父级为可展开分组容器，仅叶子可作为标签放置/关联（与详情页 DetailTagNode 层级语义一致）。
+function buildPathTree(tags) {
+  const roots = [];
+  const map = {};
+  for (const t of tags || []) {
+    const parts = String(t.name || '').split('/').filter((s) => s);
+    if (!parts.length) continue;
+    let prefix = '';
+    let cur = null;
+    for (let i = 0; i < parts.length; i++) {
+      prefix = prefix ? prefix + '/' + parts[i] : parts[i];
+      if (!map[prefix]) {
+        map[prefix] = { name: parts[i], rel: prefix, leaf: true, isCustom: true, children: [] };
+        if (cur) cur.children.push(map[prefix]);
+        else roots.push(map[prefix]);
+      }
+      cur = map[prefix];
+    }
+    if (cur) {
+      if (t.id != null && t.id !== '') cur.id = String(t.id);
+      cur.tag = t;
+    }
   }
-  return out;
+  return roots;
 }
 
 // 递归节点：chip 样式与外部 zhg-sel-tag 一致；尺寸随自身子树深度放大（叶子=基准，子树越深越大）；
@@ -169,16 +185,14 @@ export default {
       return c ? { '--tag-bg': c } : null;
     }
 
-    // 展示树分区：提示词标签（词库，非自定义，保留原有树形）+ 自定义标签（一律平铺叶子，不出现可点击父级）。
-    // 当前图片有标签时自定义区按 detail.tags 平铺实际挂载的叶子；否则用全量自定义树收集叶子。
+    // 展示树分区：提示词标签（词库，非自定义，保留原有树形）+ 自定义标签（保留层级树：父级为可展开分组容器，叶子才是标签）。
+    // 当前图片有标签时按完整路径（'测试/喜欢'）重建挂载树；否则直接用全量自定义树（后端已按 parent_id 组织层级）。
     const wbTree = computed(() => (tree.value || []).filter((n) => !n.isCustom));
     const csTree = computed(() => {
       const all = tree.value || [];
       return props.currentTags && props.currentTags.length
-        ? props.currentTags.filter((t) => t && t.custom).map((t) => ({
-            name: t.name, rel: t.name, leaf: true, isCustom: true, children: [],
-          }))
-        : collectLeaves(all.filter((n) => n.isCustom));
+        ? buildPathTree(props.currentTags.filter((t) => t && t.custom))
+        : all.filter((n) => n.isCustom);
     });
 
     // 上下分区：提示词标签在上、自定义标签在下，中间分隔线可拖拽调整区域大小（百分比持久化）

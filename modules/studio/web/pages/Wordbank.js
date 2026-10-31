@@ -1743,7 +1743,7 @@ const submitAddTab = async () => {
         const c = poolCandidates(item);
         if (!c || !c.length) return null;
         const file = c[Math.floor(Math.random() * c.length)];
-        picks.push({ tab: item.tab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn, _poolKey: poolKeyFor(item) });
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, _poolKey: poolKeyFor(item) });
       }
       return picks;
     };
@@ -1794,7 +1794,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => [...kept, ...combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey }))]);
+      return combos.map(combo => [...kept, ...combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey }))]);
     };
 
     const singleRandom = () => {
