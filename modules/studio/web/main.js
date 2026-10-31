@@ -1,4 +1,4 @@
-import { createApp, ref } from 'vue';
+import { createApp, ref, computed } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 import Wordbank from './pages/Wordbank.js';
 import Gallery from './pages/Gallery.js';
@@ -22,6 +22,19 @@ const TAG_THEMES = [
   { key: 'light', label: '浅色' },
   { key: 'plain', label: '描边' },
 ];
+
+// 演示块颜色：与图库/词库同一 FNV-1a 散列算法（种子 + 固定名 'demo'），
+// 随机颜色种子变化时，设置面板的主题/边角演示块联动换色，所见即所得
+function seedColor(seed) {
+  const s = String(seed || '') + '|demo';
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h >>>= 0;
+  return 'hsl(' + (h % 360) + ', ' + (60 + (h % 4) * 6) + '%, ' + (38 + (h % 3) * 5) + '%)';
+}
 
 function loadPref() {
   try {
@@ -195,6 +208,10 @@ const App = {
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
   computed: {
+    // 演示块颜色：随机颜色种子联动，主题/边角演示块随种子换色
+    demoTagBg() {
+      return seedColor(this.pref.gallery.tagSeed);
+    },
     bindQuery() {
       const b = this.$route.query.bind;
       return b ? { bind: b } : {};
@@ -245,12 +262,14 @@ const App = {
                   <span class="settings-label">删除时弹出确认框</span>
                   <button class="settings-text-toggle" :class="{ on: pref.common.noDeleteConfirm !== true }" @click="toggleNoDeleteConfirm">{{ pref.common.noDeleteConfirm !== true ? '开启' : '关闭' }}</button>
                 </div>
+                <div class="settings-subgroup-title"><span>标签</span></div>
                 <div class="settings-row">
                   <span class="settings-label">主题</span>
                   <div class="settings-theme-pick">
                     <button v-for="th in TAG_THEMES" :key="th.key"
                             class="zhg-tag hl-prompt demo-tag"
                             :class="['zhg-tag-theme-' + th.key, (pref.gallery.tagRound === false ? 'zhg-tag-square' : ''), { 'demo-on': (pref.gallery.tagTheme || 'light') === th.key }]"
+                            :style="{ '--tag-bg': demoTagBg }"
                             @click="setTagTheme(th.key)">{{ th.label }}</button>
                   </div>
                 </div>
@@ -259,9 +278,11 @@ const App = {
                   <div class="settings-theme-pick">
                     <button class="zhg-tag hl-prompt demo-tag"
                             :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), { 'demo-on': pref.gallery.tagRound !== false }]"
+                            :style="{ '--tag-bg': demoTagBg }"
                             @click="setTagRound(true)">圆角</button>
                     <button class="zhg-tag hl-prompt demo-tag"
                             :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), 'zhg-tag-square', { 'demo-on': pref.gallery.tagRound === false }]"
+                            :style="{ '--tag-bg': demoTagBg }"
                             @click="setTagRound(false)">方角</button>
                   </div>
                 </div>

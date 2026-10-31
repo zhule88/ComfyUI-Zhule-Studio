@@ -1013,6 +1013,8 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border: none; border-radius: 6px; cursor: pointer; transition: all 0.12s; white-space: nowrap; }
 .settings-seg-btn:hover { color: var(--text); background: var(--card-hover); }
 .settings-seg-btn.on { background: var(--primary, #4f8cff); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+/* 设置子类标题：通用设置内的小分组（如“标签”） */
+.settings-subgroup-title { font-size: 11px; color: var(--text-2); letter-spacing: .5px; margin: 10px 0 2px; }
 /* 标签样式演示块：用真实标签样式渲染选项，选中态用描边高亮 */
 .settings-theme-pick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .demo-tag { --tag-bg: #4f8cff; cursor: pointer; font-size: 12px; transition: outline-color .15s, box-shadow .15s; }
