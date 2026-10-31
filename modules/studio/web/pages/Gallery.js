@@ -38,8 +38,8 @@ export default {
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
 
-    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass"
-                    @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter"></tag-tree-panel>
+    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="tagColorOf"
+                    @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter" @toggle="toggleTagActive"></tag-tree-panel>
 
     <div class="zhg-layout">
       <aside class="zhg-side" :class="{ 'zhg-side-lock': side.h > 0 }" :style="sideStyle" v-show="filtersOpen">
@@ -85,7 +85,7 @@ export default {
               <!-- 外部过滤区：俄罗斯套娃包裹式展开；左键切换启用（红=待生效/蓝=生效），右键展开子标签，Ctrl+右键逐级优先收起，✕暂时隐藏 -->
               <div class="zhg-sel-tags" v-if="visibleTags.length">
                 <out-node v-for="t in visibleTags" :key="'st'+t.name" :node="t" :depth="0"
-                          :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass"
+                          :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"
                           @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
               </div>
             </div>

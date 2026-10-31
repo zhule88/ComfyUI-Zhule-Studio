@@ -63,6 +63,8 @@ const OutNode = {
     treeKidsFn: { type: Function, default: null },
     // 全局标签主题类（zhg-tag-theme-* / zhg-tag-square），由父组件传入，复用详情标签样式
     themeCls: { type: String, default: '' },
+    // 标签颜色函数（输入完整标签名 → 颜色字符串，同详情区散列配色）；缺失时 CSS 走默认色
+    colorOf: { type: Function, default: null },
   },
   emits: ['toggle', 'add', 'hide'],
   setup(props, { emit }) {
@@ -84,10 +86,15 @@ const OutNode = {
     // 尺寸随子树深度放大（与 TagNode 完全一致）：最外层最大、越内越小
     const chipStyle = () => {
       const scale = 1 + subtreeDepth({ name: props.node.name, children: kids() }) * 0.3;
-      return {
+      const style = {
         fontSize: Math.round(12 * scale) + 'px',
         padding: Math.round(5 * scale) + 'px ' + Math.round(12 * scale) + 'px',
       };
+      if (props.colorOf) {
+        const c = props.colorOf(props.node.name);
+        if (c) style['--tag-bg'] = c;
+      }
+      return style;
     };
     const boxStyle = () => ({ ...chipStyle() });
     function onClick(e) {
@@ -130,7 +137,7 @@ const OutNode = {
       </span>
       <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
         <out-node v-for="c in kids()" :key="c.name" :node="c" :depth="depth + 1"
-                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls"
+                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls" :color-of="colorOf"
                   @toggle="fwdToggle" @add="fwdAdd" @hide="fwdHide"></out-node>
       </div>
     </div>
@@ -773,11 +780,16 @@ export function useGalleryCommon(opts = {}) {
     return segs;
   });
   // 详情标签样式：只注入 CSS 变量 --tag-bg（随机色优先），背景/描边/文字由主题类在 CSS 中统一处理。
-  // 新增未着色标签回退来源默认色（设置里的来源色选项已移除）。
-  const TAG_FALLBACK = { prompt: '#2a9d8f', custom: '#e07b39' };
+  // 新增未着色标签回退统一色（自定义标签与提示词标签同色，不再单独橙色区分）。
+  const TAG_FALLBACK = { prompt: '#2a9d8f', custom: '#2a9d8f' };
   function tagStyle(t) {
     const c = tagColorMap.value[t.name] || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
     return c ? { '--tag-bg': c } : null;
+  }
+  // 外部过滤区 / 编辑面板标签配色：与详情区同一套散列色（每标签恒定不同色），
+  // 右键临时改色过的标签优先用内存覆盖色；其余按种子确定性散列，换种子即整套换色。
+  function tagColorOf(name) {
+    return tagColorMap.value[name] || seedHash(name);
   }
   // 标签主题类（设置页 tagTheme/tagRound，zhule-pref-changed 即时生效）：
   // zhg-tag-theme-dark|light|plain + 圆角关闭时追加 zhg-tag-square（近直角）
@@ -1430,12 +1442,14 @@ export function useGalleryCommon(opts = {}) {
     if (q) {
       const first = String(q).split(',').filter(Boolean)[0];
       if (first) {
+        // 词库跳转：不覆盖已有标签，新标签追加到最前并取消其它标签的选中状态（仅新标签生效）。
         // 纯数字 = 词条 id（词库箭头跳转）：按 id 筛选；名字待标签树加载后回显
+        filters.tags.forEach((t) => { t.active = false; });
         if (/^\d+$/.test(first)) {
           pendingTagId = first;
-          filters.tags = [{ id: first, name: first, rel: '', active: true, hidden: false }];
+          filters.tags.unshift({ id: first, name: first, rel: '', active: true, hidden: false });
         } else {
-          filters.tags = [{ name: first, rel: '', active: true, hidden: false }];
+          filters.tags.unshift({ name: first, rel: '', active: true, hidden: false });
         }
       }
     }
@@ -1478,7 +1492,7 @@ export function useGalleryCommon(opts = {}) {
     addTagFilter, clearTagFilter, toggleTagMode, visibleTags,
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
-    openDetail, closeDetail, zoomView, tagStyle,
+    openDetail, closeDetail, zoomView, tagStyle, tagColorOf,
     askDelete, cancelDelete, confirmDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

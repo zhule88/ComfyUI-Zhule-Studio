@@ -653,28 +653,28 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 /* 标签主题（设置页 tagTheme/tagRound，参考 Element Plus Tag 的 dark/light/plain）：
    颜色由详情注入 --tag-bg（随机色），这里只负责按主题套背景/描边/文字。
    作用于四类标签载体：图库详情 .zhg-tag.hl-*、词库小分类 .chip、
-   外部过滤区 .zhg-sel-tag、标签树 .zhg-ttp-chip（排除 .hl-custom 保留自定义橙色区分） */
+   外部过滤区 .zhg-sel-tag、标签树 .zhg-ttp-chip（自定义标签已与提示词标签同套主题色，不再区分） */
 /* dark：实色底 + 白字，hover 提亮 */
 .zhg-tag-theme-dark.hl-prompt, .zhg-tag-theme-dark.hl-custom,
 .zhg-tag-theme-dark.chip, .zhg-tag-theme-dark.zhg-sel-tag,
-.zhg-tag-theme-dark.zhg-ttp-chip:not(.hl-custom) { background: var(--tag-bg, #2a9d8f); color: #fff; }
+.zhg-tag-theme-dark.zhg-ttp-chip { background: var(--tag-bg, #2a9d8f); color: #fff; }
 .zhg-tag-theme-dark.hl-prompt:hover, .zhg-tag-theme-dark.hl-custom:hover,
 .zhg-tag-theme-dark.chip:hover, .zhg-tag-theme-dark.zhg-sel-tag:hover,
-.zhg-tag-theme-dark.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 78%, #fff); }
+.zhg-tag-theme-dark.zhg-ttp-chip:hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 78%, #fff); }
 /* light：浅色底（与白色混合，任何背景都可读）+ 主色文字（压暗保证对比度） */
 .zhg-tag-theme-light.hl-prompt, .zhg-tag-theme-light.hl-custom,
 .zhg-tag-theme-light.chip, .zhg-tag-theme-light.zhg-sel-tag,
-.zhg-tag-theme-light.zhg-ttp-chip:not(.hl-custom) { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 14%, #fff); color: color-mix(in srgb, var(--tag-bg, #2a9d8f) 72%, #1a1d24); }
+.zhg-tag-theme-light.zhg-ttp-chip { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 14%, #fff); color: color-mix(in srgb, var(--tag-bg, #2a9d8f) 72%, #1a1d24); }
 .zhg-tag-theme-light.hl-prompt:hover, .zhg-tag-theme-light.hl-custom:hover,
 .zhg-tag-theme-light.chip:hover, .zhg-tag-theme-light.zhg-sel-tag:hover,
-.zhg-tag-theme-light.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 26%, #fff); }
+.zhg-tag-theme-light.zhg-ttp-chip:hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 26%, #fff); }
 /* plain：透明底 + 彩色文字 + 细描边，hover 淡底 + 实描边 */
 .zhg-tag-theme-plain.hl-prompt, .zhg-tag-theme-plain.hl-custom,
 .zhg-tag-theme-plain.chip, .zhg-tag-theme-plain.zhg-sel-tag,
-.zhg-tag-theme-plain.zhg-ttp-chip:not(.hl-custom) { background: transparent; color: var(--tag-bg, #2a9d8f); border: 1px solid color-mix(in srgb, var(--tag-bg, #2a9d8f) 55%, transparent); }
+.zhg-tag-theme-plain.zhg-ttp-chip { background: transparent; color: var(--tag-bg, #2a9d8f); border: 1px solid color-mix(in srgb, var(--tag-bg, #2a9d8f) 55%, transparent); }
 .zhg-tag-theme-plain.hl-prompt:hover, .zhg-tag-theme-plain.hl-custom:hover,
 .zhg-tag-theme-plain.chip:hover, .zhg-tag-theme-plain.zhg-sel-tag:hover,
-.zhg-tag-theme-plain.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 16%, transparent); border-color: var(--tag-bg, #2a9d8f); }
+.zhg-tag-theme-plain.zhg-ttp-chip:hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 16%, transparent); border-color: var(--tag-bg, #2a9d8f); }
 /* 外部过滤区状态增强（主题覆盖底色后仍可识别 on=生效 / off=待生效）：
    on 用内阴影提亮描边，off 降透明 + 虚线描边 */
 .zhg-tag-theme-dark.zhg-sel-tag.on, .zhg-tag-theme-light.zhg-sel-tag.on,
@@ -1114,7 +1114,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-crumb.root { color: var(--text-2); }
 .zhg-ttp-reset { font-size: 11px; color: var(--text-3); cursor: pointer; }
 .zhg-ttp-reset:hover { color: var(--primary); }
-.zhg-ttp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 16px 16px; }
+.zhg-ttp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 10px 16px 16px; }
 .zhg-ttp-selected {
   display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
   padding: 6px 10px; margin-bottom: 10px;
@@ -1126,14 +1126,11 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; }
 .zhg-ttp-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--primary-dim); color: #fff;
-  border: 1px solid var(--primary); border-radius: 12px;
+  border-radius: 12px;
   font-size: 12px; cursor: pointer; user-select: none;
   transition: all 0.12s;
 }
-.zhg-ttp-chip:hover { background: var(--red-dim); border-color: var(--red); }
-.zhg-ttp-chip.leaf { background: #1b202b; color: var(--text-2); border-color: var(--border); }
-.zhg-ttp-chip.leaf:hover { background: var(--card-hover); color: var(--text); border-color: var(--primary); }
+/* 颜色一律由主题类（zhg-tag-theme-* + --tag-bg）统一接管，不再区分自定义/提示词/叶子 */
 .zhg-ttp-count { font-size: 0.82em; color: var(--text-3); }
 .zhg-ttp-arrow { font-size: 0.9em; color: var(--text-3); }
 /* 俄罗斯套娃展开容器：外层大、内层小，子标签被包裹在容器内部，宽高随内容一起增长 */
@@ -1141,18 +1138,32 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start;
   max-width: 16em;
   padding: 8px 12px;
-  background: var(--primary-dim);
-  border: 1px solid var(--primary);
+  background: color-mix(in srgb, var(--tag-bg, var(--primary)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-bg, var(--primary)) 52%, transparent);
   border-radius: 14px;
   animation: zhg-kids-in 0.15s ease;
 }
 .zhg-ttp-loading { padding: 20px; text-align: center; color: var(--text-3); }
 .zhg-ttp-err { padding: 20px; text-align: center; color: var(--red); }
-/* 编辑面板：自定义标签分支（后端标记 isCustom）用橙色系与词库标签区分 */
-.zhg-ttp-chip.hl-custom { background: rgba(224,123,57,.18); border-color: #e07b39; color: #ffd9bd; }
-.zhg-ttp-chip.hl-custom:hover { background: rgba(224,123,57,.32); border-color: #f08c45; color: #fff; }
-.zhg-ttp-chip.hl-custom.leaf { background: rgba(224,123,57,.10); border-color: rgba(224,123,57,.45); color: #ffc59a; }
-.zhg-ttp-chip.hl-custom.leaf:hover { background: rgba(224,123,57,.30); border-color: #f08c45; color: #fff; }
+/* 编辑面板上下分区：提示词标签在上、自定义标签在下，中间分隔线可拖拽调整区域大小 */
+.zhg-ttp-split { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
+.zhg-ttp-zone { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.zhg-ttp-zone-wb { flex: 0 0 55%; }
+.zhg-ttp-zone-cs { flex: 1 1 0; }
+.zhg-ttp-zone-title {
+  flex-shrink: 0; font-size: 12px; font-weight: 800; color: var(--text-2);
+  padding: 4px 2px 6px; border-bottom: 1px solid var(--border-2); margin-bottom: 8px;
+}
+.zhg-ttp-divider {
+  flex: 0 0 9px; cursor: row-resize; position: relative;
+  background: var(--card); border-top: 1px solid var(--border-2); border-bottom: 1px solid var(--border-2);
+}
+.zhg-ttp-divider::before {
+  content: '⋯'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 11px; color: var(--text-3); letter-spacing: 2px; pointer-events: none;
+}
+.zhg-ttp-divider:hover { background: var(--primary-dim); }
+.zhg-ttp-divider:hover::before { color: #fff; }
 
 /* 详情页自定义标签层级树（DetailTagNode）：父'测试'下挂子'喜欢'，非扁平路径 */
 .zhg-dtag-wrap { display: block; }
