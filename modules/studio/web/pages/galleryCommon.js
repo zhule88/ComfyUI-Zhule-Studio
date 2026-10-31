@@ -12,7 +12,26 @@ import { useRoute, useRouter } from 'vue-router';
 import TagTreePanel from './tagTreePanel.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
 
-export { TagTreePanel, OutNode };
+export { TagTreePanel, OutNode, DetailTagNode };
+
+// 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无 '/' 时原样返回）
+export function leafName(n) {
+  const s = String(n || '');
+  const parts = s.split('/');
+  let i = parts.length - 1;
+  while (i >= 0 && !parts[i]) i--;
+  return i >= 0 ? parts[i] : s;
+}
+// 卡片标签展示数组：提示词标签（词库词条）在前、自定义标签在后（自定义只显示叶子名）
+export function cardTags(it) {
+  const all = (it && it.tags) ? it.tags : [];
+  const cs = (it && Array.isArray(it.customTags)) ? it.customTags : [];
+  // String 归一化：后端 JSON 若把纯数字自定义标签序列化成数值类型，与字符串标签比对会 miss，
+  // 导致该标签被误判为提示词标签而重复展示/覆盖；统一转字符串后按叶子名归类。
+  const csSet = new Set(cs.map((c) => String(c)));
+  const prompt = all.filter((t) => t && !csSet.has(String(t)));
+  return [...prompt, ...cs.map((c) => leafName(c))];
+}
 
 export const API = {
   list: '/zhule_studio/api/gallery',
@@ -23,6 +42,7 @@ export const API = {
   tag: '/zhule_studio/api/gallery/tag',
   annotate: '/zhule_studio/api/gallery/annotate',
   rename: '/zhule_studio/api/gallery/rename',
+  renameFile: '/zhule_studio/api/gallery/rename-file',
   rescan: '/zhule_studio/api/gallery/rescan',
   del: '/zhule_studio/api/gallery/delete',
   batchDel: '/zhule_studio/api/gallery/batch-delete',
@@ -41,6 +61,8 @@ const OutNode = {
     isActive: { type: Function, required: true },
     isHidden: { type: Function, default: null },
     treeKidsFn: { type: Function, default: null },
+    // 全局标签主题类（zhg-tag-theme-* / zhg-tag-square），由父组件传入，复用详情标签样式
+    themeCls: { type: String, default: '' },
   },
   emits: ['toggle', 'add', 'hide'],
   setup(props, { emit }) {
@@ -95,21 +117,58 @@ const OutNode = {
     function fwdAdd(node) { emit('add', node); }
     function fwdHide(name) { emit('hide', name); }
     return {
-      expanded, kids, hasKids, chipStyle, boxStyle,
+      expanded, kids, hasKids, chipStyle, boxStyle, leafName,
       onClick, onCtx, fwdToggle, fwdAdd, fwdHide,
     };
   },
   template: `
     <div class="zhg-out-wrap" :class="{ open: expanded }">
-      <span class="zhg-sel-tag" v-if="!expanded" :class="{ on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }" :style="chipStyle()"
+      <span class="zhg-sel-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }]" :style="chipStyle()"
             :data-tip="(isActive(node.name) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
-        {{ node.name }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
+        {{ leafName(node.name) }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
       </span>
       <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
         <out-node v-for="c in kids()" :key="c.name" :node="c" :depth="depth + 1"
-                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn"
+                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls"
                   @toggle="fwdToggle" @add="fwdAdd" @hide="fwdHide"></out-node>
+      </div>
+    </div>
+  `,
+};
+
+// 详情自定义标签层级树节点（递归）：custom_tag 按 parent_id 层级还原展示。
+// 叶子/带标签节点渲染为可交互 chip（左键静默、右键临时改色、✕ 取消关联）；
+// 纯容器节点（仅路径中的中间层级）渲染分组标题，点击展开/收起。
+const DetailTagNode = {
+  name: 'DetailTagNode',
+  props: {
+    node: { type: Object, required: true },
+    depth: { type: Number, default: 0 },
+    themeCls: { type: String, default: '' },
+  },
+  emits: ['edit', 'delete', 'pick'],
+  setup(props, { emit }) {
+    const expanded = ref(false);
+    const hasKids = () => props.node.children && props.node.children.length;
+    return { expanded, hasKids };
+  },
+  template: `
+    <div class="zhg-dtag-wrap" :class="{ open: expanded }">
+      <span v-if="node.isGroup && !node.tag" class="zhg-dtag-group" @click.stop="expanded = !expanded">
+        {{ node.name }}<span class="zhg-dtag-arrow">{{ expanded ? '▾' : '▸' }}</span>
+      </span>
+      <span v-else class="zhg-tag hl-custom" :class="[themeCls]"
+            :style="node.style || {}"
+            :data-tip="'自定义标签，右键临时改色，✕ 取消关联'"
+            @click.stop="emit('edit', node.tag)" @contextmenu.prevent="emit('pick', node.tag)">
+        {{ node.name }}
+        <span v-if="hasKids()" class="zhg-dtag-arrow" @click.stop="expanded = !expanded">{{ expanded ? '▾' : '▸' }}</span>
+        <span class="zhg-tag-del" @click.stop="emit('delete', node.tag)"> ✕</span>
+      </span>
+      <div class="zhg-dtag-kids" v-if="expanded" :style="{ marginLeft: (depth + 1) * 12 + 'px' }">
+        <detail-tag-node v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" :theme-cls="themeCls"
+                         @edit="emit('edit', $event)" @delete="emit('delete', $event)" @pick="emit('pick', $event)"></detail-tag-node>
       </div>
     </div>
   `,
@@ -135,8 +194,13 @@ const DEFAULT_PREF = {
     showModelFilter: true,
     showLoraFilter: true,
     timeFmt: 'yyyy-MM-dd HH:mm',
-    promptTagColor: '#2a9d8f',
-    customTagColor: '#e07b39',
+    tagTheme: 'light',
+    tagRound: true,
+    // 标签颜色种子：所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
+    tagSeed: 'zhule',
+  },
+  common: {
+    noDeleteConfirm: false,
   },
 };
 
@@ -147,6 +211,7 @@ function loadPref() {
     const p = JSON.parse(raw);
     const out = JSON.parse(JSON.stringify(DEFAULT_PREF));
     if (p && p.gallery) Object.assign(out.gallery, p.gallery);
+    if (p && p.common) Object.assign(out.common, p.common);
     return out;
   } catch (e) {
     return JSON.parse(JSON.stringify(DEFAULT_PREF));
@@ -183,24 +248,14 @@ export function fmtModel(name) {
 export function useGalleryCommon(opts = {}) {
   const route = useRoute();
   const router = useRouter();
-  // ===== [TEST] 图库加载耗时测试：记录进入/刷新页面到列表渲染完成的耗时，定位后删除 =====
-  const _GL_T0 = performance.now();
-  const _GL_NO_THUMB = false;  // [TEST] 禁缩略图调试开关：true 时所有卡片 img src 置空、不请求缩略图，验证缩略图是否拖慢加载；定位后删除
-  function _glPush(lines) {
-    try {
-      fetch('/zhule_studio/api/log/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sub: 'gallery_load_test', lines }),
-      }).catch(() => {});
-    } catch (e) {}
-  }
   // 慢操作节流日志：仅记录 >=30ms 的计算，同一标签 5 秒内最多一条，避免渲染期刷屏
   const pref = reactive(loadPref());
   function onPrefChanged(e) {
     const p = (e && e.detail) || loadPref();
     const prev = JSON.parse(JSON.stringify(pref));
     Object.assign(pref, p);
+    // 标签颜色种子变化：即时按新种子重算已打开详情的标签色
+    if (prev.gallery.tagSeed !== pref.gallery.tagSeed) refreshTagColors();
     if (opts.onPrefChangedExtra) opts.onPrefChangedExtra(p, prev);
   }
   const filters = reactive({ q: '', sortField: 'time', sortDir: 'desc', tags: [], models: [], loras: [], tagMode: 'and' });
@@ -219,7 +274,7 @@ export function useGalleryCommon(opts = {}) {
       if (raw && raw.version === 1 && Array.isArray(raw.tags)) {
         const valid = raw.tags
           .filter((t) => t && typeof t.name === 'string')
-          .map((t) => ({ name: t.name, rel: t.rel || '', active: !!t.active, hidden: !!t.hidden, inner: !!t.inner }));
+          .map((t) => ({ name: t.name, rel: t.rel || '', active: !!t.active, hidden: !!t.hidden, inner: !!t.inner, id: t.id || '', kind: t.kind || '' }));
         if (valid.length) filters.tags = valid;
       }
     } catch (e) { /* ignore: 解析失败，保留空 tags */ }
@@ -234,6 +289,9 @@ export function useGalleryCommon(opts = {}) {
   function toggleFilters() {
     filtersOpen.value = !filtersOpen.value;
     try { localStorage.setItem('zhule_gallery_filters_open', filtersOpen.value ? '1' : '0'); } catch (e) { /* ignore */ }
+    // 筛选区由收起转展开：等 DOM 可见后回调布局（上下布局需按容器可用宽重新分配筛选块宽度；
+    // 否则挂载时容器处于隐藏态，块宽分配失效，展开后筛选块仍停留在初始窄宽）
+    if (filtersOpen.value && opts.onFiltersOpen) opts.onFiltersOpen();
   }
 
   const items = ref([]);
@@ -298,7 +356,9 @@ export function useGalleryCommon(opts = {}) {
   function loadSidePref() {
     try {
       const raw = JSON.parse(localStorage.getItem('zhule_gallery_side') || '{}');
-      if (raw.w > (sideOpt.wMin || 140) && raw.w < (sideOpt.wMax || 2400)) side.w = raw.w;
+      // 上下布局（ignoreW）恒为 100% 宽：忽略历史残留的 w（旧版左右布局写入的宽度值），
+      // 否则筛选区容器被锁成窄条（如 375px 约占屏宽 1/3），拖拽把手也只放大块宽、容器不跟随，表现为"无法拉宽"
+      if (!sideOpt.ignoreW && raw.w > (sideOpt.wMin || 140) && raw.w < (sideOpt.wMax || 2400)) side.w = raw.w;
       if (raw.h > (sideOpt.hMin || 120) && raw.h < maxSideH()) side.h = raw.h;
     } catch (e) { /* ignore */ }
     // 默认给筛选区一个固定基准高度（仅布局配置了 initH 时生效），拖高把手才能按鼠标拉高并让块体随高度伸展
@@ -307,7 +367,12 @@ export function useGalleryCommon(opts = {}) {
   loadSidePref();
   function startSideDrag(e, axis) {
     const startX = e.clientX, startY = e.clientY;
-    const startW = side.w, startH = side.h;
+    // 基线取面板**实际渲染尺寸**：side.w / side.h 为 0 表示「没拖过、用 CSS 默认值」，
+    // 若直接拿 0 当基线，第一次拖动会先跳到最小值（表现为拉不动、越拉越窄）
+    const _el = e.currentTarget && e.currentTarget.parentElement;
+    const _r = _el ? _el.getBoundingClientRect() : null;
+    const startW = side.w > 0 ? side.w : (_r ? _r.width : 0);
+    const startH = side.h > 0 ? side.h : (_r ? _r.height : 0);
     const wMin = sideOpt.wMin || 140, wMax = sideOpt.wMax || 2400;
     const hMin = sideOpt.hMin || 120, hMaxV = maxSideH();
     const onMove = (ev) => {
@@ -329,6 +394,9 @@ export function useGalleryCommon(opts = {}) {
     const name = typeof item === 'string' ? item : (item && item.name);
     if (!name) return;
     const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
+    // 携带 id/kind：词条 id（prompt）或自定义标签 id（custom），点击后后端按 id 直查 gallery_tag
+    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
+    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
     // 放到外部过滤区（编辑面板左键点击触发）：同名未隐藏则移除（toggle）；同名已隐藏=经编辑面板重新放置，
     // 清除隐藏标记恢复显示并置为启用（hidden=false, active=true，与"隐藏不可逆、恢复靠编辑面板重新放置"语义一致）；否则新增待生效（默认红）
     const i = filters.tags.findIndex((t) => t.name === name);
@@ -337,11 +405,12 @@ export function useGalleryCommon(opts = {}) {
         filters.tags[i].hidden = false;
         filters.tags[i].active = true;
         filters.tags[i].rel = rel;
+        if (id) { filters.tags[i].id = id; filters.tags[i].kind = kind; }
       } else {
         filters.tags.splice(i, 1);
       }
     } else {
-      filters.tags.push({ name, rel, active: false, hidden: false });
+      filters.tags.push({ name, rel, id, kind, active: false, hidden: false });
     }
     applyFilter();
     saveTagPref();
@@ -352,10 +421,16 @@ export function useGalleryCommon(opts = {}) {
   function toggleTagActive(name) {
     const t = filters.tags.find((x) => x.name === name);
     if (!t) {
-      filters.tags.push({ name, rel: '', active: true, hidden: false, inner: true });
+      const meta = tagKidMeta.value[name] || {};
+      filters.tags.push({ name, rel: '', id: meta.id || '', kind: meta.isCustom ? 'custom' : 'prompt', active: true, hidden: false, inner: true });
       applyFilter();
       saveTagPref();
       return;
+    }
+    // 已入列但缺 id（老 localStorage 状态 / URL 直达）：用树元信息回填后走 SQL
+    if (!t.id) {
+      const meta = tagKidMeta.value[name];
+      if (meta && meta.id) { t.id = meta.id; t.kind = meta.isCustom ? 'custom' : 'prompt'; }
     }
     t.active = !t.active;
     applyFilter();
@@ -379,6 +454,8 @@ export function useGalleryCommon(opts = {}) {
   }
   // 外部过滤区：右键展开子标签需要的树数据（name -> children）
   const tagTreeKidsMap = ref({});
+  // 树节点元信息（name -> {id, isCustom}）：外部区点击/老状态回填时按名字找回 id，供 SQL 过滤
+  const tagKidMeta = ref({});
   // 词条 id -> 显示名：URL 带 id 筛选时（词库跳转）用它把数字回显成词条名
   const tagIdNameMap = ref({});
   const expandedTags = ref(new Set());
@@ -390,17 +467,32 @@ export function useGalleryCommon(opts = {}) {
       if (Array.isArray(d.tree)) {
         const map = {};
         const idMap = {};
+        const kidMeta = {};
         (function walk(ns) {
           for (const n of ns) {
             map[n.name] = (n.children || []).map((c) => ({ name: c.name, rel: c.rel, children: c.children || [] }));
             if (n.id != null && n.id !== '') idMap[String(n.id)] = n.name;
+            kidMeta[n.name] = { id: (n.id != null && n.id !== '') ? String(n.id) : '', isCustom: !!n.isCustom };
             walk(n.children || []);
           }
         })(d.tree);
         tagTreeKidsMap.value = map;
         tagIdNameMap.value = idMap;
+        tagKidMeta.value = kidMeta;
+        backfillTagIds();
       }
     } catch (e) { /* 静默失败，右键展开无子标签可显示 */ }
+  }
+  // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 name 找回 id/kind，让过滤走 SQL
+  function backfillTagIds() {
+    for (const t of filters.tags) {
+      if (t.id) continue;
+      const meta = tagKidMeta.value[t.name];
+      if (meta && meta.id) {
+        t.id = meta.id;
+        t.kind = meta.isCustom ? 'custom' : 'prompt';
+      }
+    }
   }
   function treeKids(name) { return tagTreeKidsMap.value[name] || []; }
   function toggleTagExpand(name) {
@@ -441,13 +533,6 @@ export function useGalleryCommon(opts = {}) {
   const toastIcon = { info: '\u2139\ufe0f', success: '\u2705', error: '\u274c', warn: '\u26a0\ufe0f' };
   const delTarget = ref(null);
   const delBatchOpen = ref(false);
-  // 「以后不再询问」删除免确认开关：sessionStorage 持久化——刷新界面不会重置，
-  // 只有重启程序（关闭页面/浏览器重新打开）后才恢复确认。
-  // 勾选后无论单图红叉删除还是批量删除选中图片，都直接执行、跳过确认弹窗。
-  const deleteNoAsk = ref(sessionStorage.getItem('zhule_gallery_noask') === '1');
-  watch(deleteNoAsk, (v) => {
-    try { sessionStorage.setItem('zhule_gallery_noask', v ? '1' : '0'); } catch (e) { /* ignore */ }
-  });
   // 重命名模型/LoRA：居中弹框（非浏览器 prompt）
   const renameOpen = ref(false);
   const renameKind = ref('model');
@@ -517,6 +602,35 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
   }
 
+  // 把自定义标签（完整路径 name，如 '测试/喜欢'）按 / 拆分构建层级树。
+  // 同一图片若同时关联 '测试' 与 '测试/喜欢'，'测试' 节点既携带标签也可展开子节点。
+  function buildCustomTagTree(tags, colorMap) {
+    const roots = [];
+    for (const t of tags) {
+      if (!t || !t.custom) continue;
+      const parts = String(t.name || '').split('/').filter((s) => s);
+      if (!parts.length) continue;
+      let level = roots;
+      let prefix = '';
+      parts.forEach((p, i) => {
+        prefix = prefix ? prefix + '/' + p : p;
+        let node = level.find((x) => x.name === p);
+        if (!node) {
+          node = { name: p, path: prefix, isGroup: true, tag: null, style: '' };
+          level.push(node);
+        }
+        node.path = prefix;
+        if (i === parts.length - 1) {
+          node.isGroup = false;
+          node.tag = t;
+          node.style = colorMap[t.name] || '';
+        }
+        level = node.children || (node.children = []);
+      });
+    }
+    return roots;
+  }
+
   // 详情页已选标签（对象数组，按 name 去重；prompt/custom 为只读来源）
   const uniqueDetailTags = computed(() => {
     const d = detail.value;
@@ -529,16 +643,54 @@ export function useGalleryCommon(opts = {}) {
       return true;
     });
   });
-  // ---- 临时 tag 颜色（仅本次查看，不保存）：打开详情时每个标签随机着色，用于提示词高亮定位 ----
+  // 提示词标签（词库词条）：先展示，平铺
+  const promptDetailTags = computed(() => {
+    const d = detail.value;
+    if (!d) return [];
+    const seen = new Set();
+    return (d.tags || []).filter((t) => {
+      if (!t || !t.prompt) return false;
+      const n = t.name;
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+  });
+  // 自定义标签：按 '测试/喜欢' 完整路径还原为层级树（父'测试'下挂子'喜欢'），置于提示词标签之后。
+  // 树节点复用详情标签对象：叶子携带 tag/style，中间层级为纯容器（isGroup）。
+  const customDetailTree = computed(() => {
+    const d = detail.value;
+    if (!d) return [];
+    return buildCustomTagTree(d.tags || [], tagColorMap.value);
+  });
+  // 自定义标签平铺叶子（定稿：叶子才是标签，父级仅分组容器，展示界面一律直接平铺叶子名）。
+  // 返回原始标签对象 + display 叶子名 + 临时色，保留左键编辑/右键改色/✕取消关联所需的完整字段。
+  const customFlatTags = computed(() => {
+    const d = detail.value;
+    if (!d) return [];
+    return (d.tags || [])
+      .filter((t) => t && t.custom)
+      .map((t) => ({ ...t, display: leafName(t.name), style: tagStyle(t) }));
+  });
+  // ---- 标签颜色（基于全局种子 + 标签名的确定性散列）：同一标签恒定同色，
+  // 设置页「随机颜色种子」换种子整套换色；右键改色仅本次查看内存覆盖 ----
   const tagColorMap = ref({});
-  function randColor(i) {
-    // 黄金角散列，保证相邻标签颜色有明显区分
-    const hue = (i * 137.508 + 180) % 360;
-    return 'hsl(' + hue.toFixed(0) + ', 70%, 42%)';
+  function seedHash(name) {
+    const s = String(pref.gallery.tagSeed || '') + '|' + String(name);
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    h >>>= 0;
+    const hue = h % 360;
+    const sat = 60 + (h % 4) * 6; // 60/66/72/78 微调饱和度
+    const lit = 38 + (h % 3) * 5; // 38/43/48 微调明度
+    return 'hsl(' + hue + ', ' + sat + '%, ' + lit + '%)';
   }
   function refreshTagColors() {
     const map = {};
-    uniqueDetailTags.value.forEach((t, i) => { map[t.name] = randColor(i); });
+    uniqueDetailTags.value.forEach((t) => { map[t.name] = seedHash(t.name); });
     tagColorMap.value = map;
   }
   // 右键临时改色：弹系统取色器，仅改内存映射，不落盘
@@ -620,17 +772,22 @@ export function useGalleryCommon(opts = {}) {
     });
     return segs;
   });
-  // 详情标签样式：优先临时随机色（打开详情生成）；新增未着色标签回退来源色
+  // 详情标签样式：只注入 CSS 变量 --tag-bg（随机色优先），背景/描边/文字由主题类在 CSS 中统一处理。
+  // 新增未着色标签回退来源默认色（设置里的来源色选项已移除）。
+  const TAG_FALLBACK = { prompt: '#2a9d8f', custom: '#e07b39' };
   function tagStyle(t) {
-    const c = tagColorMap.value[t.name];
-    if (c) return { background: c };
-    if (t.prompt) return { background: pref.gallery.promptTagColor };
-    if (t.custom) return { background: pref.gallery.customTagColor };
-    return null;
+    const c = tagColorMap.value[t.name] || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
+    return c ? { '--tag-bg': c } : null;
   }
+  // 标签主题类（设置页 tagTheme/tagRound，zhule-pref-changed 即时生效）：
+  // zhg-tag-theme-dark|light|plain + 圆角关闭时追加 zhg-tag-square（近直角）
+  const tagThemeClass = computed(() => {
+    const th = pref.gallery.tagTheme || 'light';
+    return 'zhg-tag-theme-' + th + (pref.gallery.tagRound === false ? ' zhg-tag-square' : '');
+  });
 
   // 带 mtime 时间戳防浏览器缓存旧图：同名文件重建后 URL 变化，强制拉取新缩略图/原图
-  const thumbUrl = (key, t) => _GL_NO_THUMB ? '' : API.thumb + '?path=' + encodeURIComponent(key) + '&t=' + (t || '');
+  const thumbUrl = (key, t) => API.thumb + '?path=' + encodeURIComponent(key) + '&t=' + (t || '');
   const imgUrl = (key, t) => '/zhule_studio/api/gallery/image?path=' + encodeURIComponent(key) + '&t=' + (t || '');
   function onCardClick(it, e) {
     if (e.ctrlKey || e.metaKey) {
@@ -655,43 +812,18 @@ export function useGalleryCommon(opts = {}) {
     if (fullViewer) fullViewer.open(url);
   }
   let _detailReqSeq = 0;
-  // ===== [TEST] 首次点击延迟诊断日志：定位进入图库后第一次点开详情慢，定位后删除 =====
-  const _FCT_LAST = { at: 0, count: 0 };
-  function _fctPush(lines) {
-    try {
-      fetch('/zhule_studio/api/log/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sub: 'first_click_test', lines }),
-      }).catch(() => {});
-    } catch (e) {}
-  }
-  // ===== [TEST] end =====
   async function openDetail(item) {
     const seq = ++_detailReqSeq;
-    const t0 = performance.now();
-    const now = Date.now();
-    _FCT_LAST.count = (now - _FCT_LAST.at < 5000) ? _FCT_LAST.count + 1 : 1;
-    _FCT_LAST.at = now;
     try {
       const d = await jfetch(API.detail + '?path=' + encodeURIComponent(item.key));
-      const t1 = performance.now();
       if (seq !== _detailReqSeq) {
-        _fctPush(['seq=' + seq + ' 过期丢弃 key=' + item.key + ' 耗时=' + (t1 - t0).toFixed(1) + 'ms']);
         return; // 已有更新的点击，丢弃过期响应
       }
       detail.value = d;
       quickTag.value = '';
       tagInputing.value = false;
       refreshTagColors();
-      const t2 = performance.now();
-      _fctPush([
-        '进入图库后第' + _FCT_LAST.count + '次点击 key=' + item.key,
-        '  请求耗时=' + (t1 - t0).toFixed(1) + 'ms  渲染耗时=' + (t2 - t1).toFixed(1) + 'ms  总计=' + (t2 - t0).toFixed(1) + 'ms',
-        '  detail 返回 keys=' + Object.keys(d).join(',') + ' tags=' + (d.tags ? d.tags.length : -1) + ' promptPreviewLen=' + (d.promptPreview || '').length,
-      ]);
     } catch (e) {
-      _fctPush(['seq=' + seq + ' 详情加载失败 key=' + item.key + ' err=' + String(e && e.message || e)]);
       showToast('详情加载失败', 'error');
     }
   }
@@ -744,8 +876,8 @@ export function useGalleryCommon(opts = {}) {
     }
   }
   function askDelete(it) {
-    // 已勾选「以后不再询问」：单图删除跳过确认弹窗直接执行
-    if (deleteNoAsk.value) { delTarget.value = it; confirmDelete(); return; }
+    // 通用删除免确认开启：单图删除跳过确认弹窗直接执行
+    if (pref.common && pref.common.noDeleteConfirm) { delTarget.value = it; confirmDelete(); return; }
     delTarget.value = it;
   }
   function cancelDelete() { delTarget.value = null; }
@@ -803,25 +935,27 @@ export function useGalleryCommon(opts = {}) {
     quickTag.value = '';
     tagInputing.value = false;
   }
-  // 自定义标签名列表（唯一可增删部分；zhule_tags 已并入 zhule_custom_tags）
+  // 自定义标签名列表（唯一可增删部分；zhule_tags 已并入 zhule_custom_tags）。
+  // String 归一化：后端 JSON 若把纯数字自定义标签序列化为数值类型，统一转字符串比对，避免覆盖提示词标签。
   function customTagNames() {
     return (detail.value.tags || [])
-      .filter((t) => t && !t.prompt)
-      .map((t) => t.name);
+      .filter((t) => t && !t.prompt && t.name != null)
+      .map((t) => String(t.name));
   }
-  // 打标后重组详情 tags：新的自定义标签在前，只读的提示词标签在后
+  // 打标后重组详情 tags：只读的提示词标签在前，自定义标签在后
   function mergeDetailTags(customNames) {
     const src = detail.value.tags || [];
     const readonly = src.filter((t) => t && t.prompt);
-    const seen = new Set(readonly.map((t) => t.name));
+    const seen = new Set(readonly.map((t) => (t.name != null ? String(t.name) : '')));
     const custom = [];
     for (const n of customNames) {
-      if (!seen.has(n)) {
-        custom.push({ name: n, prompt: false, custom: true });
-        seen.add(n);
+      const key = n != null ? String(n) : '';
+      if (!seen.has(key)) {
+        custom.push({ name: key, prompt: false, custom: true });
+        seen.add(key);
       }
     }
-    return [...custom, ...readonly];
+    return [...readonly, ...custom];
   }
   function removeTagFromImage(name) {
     const d = detail.value;
@@ -835,12 +969,21 @@ export function useGalleryCommon(opts = {}) {
   function askDeleteTag(t) {
     if (!t || !t.name) return;
     tagDeleteTarget.value = t;
+    // 通用删除免确认开启：标签删除跳过确认弹窗直接执行
+    if (pref.common && pref.common.noDeleteConfirm) { confirmDeleteTag(); return; }
   }
   function cancelDeleteTag() { tagDeleteTarget.value = null; }
   const tagDeleteLabel = computed(() => {
     const t = tagDeleteTarget.value;
     if (!t) return '';
     return t.prompt ? '提示词标签' : '自定义标签';
+  });
+  // 删除弹窗展示名：自定义标签只显示叶子名（'测试/喜欢' 只显示 '喜欢'）。
+  // 测试 仅是创建时的位置/分组路径，图片实际只关联叶子标签；筛选时叶子才归属父级。
+  const tagDeleteDisplay = computed(() => {
+    const t = tagDeleteTarget.value;
+    if (!t) return '';
+    return t.display || leafName(t.name);
   });
   async function confirmDeleteTag() {
     const t = tagDeleteTarget.value;
@@ -861,6 +1004,10 @@ export function useGalleryCommon(opts = {}) {
   const editWbContent = ref('');
   const editWbContentCn = ref('');
   const editWbEditing = ref(false);
+  // 编辑弹窗删除（与词库一致）：askDeleteEditWb 受通用开关 noDeleteConfirm 控制，
+  // 开启直接删，否则弹确认框（editWbDeleteTarget）；删除成功后关闭编辑面板并刷新。
+  const editWbDeleteTarget = ref(null);
+  const editWbDeleting = ref(false);
   // 散 txt 卡片（rawName 以 .txt 结尾）：后端不支持中文提示词（与词库 editIsTxt 语义一致）
   const editWbIsTxt = computed(() => {
     const raw = editWbTarget.value ? (editWbTarget.value.rawName || '') : '';
@@ -894,9 +1041,11 @@ export function useGalleryCommon(opts = {}) {
       return wbMapData || {};
     }
   }
-  // 左键点击详情 tag：按词条名匹配词库源文件，命中则呼出与词库一致的编辑弹窗
+  // 左键点击详情 tag：词条 tag 按词条名匹配词库源文件，命中则呼出与词库一致的编辑弹窗；
+  // 自定义标签（层级路径）不做词库联动，直接静默返回（红叉 ✕ 负责取消关联）
   async function editDetailTag(t) {
     if (!t || !t.name) return;
+    if (t.custom) return; // 自定义标签不呼出提示词、不与下方提示词联动
     // 必须强制 refresh=1 全量拉取：不带 refresh 时后端只返回已缓存 tab（首屏仅首个 tab），
     // 若目标词条属于其它 tab，按 name 匹配会落空导致左键无反应/只 toast。
     const map = await ensureWordBankMap(true);
@@ -913,6 +1062,42 @@ export function useGalleryCommon(opts = {}) {
   function cancelEditWb() {
     editWbTarget.value = null;
     editWbEditing.value = false;
+  }
+  // 编辑弹窗删除入口：与词库 askDeleteWord 一致，受通用免确认开关控制
+  function askDeleteEditWb() {
+    if (!editWbTarget.value) return;
+    if (pref.common && pref.common.noDeleteConfirm) { editWbDeleteTarget.value = editWbTarget.value; confirmDeleteEditWb(); return; }
+    editWbDeleteTarget.value = editWbTarget.value;
+  }
+  function cancelDeleteEditWb() { editWbDeleteTarget.value = null; }
+  // 确认删除：与词库 confirmDeleteWord 一致，成功后关闭编辑面板、刷新词库映射并重拉详情
+  async function confirmDeleteEditWb() {
+    const t = editWbDeleteTarget.value;
+    if (!t || editWbDeleting.value) return;
+    editWbDeleting.value = true;
+    try {
+      const resp = await fetch('/zhule_studio/api/wordbank/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: t.relPath }),
+      });
+      const json = await resp.json();
+      editWbDeleteTarget.value = null;
+      if (json.error) {
+        showToast('删除失败：' + json.error, 'error');
+      } else {
+        showToast('已删除：' + t.name, 'success');
+        editWbTarget.value = null;
+        editWbEditing.value = false;
+        await ensureWordBankMap(true);
+        window.dispatchEvent(new CustomEvent('zhule:wordbank-changed'));
+        await refreshDetail();
+      }
+    } catch (e) {
+      showToast('请求失败：' + e.message, 'error');
+    } finally {
+      editWbDeleting.value = false;
+    }
   }
   // 保存：与词库 Wordbank.js submitEdit 完全一致（非空校验 / 条件写回 / 失败保留弹窗 / 成功刷新）
   async function submitEditWb() {
@@ -1033,6 +1218,62 @@ export function useGalleryCommon(opts = {}) {
       renaming.value = false;
     }
   }
+  // 图片文件「原地重命名」：双击详情「文件」值变输入框，Enter 确认 / Esc 取消 / 失焦确认。
+  // 只改名字不动扩展名（后端自动补回），因此不需要触碰文件内容。
+  const fileRenaming = ref(false);
+  const fileRenameVal = ref('');
+  const fileRenameInput = ref(null);
+  const renamingFile = ref(false);
+
+  // 展示名去扩展名（与模型名展示口径一致）
+  function fileDisplayName(d) {
+    return fmtModel((d && d.name) || '');
+  }
+  function beginFileRename() {
+    if (!detail.value || !detail.value.path) return;
+    fileRenameVal.value = fileDisplayName(detail.value);
+    fileRenaming.value = true;
+    nextTick(() => {
+      const el = fileRenameInput.value;
+      if (el) { el.focus(); if (el.select) el.select(); }
+    });
+  }
+  function cancelFileRename() {
+    // 先置 false：输入框卸载时若触发 blur，commit 会因这个标志直接返回
+    fileRenaming.value = false;
+  }
+  async function commitFileRename() {
+    if (!fileRenaming.value || renamingFile.value) return;
+    const v = (fileRenameVal.value || '').trim();
+    fileRenaming.value = false;
+    if (!v) { showToast('文件名不能为空', 'warn'); return; }
+    if (v === fileDisplayName(detail.value)) return;
+    renamingFile.value = true;
+    try {
+      const d = await jfetch(API.renameFile, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: detail.value.path, new: v }),
+      });
+      if (!d.ok) throw new Error(d.error || '改名失败');
+      const oldPath = detail.value.path;
+      // key 是详情、列表、选中集合三者的唯一关联依据，改名后必须全部同步
+      if (detail.value) {
+        detail.value.path = d.path;
+        detail.value.name = d.name;
+        detail.value.mtime = d.mtime;
+        detail.value.size = d.size;
+      }
+      const it = items.value.find((x) => x.key === oldPath);
+      if (it) { it.key = d.path; it.name = d.name; it.mtime = d.mtime; }
+      if (selected.has(oldPath)) { selected.delete(oldPath); selected.add(d.path); }
+      showToast('已重命名为 ' + d.name, 'success');
+    } catch (e) {
+      showToast('改名失败：' + (e.message || ''), 'error');
+    } finally {
+      renamingFile.value = false;
+    }
+  }
   async function rescan() {
     try {
       const d = await jfetch(API.rescan, { method: 'POST' });
@@ -1071,10 +1312,14 @@ export function useGalleryCommon(opts = {}) {
     if (filters.q) params.set('q', filters.q);
     const actTags = filters.tags.filter((t) => t.active && !t.hidden);
     if (actTags.length) {
-      // 优先级：id（词条改名后仍命中）> name|rel（同名标签按层级精确过滤）> name
-      params.set('tags', actTags.map((t) => (
-        t.id ? String(t.id) : (t.rel ? t.name + '|' + t.rel : t.name)
-      )).join(','));
+      // SQL 优先：有 id 的标签按 id 直查 gallery_tag（词条 id -> tags，自定义 id -> ctags），
+      // 后端命中后仅加载候选图记录，不再全量遍历内存索引；无 id 的老状态按 name|rel 走 ltags 兼容路径
+      const pid = actTags.filter((t) => t.id && t.kind !== 'custom').map((t) => String(t.id));
+      const cid = actTags.filter((t) => t.id && t.kind === 'custom').map((t) => String(t.id));
+      const legacy = actTags.filter((t) => !t.id);
+      if (pid.length) params.set('tags', pid.join(','));
+      if (cid.length) params.set('ctags', cid.join(','));
+      if (legacy.length) params.set('ltags', legacy.map((t) => (t.rel ? t.name + '|' + t.rel : t.name)).join(','));
       params.set('mode', filters.tagMode);
     }
     if (filters.models.length) params.set('models', filters.models.join(','));
@@ -1101,21 +1346,12 @@ export function useGalleryCommon(opts = {}) {
       loadingMore.value = true;
     }
     try {
-      const _reqT0 = performance.now();
       const d = await jfetch(API.list + '?' + buildQuery(reset).toString());
-      if (reset) _glPush(['列表请求返回 网络耗时=' + (performance.now() - _reqT0).toFixed(1) + 'ms 距挂载=' + (performance.now() - _GL_T0).toFixed(1) + 'ms total=' + d.total]);
       total.value = d.total;
       if (reset) items.value = d.items;
       else items.value = items.value.concat(d.items);
       allLoaded.value = items.value.length >= d.total;
       if (d.builtAt && d.builtAt) dirty.value = false;
-      // ===== [TEST] 图库加载耗时：记录列表数据就绪 / 首帧渲染完成 耗时 =====
-      if (reset) {
-        _glPush(['列表数据就绪 items=' + items.value.length + ' total=' + total.value + ' 耗时=' + (performance.now() - _GL_T0).toFixed(1) + 'ms']);
-        await nextTick();
-        _glPush(['首帧渲染完成 耗时=' + (performance.now() - _GL_T0).toFixed(1) + 'ms']);
-      }
-      // ===== [TEST] end =====
     } catch (e) {
       showToast('加载失败', 'error');
     } finally {
@@ -1126,8 +1362,8 @@ export function useGalleryCommon(opts = {}) {
   // 批量操作
   function askBatchDelete() {
     if (!selected.size) { showToast('请先框选或 Ctrl+点击 选中要删除的图片', 'warn'); return; }
-    // 已勾选「以后不再询问」：批量删除跳过确认弹窗直接执行
-    if (deleteNoAsk.value) { confirmBatchDelete(); return; }
+    // 通用删除免确认开启：批量删除跳过确认弹窗直接执行
+    if (pref.common && pref.common.noDeleteConfirm) { confirmBatchDelete(); return; }
     delBatchOpen.value = true;
   }
   function cancelBatchDelete() { delBatchOpen.value = false; }
@@ -1187,9 +1423,6 @@ export function useGalleryCommon(opts = {}) {
 
 
   onMounted(() => {
-    // ===== [TEST] 图库加载耗时：记录组件挂载时刻 =====
-    _glPush(['onMounted 耗时=' + (performance.now() - _GL_T0).toFixed(1) + 'ms 路径=' + route.path]);
-    // ===== [TEST] end =====
     window.addEventListener('zhule-pref-changed', onPrefChanged);
     if (opts.onMountedExtra) opts.onMountedExtra();
     const q = route.query.tags;
@@ -1230,12 +1463,15 @@ export function useGalleryCommon(opts = {}) {
     pref, filters, meta, items, total, page, pageSize, totalPages,
     loading, loadingMore, allLoaded, dirty, tagPanelOpen, detail,
     quickTag, toast, toastType, toastIcon, delTarget, mainEl, gridEl,
-    hasFilter, uniqueDetailTags, enSegments, cnSegments, pickTagColor,
+    leafName, cardTags,
+    hasFilter, uniqueDetailTags, promptDetailTags, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,
     onSearchKeyup, onTagKeyup, toggleModel, toggleLora,
     openRename, cancelRename, confirmRename, rescan, quickCreateTag,
+    fileRenaming, fileRenameVal, fileRenameInput, renamingFile,
+    fileDisplayName, beginFileRename, cancelFileRename, commitFileRename,
     renameOpen, renameKind, renameOld, renameNew, renaming, renameInput,
     filtersOpen, toggleFilters, gridCols, changeGridCols, gridStyle,
     side, sideStyle, startSideDrag,
@@ -1243,13 +1479,13 @@ export function useGalleryCommon(opts = {}) {
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
     openDetail, closeDetail, zoomView, tagStyle,
-    askDelete, cancelDelete, confirmDelete, deleteNoAsk, toggleSel,
+    askDelete, cancelDelete, confirmDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,
-    tagDeleteTarget, askDeleteTag, cancelDeleteTag, confirmDeleteTag, tagDeleteLabel,
+    tagDeleteTarget, askDeleteTag, cancelDeleteTag, confirmDeleteTag, tagDeleteLabel, tagDeleteDisplay,
     useWorkflow,
     editWbTarget, editWbName, editWbContent, editWbContentCn, editWbIsTxt, editWbEditing,
-    editDetailTag, cancelEditWb, submitEditWb,
+    editDetailTag, cancelEditWb, submitEditWb, askDeleteEditWb, cancelDeleteEditWb, confirmDeleteEditWb, editWbDeleteTarget, editWbDeleting,
     selected, selCount, isSel, onPointerDown, onCardClick,
     delBatchOpen, askBatchDelete, cancelBatchDelete, confirmBatchDelete, batchLink,
   };

@@ -1,8 +1,8 @@
-import { useGalleryCommon, TagTreePanel, OutNode } from './galleryCommon.js';
+import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode } from './galleryCommon.js';
 
 export default {
   name: 'Gallery',
-  components: { TagTreePanel, OutNode },
+  components: { TagTreePanel, OutNode, DetailTagNode },
   template: `
     <div class="page active gallery-page">
     <div class="zhg-toolbar">
@@ -38,7 +38,7 @@ export default {
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
 
-    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags"
+    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass"
                     @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter"></tag-tree-panel>
 
     <div class="zhg-layout">
@@ -85,7 +85,7 @@ export default {
               <!-- 外部过滤区：俄罗斯套娃包裹式展开；左键切换启用（红=待生效/蓝=生效），右键展开子标签，Ctrl+右键逐级优先收起，✕暂时隐藏 -->
               <div class="zhg-sel-tags" v-if="visibleTags.length">
                 <out-node v-for="t in visibleTags" :key="'st'+t.name" :node="t" :depth="0"
-                          :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids"
+                          :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass"
                           @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
               </div>
             </div>
@@ -106,12 +106,12 @@ export default {
               <button class="zhg-zoom-btn" @click.stop="zoomView(imgUrl(it.key, it.mtime))">🔍</button>
             </div>
             <div class="zhg-card-info">
-              <div class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ it.name }}</div>
+              <div class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</div>
               <div class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</div>
               <div class="zhg-card-model" v-if="pref.gallery.showModel && it.model" :data-tip="it.model">{{ fmtModel(it.model) }}</div>
               <div class="zhg-card-tags" v-if="pref.gallery.showTags && it.tags && it.tags.length">
-                <span class="zhg-card-tag" v-for="t in it.tags.slice(0, 4)" :key="it.key+t">{{ t }}</span>
-                <span class="zhg-card-tag-more" v-if="it.tags.length > 4">+{{ it.tags.length - 4 }}</span>
+                <span class="zhg-card-tag" v-for="t in cardTags(it).slice(0, 4)" :key="it.key+t">{{ t }}</span>
+                <span class="zhg-card-tag-more" v-if="cardTags(it).length > 4">+{{ cardTags(it).length - 4 }}</span>
               </div>
             </div>
           </div>
@@ -140,7 +140,12 @@ export default {
             </div>
           </div>
           <div class="zhg-modal-right">
-            <div class="zhg-detail-row"><span class="zhg-detail-k">文件</span><span class="zhg-detail-v">{{ detail.name }}</span></div>
+            <div class="zhg-detail-row"><span class="zhg-detail-k">文件</span><span class="zhg-detail-v zhg-file-cell" :data-tip="fileRenaming ? '' : '双击重命名（自动保留扩展名）'" @dblclick.stop="beginFileRename">
+                <template v-if="!fileRenaming">{{ fileDisplayName(detail) }}</template>
+                <input v-else class="zhg-file-input" ref="fileRenameInput" v-model="fileRenameVal"
+                       @keyup.enter="commitFileRename" @keyup.esc="cancelFileRename"
+                       @blur="commitFileRename" @click.stop @dblclick.stop>
+              </span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">时间</span><span class="zhg-detail-v">{{ fmtTime(detail.mtime) }}</span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">大小</span><span class="zhg-detail-v">{{ fmtSize(detail.size) }}</span></div>
             <div class="zhg-detail-row"><span class="zhg-detail-k">模型</span>
@@ -155,15 +160,27 @@ export default {
               <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span></div>
               <div class="zhg-detail-row">
                 <div class="zhg-detail-tags">
-                  <span class="zhg-tag" :class="{ on: !t.prompt && !t.custom, readonly: t.prompt || t.custom, 'hl-prompt': t.prompt, 'hl-custom': t.custom }"
+                  <!-- 提示词标签（词库词条）在前：只读，左键查看词条、右键临时改色 -->
+                  <span class="zhg-tag readonly hl-prompt"
+                        :class="tagThemeClass"
                         :style="tagStyle(t)"
-                        v-for="t in uniqueDetailTags" :key="'dt'+t.name"
+                        v-for="t in promptDetailTags" :key="'dtp'+t.name"
                         @click.stop="editDetailTag(t)"
                         @contextmenu.prevent="pickTagColor(t, $event)"
-                        :data-tip="t.prompt ? '提示词标签（运行时注入，只读）左键查看词条，右键临时改色' : '左键管理，右键临时改色，✕ 删除'">
-                    {{ t.name }}<span v-if="!t.prompt" class="zhg-tag-del" @click.stop="askDeleteTag(t)"> ✕</span>
+                        :data-tip="'提示词标签（运行时注入，只读）左键查看词条，右键临时改色'">
+                    {{ t.name }}
                   </span>
-                  <span v-if="!uniqueDetailTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
+                  <!-- 自定义标签（叶子平铺）：父级仅分组容器不展示，直接显示叶子名，如 '测试/喜欢' 只显示 '喜欢' -->
+                  <span class="zhg-tag hl-custom"
+                        :class="tagThemeClass"
+                        :style="t.style || {}"
+                        v-for="t in customFlatTags" :key="'dtc'+t.name"
+                        :data-tip="'自定义标签，右键临时改色，✕ 取消关联'"
+                        @click.stop="editDetailTag(t)" @contextmenu.prevent="pickTagColor(t, $event)">
+                    {{ t.display }}
+                    <span class="zhg-tag-del" @click.stop="askDeleteTag(t)"> ✕</span>
+                  </span>
+                  <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
                 </div>
               </div>
               <div class="zhg-detail-tag-add">
@@ -194,7 +211,6 @@ export default {
       <div class="zhg-del-box">
         <div class="zhg-del-title">确认删除图片</div>
         <div class="zhg-del-msg">将删除该图片文件及其缩略图，此操作不可撤销。<br><b>{{ delTarget.name }}</b></div>
-        <label class="zhg-del-noask"><input type="checkbox" v-model="deleteNoAsk"> 以后不再询问（刷新不重置，重启程序后恢复）</label>
         <div class="zhg-del-actions">
           <button class="btn zhg-mini" @click="cancelDelete">取消</button>
           <button class="zhg-del-btn-danger" @click="confirmDelete">确认删除</button>
@@ -206,7 +222,6 @@ export default {
       <div class="zhg-del-box">
         <div class="zhg-del-title">确认批量删除</div>
         <div class="zhg-del-msg">是否删除选中的 <b>{{ selected.size }}</b> 张图片？<br>将删除图片文件及其缩略图，此操作不可撤销。</div>
-        <label class="zhg-del-noask"><input type="checkbox" v-model="deleteNoAsk"> 以后不再询问（刷新不重置，重启程序后恢复）</label>
         <div class="zhg-del-actions">
           <button class="btn zhg-mini" @click="cancelBatchDelete">取消</button>
           <button class="zhg-del-btn-danger" @click="confirmBatchDelete">确认删除</button>
@@ -214,11 +229,11 @@ export default {
       </div>
     </div>
 
-    <!-- 标签删除确认弹窗：手动标签写回 PNG+索引，提示词/自定义标签按类型移除对应元数据 -->
+    <!-- 标签删除确认弹窗：简单询问是否移除当前标签，自定义标签只显叶子名 -->
     <div class="zhg-del-mask" v-if="tagDeleteTarget" @click.self="cancelDeleteTag">
       <div class="zhg-del-box">
         <div class="zhg-del-title">确认删除{{ tagDeleteLabel }}</div>
-        <div class="zhg-del-msg">将从该图片移除标签 <b>{{ tagDeleteTarget.name }}</b><br>手动标签写回 PNG 元数据与图库索引；提示词/自定义标签同步移除对应元数据。</div>
+        <div class="zhg-del-msg">是否移除当前标签「{{ tagDeleteDisplay }}」？</div>
         <div class="zhg-del-actions">
           <button class="btn zhg-mini" @click="cancelDeleteTag">取消</button>
           <button class="zhg-del-btn-danger" @click="confirmDeleteTag">确认删除</button>
@@ -263,8 +278,21 @@ export default {
           <span v-if="editWbIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
         </div>
         <div class="actions">
+          <button class="btn danger zhg-mini" :disabled="editWbDeleting" @click="askDeleteEditWb">删除</button>
           <button class="btn zhg-mini" @click="cancelEditWb">取消</button>
           <button class="btn zhg-mini zhg-rename-confirm" :disabled="!editWbName.trim() || editWbEditing" @click="submitEditWb">{{ editWbEditing ? '提交中…' : '保存' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 词条删除确认：与词库编辑弹窗删除一致 -->
+    <div class="zhg-del-mask" v-if="editWbDeleteTarget" @click.self="cancelDeleteEditWb">
+      <div class="zhg-del-box">
+        <div class="zhg-del-title">确认删除词条</div>
+        <div class="zhg-del-msg">将删除词库词条「<b>{{ editWbDeleteTarget.name }}</b>」及其提示词文件，此操作不可撤销。</div>
+        <div class="zhg-del-actions">
+          <button class="btn zhg-mini" @click="cancelDeleteEditWb">取消</button>
+          <button class="zhg-del-btn-danger" :disabled="editWbDeleting" @click="confirmDeleteEditWb">{{ editWbDeleting ? '删除中…' : '确认删除' }}</button>
         </div>
       </div>
     </div>

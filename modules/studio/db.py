@@ -91,7 +91,7 @@ def fetch_tree():
         try:
             rows = conn.execute(
                 "SELECT id, parent_id, type, name, en, cn, sort_order, updated_at "
-                "FROM {0} ORDER BY id".format(TABLE)
+                "FROM {0} WHERE isdel=0 ORDER BY id".format(TABLE)
             ).fetchall()
         finally:
             conn.close()
@@ -159,7 +159,7 @@ def get_parent_id(node_id):
         conn = connect()
         try:
             r = conn.execute(
-                "SELECT parent_id FROM {0} WHERE id=?".format(TABLE), (node_id,)
+                "SELECT parent_id FROM {0} WHERE id=? AND isdel=0".format(TABLE), (node_id,)
             ).fetchone()
             return r["parent_id"] if r else None
         finally:
@@ -173,12 +173,12 @@ def sibling_dup(parent_id, name, exclude_id=None):
         try:
             if exclude_id is not None:
                 rows = conn.execute(
-                    "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ? AND id<>?".format(TABLE),
+                    "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ? AND id<>? AND isdel=0".format(TABLE),
                     (parent_id, exclude_id),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ?".format(TABLE),
+                    "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ? AND isdel=0".format(TABLE),
                     (parent_id,),
                 ).fetchall()
         finally:
@@ -201,7 +201,7 @@ def insert_node(parent_id, type_, name, en="", cn="", so=None):
         try:
             if so is None:
                 cur = conn.execute(
-                    "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ?".format(TABLE),
+                    "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ? AND isdel=0".format(TABLE),
                     (parent_id,),
                 )
                 so = (cur.fetchone()[0] or 0) + 1
@@ -253,7 +253,11 @@ def update_node(node_id, name=None, en=None, cn=None):
 
 
 def delete_subtree(node_id):
-    """递归删除节点及全部子孙（BFS 收集后代后一次删除）。返回删除行数。"""
+    """软删除节点及全部子孙（BFS 收集后代后统一 UPDATE isdel=1，不真删）。
+
+    返回标记为已删除的行数（含节点自身）。软删后所有读取路径按 isdel=0 过滤，
+    节点在词库树/标签索引中不可见；数据仍在库中，后续可恢复。
+    """
     with _lock:
         conn = connect()
         try:
@@ -262,7 +266,7 @@ def delete_subtree(node_id):
             while True:
                 ph = ",".join("?" * len(cur))
                 rows = conn.execute(
-                    "SELECT id FROM {0} WHERE parent_id IN ({1})".format(TABLE, ph), cur
+                    "SELECT id FROM {0} WHERE parent_id IN ({1}) AND isdel=0".format(TABLE, ph), cur
                 ).fetchall()
                 nxt = [r["id"] for r in rows]
                 if not nxt:
@@ -270,7 +274,11 @@ def delete_subtree(node_id):
                 ids.extend(nxt)
                 cur = nxt
             ph = ",".join("?" * len(ids))
-            conn.execute("DELETE FROM {0} WHERE id IN ({1})".format(TABLE, ph), ids)
+            now = _now()
+            conn.execute(
+                "UPDATE {0} SET isdel=1, updated_at=? WHERE id IN ({1}) AND isdel=0".format(TABLE, ph),
+                [now] + ids,
+            )
             conn.commit()
             _bump()
             return len(ids)
@@ -290,7 +298,7 @@ def _reorder(pid, ordered_raws):
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ?".format(TABLE),
+                "SELECT id, name, sort_order FROM {0} WHERE parent_id IS ? AND isdel=0".format(TABLE),
                 (pid,),
             ).fetchall()
         finally:
@@ -348,7 +356,12 @@ def reorder_top(ordered_raws):
 
 
 def tag_id_index():
-    """词条显示名 -> DB id（str）。同名取树序第一个（与旧实现一致）。"""
+    """词条显示名 -> DB id（str）。同名取树序第一个（与旧实现一致）。
+
+    注意：**不过滤 isdel**——图库侧依赖本索引把 gallery_tag.prompt_id 反查成
+    标签名；词条软删后图片里已有的标签必须继续显示（黑名单只作用于词库管理与
+    新标签引用，不影响旧关联展示）。
+    """
     with _lock:
         conn = connect()
         try:
@@ -367,7 +380,10 @@ def tag_id_index():
 
 
 def tag_cn_index():
-    """词条显示名 -> cn 首行（用于图库详情中文标签填充）。"""
+    """词条显示名 -> cn 首行（用于图库详情中文标签填充）。
+
+    注意：**不过滤 isdel**——图库侧用于给旧关联标签补中文，词条软删后仍应生效。
+    """
     with _lock:
         conn = connect()
         try:
@@ -388,7 +404,10 @@ def tag_cn_index():
 
 
 def tag_en_index():
-    """词条显示名 -> en 全文（用于图库详情英文提示词填充）。"""
+    """词条显示名 -> en 全文（用于图库详情英文提示词填充）。
+
+    注意：**不过滤 isdel**——图库侧用于给旧关联标签补英文，词条软删后仍应生效。
+    """
     with _lock:
         conn = connect()
         try:
@@ -408,8 +427,6 @@ def tag_en_index():
     return data
 
 
-
-
 def clean_en_cn():
     """去中文清理（en 字段中移除中文字符与中文标点）。返回 (updated, total)。"""
     cjk = "".join([
@@ -421,7 +438,7 @@ def clean_en_cn():
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, en FROM {0} WHERE type='entry' AND en IS NOT NULL AND en<>''".format(TABLE)
+                "SELECT id, en FROM {0} WHERE type='entry' AND en IS NOT NULL AND en<>'' AND isdel=0".format(TABLE)
             ).fetchall()
             updated = 0
             now = _now()
@@ -451,7 +468,13 @@ def clean_en_cn():
 
 GAL_IMG_TABLE = "gallery_image"
 GAL_TAG_TABLE = "gallery_tag"
+GAL_LORA_TABLE = "gallery_lora"
 CUSTOM_TAG_TABLE = "custom_tag"  # 自定义标签字典表（仿 prompt 表：父子层级 + name）
+
+# 模型字典表：底模型与 LoRA 共用一张表，靠 type 区分
+MODEL_TABLE = "model"
+MODEL_TYPE_MODEL = "model"  # 底模型（checkpoints / diffusion_models / unet 归一）
+MODEL_TYPE_LORA = "lora"
 
 
 def _add_column_if_missing(conn, table, column, ddl):
@@ -484,6 +507,9 @@ def _ensure_prompt_schema(conn):
         "en TEXT NOT NULL DEFAULT '',"
         "cn TEXT NOT NULL DEFAULT '',"
         "sort_order INTEGER DEFAULT 0,"
+        "isdel INTEGER NOT NULL DEFAULT 0,"
+        "neg TEXT NOT NULL DEFAULT '',"
+        "override TEXT NOT NULL DEFAULT '',"
         "created_at INTEGER NOT NULL,"
         "updated_at INTEGER NOT NULL"
         ")".format(TABLE)
@@ -494,47 +520,99 @@ def _ensure_prompt_schema(conn):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_{0}_parent ON {0}(parent_id)".format(TABLE)
     )
+    # 存量库升级：新列一律走幂等补列路径（CREATE TABLE IF NOT EXISTS 不会给旧表加列）
+    _ensure_column(conn, TABLE, "isdel", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, TABLE, "neg", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, TABLE, "override", "TEXT NOT NULL DEFAULT ''")
+    # 依赖新列的索引必须放在补列之后，否则旧库会报 no such column
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_type_del ON {0}(type, isdel)".format(TABLE)
+    )
 
 
 def _ensure_custom_tag_schema(conn):
-    """确保 custom_tag 字典表存在（幂等）。
-
-    group 为标签分组（原存于 gallery/meta.json，随自定义标签迁入本表）。
-    """
+    """确保 custom_tag 字典表存在（幂等）。"""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS {0} ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "parent_id INTEGER REFERENCES {0}(id) ON DELETE CASCADE,"
         "name TEXT NOT NULL,"
-        "group_name TEXT NOT NULL DEFAULT '',"
         "sort_order INTEGER DEFAULT 0,"
+        "isdel INTEGER NOT NULL DEFAULT 0,"
         "created_at INTEGER NOT NULL,"
         "updated_at INTEGER NOT NULL"
         ")".format(CUSTOM_TAG_TABLE)
     )
-    _add_column_if_missing(conn, CUSTOM_TAG_TABLE, "group_name", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(conn, CUSTOM_TAG_TABLE, "isdel", "INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_parent ON {0}(parent_id)".format(CUSTOM_TAG_TABLE)
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_name ON {0}(name)".format(CUSTOM_TAG_TABLE)
+    )
+
+
+def _drop_column(conn, table, col):
+    """幂等摘列：已有该列才 DROP（SQLite 3.35+ 支持 DROP COLUMN）。"""
+    try:
+        cols = conn.execute("PRAGMA table_info({0})".format(table)).fetchall()
+    except sqlite3.Error:
+        return
+    if not any(c["name"] == col for c in cols):
+        return
+    try:
+        conn.execute("ALTER TABLE {0} DROP COLUMN {1}".format(table, col))
+    except sqlite3.Error as e:
+        print(f"[ZhuleDB] 摘除列 {table}.{col} 失败: {e}")
+
+
+def _ensure_column(conn, table, col, decl):
+    """幂等补列：已有该列则跳过。存量库升级用（CREATE TABLE 只在空库生效）。"""
+    try:
+        cols = conn.execute("PRAGMA table_info({0})".format(table)).fetchall()
+    except sqlite3.Error:
+        return
+    if any(c["name"] == col for c in cols):
+        return
+    conn.execute("ALTER TABLE {0} ADD COLUMN {1} {2}".format(table, col, decl))
+
+
+def _as_int_or_none(v):
+    """把 id 类字段转成 int；“无”返回 None（不写库时用 NULL，不写 0 误导）。"""
+    try:
+        return int(v) if v not in (None, "", "0") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _ensure_gallery_schema(conn):
-    """确保图库两表存在（幂等）+ 定位索引，并清理存量的误存数据。
+    """确保图库三表存在（幂等）+ 定位索引，并清理存量的误存数据。
 
     表结构由代码自带（schema as code）：新环境拿到空库时也能直接用，
     不必依赖任何外部迁移脚本。
 
+    gallery_image.model_id 指向 model 表那一行：模型改名后按 id 取到当前名字，
+    图片因此一张都不用重写。gallery_image 不再自存 model / loras 名字快照：
+    模型名经 model_id JOIN model 表取得；lora 经 gallery_lora 关联表多对多挂接，
+    展示名同样按 lora_id JOIN model 表实时取。存量库由迁移脚本
+    （RENAME→建新表→INSERT SELECT→DROP）摘掉 model / loras 两列并回填
+    gallery_lora。
+
     gallery_tag.gallery_id 级联：删图时只删 gallery_image，tag 行由外键自动清除。
+    gallery_lora.gallery_id / lora_id 均级联：删图/删 lora 时关联行自动清除。
     """
     _ensure_custom_tag_schema(conn)
+    _ensure_model_schema(conn)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS {0} ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "name TEXT NOT NULL,"
         "mtime INTEGER NOT NULL DEFAULT 0,"
         "size INTEGER NOT NULL DEFAULT 0,"
-        "model TEXT NOT NULL DEFAULT '',"
-        "loras TEXT NOT NULL DEFAULT '',"
         "prompt TEXT NOT NULL DEFAULT '',"
         "created_at INTEGER NOT NULL,"
-        "updated_at INTEGER NOT NULL"
+        "updated_at INTEGER NOT NULL,"
+        "model_id INTEGER"
         ")".format(GAL_IMG_TABLE)
     )
     conn.execute(
@@ -546,10 +624,28 @@ def _ensure_gallery_schema(conn):
         ")".format(GAL_TAG_TABLE, GAL_IMG_TABLE, TABLE, CUSTOM_TAG_TABLE)
     )
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS {0} ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "gallery_id INTEGER NOT NULL REFERENCES {1}(id) ON DELETE CASCADE,"
+        "lora_id INTEGER NOT NULL REFERENCES {2}(id) ON DELETE CASCADE,"
+        "UNIQUE(gallery_id, lora_id)"
+        ")".format(GAL_LORA_TABLE, GAL_IMG_TABLE, MODEL_TABLE)
+    )
+    conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_{0}_name ON {0}(name)".format(GAL_IMG_TABLE)
+    )
+    _ensure_column(conn, GAL_IMG_TABLE, "model_id", "INTEGER")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_model ON {0}(model_id)".format(GAL_IMG_TABLE)
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_{0}_gallery ON {0}(gallery_id)".format(GAL_TAG_TABLE)
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_lora ON {0}(lora_id)".format(GAL_LORA_TABLE)
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_gallery ON {0}(gallery_id)".format(GAL_LORA_TABLE)
     )
     # 存量清理：gallery_image.prompt 曾误存整份 workflow JSON，一律清空。
     # 必须放在建表之后——否则空库上会抛 no such table，导致 connect() 失败、
@@ -560,15 +656,208 @@ def _ensure_gallery_schema(conn):
     )
 
 
-def _json_str_list(raw):
-    """DB 中的 JSON 字符串（loras/tg）→ 字符串列表；异常/空返回 []。"""
-    if not raw:
-        return []
-    try:
-        val = json.loads(raw)
-    except Exception:
-        return []
-    return [x for x in val if isinstance(x, str)] if isinstance(val, list) else []
+MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".bin", ".pth", ".gguf", ".sft")
+# 推断 type 用的模型库目录：统一按归一后的正斜杠路径匹配
+_LORA_DIRS = ("/models/loras/",)
+_MODEL_DIRS = ("/models/checkpoints/", "/models/diffusion_models/", "/models/unet/")
+
+
+def normalize_model_name(raw):
+    """把任意形态的模型引用归一成展示名。
+
+    兼容三种输入：纯名字（anima-base-v1）、带后缀文件名、绝对路径
+    （D:\\...\\models\\diffusion_models\\anima-base-v1.0.safetensors）。
+
+    绝对路径只留 basename——ComfyUI 目录整体搬迁也不会让身份漂移；
+    去后缀走**已知后缀清单**而不是 splitext，像 anima-base-v1.0 这种
+    多点名字才不会被切成 anima-base-v1。
+    """
+    s = (raw or "").strip().replace("\\", "/")
+    if not s:
+        return ""
+    name = s.rsplit("/", 1)[-1]
+    low = name.lower()
+    for suf in MODEL_SUFFIXES:
+        if low.endswith(suf):
+            name = name[: -len(suf)]
+            break
+    return name.strip()
+
+
+def infer_model_type(raw):
+    """按路径中的模型库目录推断 type；推断不出返回 None，由调用方按引用位置决定。"""
+    s = (raw or "").strip().replace("\\", "/").lower()
+    for d in _MODEL_DIRS:
+        if d in s:
+            return MODEL_TYPE_MODEL
+    for d in _LORA_DIRS:
+        if d in s:
+            return MODEL_TYPE_LORA
+    return None
+
+
+def _ensure_model_schema(conn):
+    """确保模型字典表存在（幂等）。
+
+    UNIQUE(type, name) 且 name 带 COLLATE NOCASE：Windows 文件名不区分大小写，
+    否则 Animabase / animabase 会裂成两行。
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS {0} ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "type TEXT NOT NULL,"
+        "name TEXT NOT NULL COLLATE NOCASE,"
+        "isdel INTEGER NOT NULL DEFAULT 0,"
+        "created_at INTEGER NOT NULL,"
+        "updated_at INTEGER NOT NULL,"
+        "UNIQUE(type, name)"
+        ")".format(MODEL_TABLE)
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_type_del ON {0}(type, isdel)".format(MODEL_TABLE)
+    )
+    # 存量库摘掉废弃的两列：prev_names（改名历史）、path（最后见到的路径）
+    _drop_column(conn, MODEL_TABLE, "prev_names")
+    _drop_column(conn, MODEL_TABLE, "path")
+
+
+def model_lookup(type_, name):
+    """按 (type, name) 定位一行（name 已归一）。
+
+    返回 dict(id/type/name/isdel) 或 None。
+    """
+    key = normalize_model_name(name)
+    if not key or not type_:
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT id, type, name, isdel FROM {0} "
+                "WHERE type=? AND name=?".format(MODEL_TABLE), (type_, key)
+            ).fetchone()
+        finally:
+            conn.close()
+    if row is None:
+        return None
+    return {"id": row["id"], "type": row["type"], "name": row["name"],
+            "isdel": row["isdel"]}
+
+
+def model_upsert(type_, name):
+    """按归一化名字取 id；查不到才新建。返回 id，失败返回 0。"""
+    key = normalize_model_name(name)
+    if not key or not type_:
+        return 0
+    row = model_lookup(type_, key)
+    if row is not None:
+        return row["id"]
+    now = _now()
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO {0} (type, name, isdel, created_at, updated_at) "
+                "VALUES (?,?,0,?,?)".format(MODEL_TABLE),
+                (type_, key, now, now),
+            )
+            conn.commit()
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            r = conn.execute(
+                "SELECT id FROM {0} WHERE type=? AND name=?".format(MODEL_TABLE),
+                (type_, key),
+            ).fetchone()
+            return r["id"] if r else 0
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 模型写入失败: {e}")
+            return 0
+        finally:
+            conn.close()
+
+
+def model_rename(mid, new_name):
+    """改名的唯一入口。成功返回 True。
+
+    图片一个字节都不用改——它们存的是 id，名字由读取侧按 id 实时解析
+    （见 gallery_load_records）。目标名已被别的行占用时返回 False（UNIQUE 拦截）。
+    """
+    new = normalize_model_name(new_name)
+    if not mid or not new:
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT name FROM {0} WHERE id=?".format(MODEL_TABLE), (int(mid),)
+            ).fetchone()
+            if row is None:
+                return False
+            if row["name"] == new:
+                return True
+            conn.execute(
+                "UPDATE {0} SET name=?, updated_at=? WHERE id=?".format(MODEL_TABLE),
+                (new, _now(), int(mid)),
+            )
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 模型改名失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+
+def model_set_deleted(mid, isdel=True):
+    """软删除/恢复。行永远在：已删除的不进筛选选项，但老图按 id 仍能查到名字。"""
+    with _lock:
+        conn = connect()
+        try:
+            conn.execute(
+                "UPDATE {0} SET isdel=?, updated_at=? WHERE id=?".format(MODEL_TABLE),
+                (1 if isdel else 0, _now(), int(mid)),
+            )
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 模型删除状态更新失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+
+def model_index(only_alive=False):
+    """一次性取回 {id: {type, name, isdel}}，供批量解析（避免每张图各查一次库）。
+
+    only_alive=True 只返回未删除的行，供筛选选项聚合使用。
+    """
+    data = {}
+    with _lock:
+        conn = connect()
+        try:
+            sql = "SELECT id, type, name, isdel FROM {0}".format(MODEL_TABLE)
+            if only_alive:
+                sql += " WHERE isdel=0"
+            for r in conn.execute(sql).fetchall():
+                data[r["id"]] = {"type": r["type"], "name": r["name"], "isdel": r["isdel"]}
+        finally:
+            conn.close()
+    return data
+
+
+def model_ref(type_, name):
+    """归一 + UPSERT 拿 id，返回单个 {'id':..,'n':..}。
+
+    id 与 name 合在**一个对象**里而不是两个字段：写 PNG 或 JSON 都只占一格，
+    读的时候也不用两边对齐（平行数组一旦错位就永久错乱）。
+    id 让图片在模型改名后自动跟随，n 是兜底——DB 没了也还能显示。
+    数据层不可用时退化为 {'n': 名字}，不阻断保存。
+    """
+    key = normalize_model_name(name)
+    if not key:
+        return None
+    mid = model_upsert(type_, key)
+    return {"id": mid, "n": key} if mid else {"n": key}
 
 
 # -------------------- 自定义标签字典表（custom_tag） --------------------
@@ -600,18 +889,257 @@ def custom_tag_id_index():
     return data
 
 
-def custom_tag_meta():
-    """自定义标签字典 + 分组（取代原 gallery/meta.json 的 load 侧）。
+def custom_tag_name_index():
+    """自定义标签 id -> name（由 name->id 索引反置）。
 
-    返回 {"tags": [{"name":..., "group":...}], "updatedAt": ""}，
-    与 gallery._tag_groups 消费的结构保持一致。
+    读取侧「先按 id 取当前名」用：自定义标签改名后，图片按 id 自动跟随。
+    """
+    out = {}
+    for n, i in custom_tag_id_index().items():
+        out.setdefault(str(i), n)
+    return out
+
+
+def custom_tag_upsert(name):
+    """按名字取自定义标签 id；没有就建一行。返回 id，失败返回 0。"""
+    n = (name or "").strip()
+    if not n:
+        return 0
+    idx = custom_tag_id_index()
+    if n in idx:
+        try:
+            return int(idx[n])
+        except (TypeError, ValueError):
+            return 0
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "SELECT COALESCE(MAX(sort_order),0) FROM {0} "
+                "WHERE parent_id IS NULL".format(CUSTOM_TAG_TABLE)
+            )
+            max_so = cur.fetchone()[0] or 0
+            now = _now()
+            cur2 = conn.execute(
+                "INSERT INTO {0} (parent_id, name, sort_order, "
+                "created_at, updated_at) VALUES (NULL,?,?,?,?)".format(CUSTOM_TAG_TABLE),
+                (n, max_so + 1, now, now),
+            )
+            conn.commit()
+            return cur2.lastrowid
+        except sqlite3.IntegrityError:
+            r = conn.execute(
+                "SELECT id FROM {0} WHERE name=?".format(CUSTOM_TAG_TABLE), (n,)
+            ).fetchone()
+            return r["id"] if r else 0
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 自定义标签写入失败: {e}")
+            return 0
+        finally:
+            conn.close()
+
+
+def custom_tag_ref(name):
+    """自定义标签名 -> {"id":..,"n":..}；拿不到 id 时退化为 {"n": 名字}。"""
+    n = (name or "").strip()
+    if not n:
+        return None
+    cid = custom_tag_upsert(n)
+    return {"id": cid, "n": n} if cid else {"n": n}
+
+
+# -------------------- 自定义标签层级（/ 路径） --------------------
+# 层级注册规则（与 prompt 表 category 同构）：
+# 输入 '角色/绝区零/尼克' 按 / 拆段，从根（parent_id=NULL）逐级 find-or-create，
+# 返回**叶子**节点 id。'绝区零/尼克' 是独立路径：其顶层 '绝区零' 与
+# '角色/绝区零' 中的 '绝区零'（parent=角色）是不同节点，互不合并。
+# 字符串只接受 / 作为层级分隔符；空段忽略（'角色//尼克' 按 '角色/尼克' 处理）。
+
+
+def custom_tag_find(parent_id, name):
+    """在指定父级下精确查找同名自定义标签。返回 id（int）或 0。"""
+    n = (name or "").strip()
+    if not n:
+        return 0
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            r = conn.execute(
+                "SELECT id FROM {0} WHERE parent_id IS ? AND name=? LIMIT 1"
+                .format(CUSTOM_TAG_TABLE), (parent_id, n)
+            ).fetchone()
+        finally:
+            conn.close()
+    return r["id"] if r else 0
+
+
+def custom_tag_child_insert(parent_id, name):
+    """在指定父级下创建自定义标签子节点。返回 id，失败返回 0。"""
+    n = (name or "").strip()
+    if not n:
+        return 0
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            cur = conn.execute(
+                "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ?"
+                .format(CUSTOM_TAG_TABLE), (parent_id,)
+            )
+            max_so = cur.fetchone()[0] or 0
+            now = _now()
+            cur2 = conn.execute(
+                "INSERT INTO {0} (parent_id, name, sort_order, isdel, "
+                "created_at, updated_at) VALUES (?,?,?,0,?,?)".format(CUSTOM_TAG_TABLE),
+                (parent_id, n, max_so + 1, now, now),
+            )
+            conn.commit()
+            return cur2.lastrowid
+        except sqlite3.IntegrityError:
+            r = conn.execute(
+                "SELECT id FROM {0} WHERE parent_id IS ? AND name=? LIMIT 1"
+                .format(CUSTOM_TAG_TABLE), (parent_id, n)
+            ).fetchone()
+            return r["id"] if r else 0
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 自定义标签子节点写入失败: {e}")
+            return 0
+        finally:
+            conn.close()
+
+
+def custom_tag_upsert_path(path):
+    """按 / 路径逐级 find-or-create 自定义标签，返回**叶子** id（int），失败返回 0。
+
+    顶层段（第一个）在 parent_id=NULL 下定位；后续段挂在上一段节点下。
+    已存在路径全部复用，不重复建。
+    """
+    p = (path or "").strip().strip("/")
+    if not p:
+        return 0
+    segs = [s.strip() for s in p.split("/") if s and s.strip()]
+    if not segs:
+        return 0
+    pid = None
+    cid = 0
+    for seg in segs:
+        found = custom_tag_find(pid, seg)
+        if found:
+            cid = found
+        else:
+            cid = custom_tag_child_insert(pid, seg)
+            if not cid:
+                return 0
+        pid = cid
+    return cid
+
+
+def custom_tag_path_ref(path):
+    """按 / 路径注册并返回 {"id":叶子id, "p":完整路径, "n":叶子名}；失败返回 {"p":原路径, "n":""}。"""
+    p = (path or "").strip().strip("/")
+    if not p:
+        return None
+    segs = [s.strip() for s in p.split("/") if s and s.strip()]
+    if not segs:
+        return None
+    cid = custom_tag_upsert_path(p)
+    if cid:
+        return {"id": cid, "p": "/".join(segs), "n": segs[-1]}
+    return {"p": "/".join(segs), "n": segs[-1]}
+
+
+def custom_tag_path_index():
+    """自定义标签 id -> 完整路径（str）。沿 parent 链拼接，顶层节点路径即自身名。
+
+    读取侧「先按 id 取当前完整路径」用：层级/改名后图片按 id 自动跟随展示完整路径。
     """
     with _lock:
         conn = connect()
         try:
             _ensure_custom_tag_schema(conn)
             rows = conn.execute(
-                "SELECT name, group_name FROM {0} WHERE name<>'' "
+                "SELECT id, parent_id, name FROM {0} WHERE name<>'' "
+                "ORDER BY id".format(CUSTOM_TAG_TABLE)
+            ).fetchall()
+        finally:
+            conn.close()
+    nodes = {}
+    for r in rows:
+        nodes[r["id"]] = {"parent": r["parent_id"], "name": r["name"]}
+    out = {}
+    for nid in nodes:
+        parts = []
+        cur = nid
+        guard = 0
+        while cur is not None and guard < 64:
+            node = nodes.get(cur)
+            if not node:
+                break
+            parts.append(node["name"])
+            cur = node["parent"]
+            guard += 1
+        if parts:
+            out[str(nid)] = "/".join(reversed(parts))
+    return out
+
+
+def custom_tag_path_id_index():
+    """完整路径 -> 自定义标签叶子 id（str）。由 id->路径索引反置，路径重复时取 id 小者。"""
+    out = {}
+    for i, p in custom_tag_path_index().items():
+        if p and p not in out:
+            out[p] = i
+    return out
+
+
+def custom_tag_rows():
+    """自定义标签全量行 [(id, parent_id, name)]，供前端层级树构造（tagtree 接口合并）。
+
+    按 id 稳定序返回；仅含非空名节点（与 custom_tag_path_index 口径一致）。
+    """
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            rows = conn.execute(
+                "SELECT id, parent_id, name FROM {0} WHERE name<>'' "
+                "ORDER BY id".format(CUSTOM_TAG_TABLE)
+            ).fetchall()
+        finally:
+            conn.close()
+    return [(int(r["id"]), r["parent_id"], (r["name"] or "").strip()) for r in rows]
+
+
+def tag_refs(ids):
+    """批量把词条 id 转成 [{"id":..,"n":..}]；**一次查表**，不逐个查。
+
+    n 是写盘那一刻的名字快照，作兜底：词条后来被删了，读取侧按 id 查不到时用它。
+    """
+    idx = {}
+    for n, i in tag_id_index().items():
+        idx.setdefault(str(i), n)
+    out = []
+    for x in ids or []:
+        s = str(x).strip()
+        if not s.isdigit():
+            continue
+        out.append({"id": int(s), "n": idx.get(s, "")})
+    return out
+
+
+def custom_tag_meta():
+    """自定义标签字典（取代原 gallery/meta.json 的 load 侧）。
+
+    返回 {"tags": [{"name":...}], "updatedAt": ""}，
+    与 gallery.aggregate 消费的结构保持一致。
+    """
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            rows = conn.execute(
+                "SELECT name FROM {0} WHERE name<>'' "
                 "ORDER BY name, id".format(CUSTOM_TAG_TABLE)
             ).fetchall()
         finally:
@@ -621,166 +1149,23 @@ def custom_tag_meta():
         n = r["name"]
         if n and n not in seen:
             seen.add(n)
-            tags.append({"name": n, "group": r["group_name"] or "其他"})
+            tags.append({"name": n})
     return {"tags": tags, "updatedAt": ""}
 
 
-def custom_tag_set_group(name, group):
-    """按名设置自定义标签的分组，不存在则新建（取代原 save_meta 侧）。
+def gallery_load_records(ids=None):
+    """从 DB 加载图库记录（内部 records 格式）；ids 非空时仅加载命中 id 的子集。
 
-    返回 True 表示新建，False 表示更新了已有标签。
-    """
-    with _lock:
-        conn = connect()
-        try:
-            _ensure_custom_tag_schema(conn)
-            now = _now()
-            row = conn.execute(
-                "SELECT id FROM {0} WHERE name=? AND parent_id IS NULL "
-                "ORDER BY id LIMIT 1".format(CUSTOM_TAG_TABLE), (name,)
-            ).fetchone()
-            if row is None:
-                cur = conn.execute(
-                    "SELECT COALESCE(MAX(sort_order),0) FROM {0} "
-                    "WHERE parent_id IS NULL".format(CUSTOM_TAG_TABLE)
-                )
-                conn.execute(
-                    "INSERT INTO {0} (parent_id, name, group_name, sort_order, "
-                    "created_at, updated_at) VALUES (NULL,?,?,?,?,?)".format(CUSTOM_TAG_TABLE),
-                    (name, group, (cur.fetchone()[0] or 0) + 1, now, now),
-                )
-                created = True
-            else:
-                conn.execute(
-                    "UPDATE {0} SET group_name=?, updated_at=? WHERE id=?".format(
-                        CUSTOM_TAG_TABLE),
-                    (group, now, row["id"]),
-                )
-                created = False
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-    _bump()
-    return created
-
-
-def custom_tag_list():
-    """全量 custom_tag 行（含父子层级），按父层/排序返回 list[dict]。"""
-    with _lock:
-        conn = connect()
-        try:
-            _ensure_custom_tag_schema(conn)
-            rows = conn.execute(
-                "SELECT id, parent_id, name, sort_order, created_at, updated_at "
-                "FROM {0} ORDER BY (parent_id IS NULL) DESC, sort_order, name, id".format(CUSTOM_TAG_TABLE)
-            ).fetchall()
-        finally:
-            conn.close()
-    return [dict(r) for r in rows]
-
-
-def custom_tag_insert(parent_id, name, so=None):
-    """新增自定义标签；parent_id=None 为顶层。sort_order 默认取同父 max+1。
-
-    返回 (id, ok)。调用方应先做同级同名校验。
-    """
-    with _lock:
-        conn = connect()
-        try:
-            _ensure_custom_tag_schema(conn)
-            if so is None:
-                cur = conn.execute(
-                    "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ?".format(CUSTOM_TAG_TABLE),
-                    (parent_id,),
-                )
-                so = (cur.fetchone()[0] or 0) + 1
-            now = _now()
-            cur = conn.execute(
-                "INSERT INTO {0} (parent_id, name, sort_order, created_at, updated_at) "
-                "VALUES (?,?,?,?,?)".format(CUSTOM_TAG_TABLE),
-                (parent_id, name, so, now, now),
-            )
-            conn.commit()
-            _bump()
-            return cur.lastrowid, True
-        except sqlite3.Error:
-            return None, False
-        finally:
-            conn.close()
-
-
-def custom_tag_update(node_id, name=None, sort_order=None):
-    """编辑自定义标签：可选更新 name / sort_order，并刷新 updated_at。"""
-    with _lock:
-        conn = connect()
-        try:
-            sets, vals = [], []
-            if name is not None:
-                sets.append("name=?")
-                vals.append(name)
-            if sort_order is not None:
-                sets.append("sort_order=?")
-                vals.append(sort_order)
-            if not sets:
-                return False
-            sets.append("updated_at=?")
-            vals.append(_now())
-            vals.append(node_id)
-            cur = conn.execute(
-                "UPDATE {0} SET {1} WHERE id=?".format(CUSTOM_TAG_TABLE, ", ".join(sets)), vals
-            )
-            conn.commit()
-            _bump()
-            return cur.rowcount > 0
-        except sqlite3.Error:
-            return False
-        finally:
-            conn.close()
-
-
-def custom_tag_delete_subtree(node_id):
-    """递归删除自定义标签及全部子孙（BFS 收集后代后一次删除）。
-
-    gallery_tag.custom_id 外键 ON DELETE CASCADE：关联图片标签一并删除。
-    返回删除的 custom_tag 行数。
-    """
-    with _lock:
-        conn = connect()
-        try:
-            _ensure_custom_tag_schema(conn)
-            ids = [node_id]
-            cur = [node_id]
-            while True:
-                ph = ",".join("?" * len(cur))
-                rows = conn.execute(
-                    "SELECT id FROM {0} WHERE parent_id IN ({1})".format(CUSTOM_TAG_TABLE, ph), cur
-                ).fetchall()
-                nxt = [r["id"] for r in rows]
-                if not nxt:
-                    break
-                ids.extend(nxt)
-                cur = nxt
-            ph = ",".join("?" * len(ids))
-            conn.execute("DELETE FROM {0} WHERE id IN ({1})".format(CUSTOM_TAG_TABLE, ph), ids)
-            conn.commit()
-            _bump()
-            return len(ids)
-        except sqlite3.Error:
-            return 0
-        finally:
-            conn.close()
-
-
-
-def gallery_load_records():
-    """从 DB 加载图库全量记录（内部 records 格式）。
+    ids 为可迭代的 gallery_image.id（词条/自定义标签 SQL 过滤命中后的候选集），
+    供 get_gallery 标签过滤主路径使用——避免全量加载后在 Python 里逐条遍历匹配。
+    ids 为空集合时直接返回 []；ids 为 None 时加载全量（原行为不变）。
 
     返回 list[dict]，每条含：
-    key/name/mtime/size/model/loras/tags/tagIds/customTagIds/prompt/hasPrompt。
+    key/name/mtime/size/model/loras/loraIds/tags/tagIds/customTagIds/prompt/hasPrompt。
     key 即 gallery_image.name（图库相对路径，与磁盘记录行为一致）；
+    model 为 model_id JOIN model 表取到的当前模型名（改名自动跟随）；
+    loras 为 lora 名数组（gallery_lora 关联 + lora_id JOIN model 表实时取）；
+    loraIds 为 lora_id 数组（写回时直接落 gallery_lora，不再按名字猜）；
     tags 为标签显示名数组（prompt 类经 id->name 反查，custom 类经 custom_id LEFT
     JOIN custom_tag 取名——不再读自存 name）；
     tagIds 为 prompt 类 name->prompt_id 映射；customTagIds 为 custom 类
@@ -794,20 +1179,46 @@ def gallery_load_records():
     id_name = {}
     for n, i in tag_id_index().items():
         id_name[i] = n
-    cid_name = {}
-    for n, i in custom_tag_id_index().items():
-        cid_name[i] = n
+    # 自定义标签按 id 反查**完整路径**（层级化：'角色/绝区零/尼克'；顶层节点路径即自身名）
+    cid_name = custom_tag_path_index()
+    # 模型表一次取回：model_id / lora_id 按 id 反查当前名，改名后自动跟随
+    midx = model_index()
     with _lock:
         conn = connect()
         try:
             _ensure_gallery_schema(conn)
-            imgs = conn.execute(
-                "SELECT id, name, mtime, size, model, loras, prompt "
-                "FROM {0} ORDER BY id".format(GAL_IMG_TABLE)
-            ).fetchall()
-            tags = conn.execute(
-                "SELECT gallery_id, prompt_id, custom_id FROM {0} ORDER BY id".format(GAL_TAG_TABLE)
-            ).fetchall()
+            if ids is not None:
+                # 标签过滤主路径：只取 SQL 命中后的候选子集，不整库加载
+                _id_list = [int(x) for x in ids if str(x).strip().isdigit()]
+                if not _id_list:
+                    return []
+                _ph = ",".join("?" * len(_id_list))
+                _cond = " WHERE id IN ({0})".format(_ph)
+                _tcond = " WHERE gallery_id IN ({0})".format(_ph)
+                imgs = conn.execute(
+                    "SELECT id, name, mtime, size, model_id, prompt "
+                    "FROM {0}{1} ORDER BY id".format(GAL_IMG_TABLE, _cond),
+                    _id_list
+                ).fetchall()
+                tags = conn.execute(
+                    "SELECT gallery_id, prompt_id, custom_id FROM {0}{1} ORDER BY id".format(GAL_TAG_TABLE, _tcond),
+                    _id_list
+                ).fetchall()
+                lora_rows = conn.execute(
+                    "SELECT gallery_id, lora_id FROM {0}{1}".format(GAL_LORA_TABLE, _tcond),
+                    _id_list
+                ).fetchall()
+            else:
+                imgs = conn.execute(
+                    "SELECT id, name, mtime, size, model_id, prompt "
+                    "FROM {0} ORDER BY id".format(GAL_IMG_TABLE)
+                ).fetchall()
+                tags = conn.execute(
+                    "SELECT gallery_id, prompt_id, custom_id FROM {0} ORDER BY id".format(GAL_TAG_TABLE)
+                ).fetchall()
+                lora_rows = conn.execute(
+                    "SELECT gallery_id, lora_id FROM {0}".format(GAL_LORA_TABLE)
+                ).fetchall()
         finally:
             conn.close()
     if not imgs:
@@ -817,6 +1228,9 @@ def gallery_load_records():
         tag_map.setdefault(r["gallery_id"], []).append(
             (r["prompt_id"], r["custom_id"])
         )
+    lora_map = {}
+    for r in lora_rows:
+        lora_map.setdefault(r["gallery_id"], []).append(r["lora_id"])
     records = []
     for im in imgs:
         key = (im["name"] or "").strip()
@@ -824,25 +1238,45 @@ def gallery_load_records():
             continue
         tag_names, ids, custom_ids = [], {}, {}
         custom_names = []
-        for pid, cid in tag_map.get(im["id"], []):
+        # 展示顺序：提示词标签（词库词条）在前，自定义标签在后；同组内保持 gallery_tag 行序
+        _rows = tag_map.get(im["id"], [])
+        for pid, cid in _rows:
             if pid is not None:
                 nm = id_name.get(str(pid))
                 if nm:
                     tag_names.append(nm)
                     ids[nm] = str(pid)
-            elif cid is not None:
+        for pid, cid in _rows:
+            if pid is None and cid is not None:
                 nm = cid_name.get(str(cid))
                 if nm and nm not in custom_ids:
                     tag_names.append(nm)
                     custom_ids[nm] = str(cid)
                     custom_names.append(nm)
+        # 模型名按 model_id JOIN model 表实时取：改名后自动跟随，不再存名字快照
+        mid = im["model_id"] if "model_id" in im.keys() else None
+        model_name = ""
+        if mid:
+            mrow = midx.get(mid)
+            if mrow and mrow.get("type") == MODEL_TYPE_MODEL:
+                model_name = mrow["name"] or ""
+        # lora 名按 gallery_lora 关联 + lora_id JOIN model 表实时取
+        lora_names, lora_ids = [], []
+        for lid in lora_map.get(im["id"], []):
+            lrow = midx.get(lid)
+            if lrow and lrow.get("type") == MODEL_TYPE_LORA:
+                lora_ids.append(str(lid))
+                lora_names.append(lrow["name"] or "")
         records.append({
             "key": key,
             "name": os.path.basename(key.replace("/", os.sep).replace("\\", os.sep)),
             "mtime": im["mtime"] or 0,
             "size": im["size"] or 0,
-            "model": im["model"] or "",
-            "loras": _json_str_list(im["loras"]),
+            "id": im["id"],
+            "model": model_name,
+            "modelId": mid,
+            "loras": lora_names,
+            "loraIds": lora_ids,
             "tags": tag_names,
             "tagIds": ids,
             "customTags": custom_names,
@@ -854,6 +1288,55 @@ def gallery_load_records():
         })
     records.sort(key=lambda r: r["mtime"], reverse=True)
     return records
+
+
+def gallery_query_tag_gids(prompt_groups=None, custom_ids=None, mode="and"):
+    """按标签 id 直查 gallery_tag，返回命中图库 id 集合（SQL 过滤，不走内存遍历）。
+
+    prompt_groups -> list[list]，每个元素是一个词条及其子树展开后的所有 id（含自身）；
+        按词条分组，保证 and 模式下"图须同时挂这些词条分支的标签"（逐组命中后交集，
+        若平铺成一个 IN 列表会把组内并集误当命中）。
+    custom_ids -> 自定义标签 id 列表，每个 id 单独命中集合（叶子才是标签，无子树展开）。
+    mode: and=同时满足所有标签（交集）；or=满足任一（并集）。
+    无任何过滤条件时返回 None（调用方按"无需标签过滤"处理）。
+    """
+    groups = []
+    for g in (prompt_groups or []):
+        ids = [str(x).strip() for x in g if str(x).strip().isdigit()]
+        if ids:
+            groups.append(ids)
+    customs = [str(x).strip() for x in (custom_ids or []) if str(x).strip().isdigit()]
+    if not groups and not customs:
+        return None
+    single_sets = []
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            for ids in groups:
+                ph = ",".join("?" * len(ids))
+                rows = conn.execute(
+                    "SELECT DISTINCT gallery_id FROM {0} WHERE prompt_id IN ({1})".format(GAL_TAG_TABLE, ph),
+                    ids
+                ).fetchall()
+                single_sets.append({r["gallery_id"] for r in rows})
+            for cid in customs:
+                rows = conn.execute(
+                    "SELECT DISTINCT gallery_id FROM {0} WHERE custom_id = ?".format(GAL_TAG_TABLE),
+                    (cid,)
+                ).fetchall()
+                single_sets.append({r["gallery_id"] for r in rows})
+        finally:
+            conn.close()
+    if mode == "or":
+        out = set()
+        for s in single_sets:
+            out |= s
+        return out
+    out = set(single_sets[0])
+    for s in single_sets[1:]:
+        out &= s
+    return out
 
 
 def gallery_save_records(records):
@@ -875,6 +1358,16 @@ def gallery_save_records(records):
                 "SELECT name, created_at FROM {0}".format(GAL_IMG_TABLE)
             ).fetchall():
                 old_created[r["name"]] = r["created_at"]
+            # 全量重建前先记录旧词条关联（gallery_name -> prompt_id 集合）：
+            # 软删词条的旧关联在重建时保留，图库标签不因词条软删而消失
+            legacy_by_name = {}
+            for r in conn.execute(
+                "SELECT gi.name AS gn, gt.prompt_id AS pid FROM {0} gi "
+                "JOIN {1} gt ON gt.gallery_id = gi.id "
+                "WHERE gt.prompt_id IS NOT NULL".format(GAL_IMG_TABLE, GAL_TAG_TABLE)
+            ).fetchall():
+                if r["pid"] is not None:
+                    legacy_by_name.setdefault(r["gn"], set()).add(r["pid"])
             conn.execute("DELETE FROM {0}".format(GAL_TAG_TABLE))
             conn.execute("DELETE FROM {0}".format(GAL_IMG_TABLE))
             now = _now()
@@ -885,16 +1378,16 @@ def gallery_save_records(records):
                 created = old_created.get(key, now)
                 cur = conn.execute(
                     "INSERT INTO {0} "
-                    "(name, mtime, size, model, loras, prompt, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?)".format(GAL_IMG_TABLE),
+                    "(name, mtime, size, model_id, prompt, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?)".format(GAL_IMG_TABLE),
                     (key, rec.get("mtime") or 0, rec.get("size") or 0,
-                     rec.get("model") or "",
-                     json.dumps(rec.get("loras") or [], ensure_ascii=False),
+                     _as_int_or_none(rec.get("modelId") or rec.get("model_id")),
                      rec.get("prompt") or "",
                      created, now),
                 )
                 gid = cur.lastrowid
-                _insert_gallery_tags(conn, gid, rec, custom_tag_id)
+                _upsert_gallery_loras(conn, gid, rec.get("loraIds") or [])
+                _insert_gallery_tags(conn, gid, rec, custom_tag_id, legacy_by_name.get(key))
 
             conn.commit()
             _bump()
@@ -905,54 +1398,105 @@ def gallery_save_records(records):
             conn.close()
 
 
-def _insert_gallery_tags(conn, gid, rec, custom_tag_id):
+def _insert_gallery_tags(conn, gid, rec, custom_tag_id, legacy=None):
     """写入一张图的标签行（gallery_tag），两路来源各自去重。
 
     提示词标签走**词条 id**：rec["promptIds"] 直接落 prompt_id，**不做名字反查**
     （归属在 SaveImage 保存时就已确定，词条改名/移动后标签不脱钩）。
     自定义标签仍按名字 upsert custom_tag 字典表后落 custom_id。
+
+    legacy：该图在 DB 中已存在的旧词条关联 prompt_id 集合（全量重建时传入）。
+    黑名单语义：软删词条（isdel=1）属于 legacy 的旧关联保留（图库标签不消失）；
+    不属于 legacy 的新引用一律跳过（软删词条不能再被选作新标签）。
+    单条打标路径不传 legacy，等价于空集——软删词条一律不可成为新标签。
     """
+    legacy = legacy or set()
     seen = set()
     for raw in rec.get("promptIds") or []:
         s = str(raw or "").strip()
         if not s.isdigit() or s in seen:
             continue
         seen.add(s)
-        # 词条已被删除时 id 在 prompt 表已不存在：跳过，不插脏 id
+        pid = int(s)
         row = conn.execute(
-            "SELECT id FROM {0} WHERE id=? AND type='entry'".format(TABLE), (int(s),)
+            "SELECT id, isdel FROM {0} WHERE id=? AND type='entry'".format(TABLE), (pid,)
         ).fetchone()
         if row is None:
+            continue
+        # 软删词条：仅允许保留重建前的旧关联，不允许成为新标签
+        if row["isdel"] and pid not in legacy:
             continue
         conn.execute(
             "INSERT INTO {0} (gallery_id, prompt_id, custom_id) "
             "VALUES (?,?,NULL)".format(GAL_TAG_TABLE),
-            (gid, int(s)),
+            (gid, pid),
         )
     for t in rec.get("customTags") or []:
-        t = (t or "").strip()
+        t = (t or "").strip().strip("/")
         if not t or t in seen:
             continue
         seen.add(t)
-        cid = custom_tag_id.get(t)
-        if cid is None:
-            cur2 = conn.execute(
-                "SELECT COALESCE(MAX(sort_order),0) FROM {0} "
-                "WHERE parent_id IS NULL".format(CUSTOM_TAG_TABLE)
+        segs = [s.strip() for s in t.split("/") if s and s.strip()]
+        if not segs:
+            continue
+        # 层级注册：顶层在 parent_id=NULL 下 find-or-create，后续段挂在前一段下。
+        # 同一路径已存在时全部复用，不重复建；不同父级下的同名节点互不合并。
+        pid = None
+        cid = None
+        for seg in segs:
+            r = conn.execute(
+                "SELECT id FROM {0} WHERE parent_id IS ? AND name=? LIMIT 1"
+                .format(CUSTOM_TAG_TABLE), (pid, seg)
+            ).fetchone()
+            if r is not None:
+                cid = r["id"]
+            else:
+                cur2 = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ?"
+                    .format(CUSTOM_TAG_TABLE), (pid,)
+                )
+                max_so = cur2.fetchone()[0] or 0
+                cnow = _now()
+                cur3 = conn.execute(
+                    "INSERT INTO {0} (parent_id, name, sort_order, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?)".format(CUSTOM_TAG_TABLE),
+                    (pid, seg, max_so + 1, cnow, cnow),
+                )
+                cid = cur3.lastrowid
+            pid = cid
+        if cid:
+            conn.execute(
+                "INSERT INTO {0} (gallery_id, prompt_id, custom_id) "
+                "VALUES (?,NULL,?)".format(GAL_TAG_TABLE),
+                (gid, int(cid)),
             )
-            max_so = cur2.fetchone()[0] or 0
-            cnow = _now()
-            cur3 = conn.execute(
-                "INSERT INTO {0} (parent_id, name, sort_order, created_at, updated_at) "
-                "VALUES (NULL,?,?,?,?)".format(CUSTOM_TAG_TABLE),
-                (t, max_so + 1, cnow, cnow),
-            )
-            cid = str(cur3.lastrowid)
-            custom_tag_id[t] = cid
+
+
+def _upsert_gallery_loras(conn, gid, lora_ids):
+    """整图重写图片-lora 关联：清掉本图旧关联，按 lora_ids 重新插入（幂等）。
+
+    仅写入 model 表中真实存在的 lora（type='lora'）；物理不存在的 id 跳过。
+    供 gallery_save_records（全量重建）与 gallery_upsert_records（行级写入）共用。
+    """
+    conn.execute(
+        "DELETE FROM {0} WHERE gallery_id=?".format(GAL_LORA_TABLE), (gid,)
+    )
+    seen = set()
+    for raw in lora_ids or []:
+        s = str(raw or "").strip()
+        if not s.isdigit() or s in seen:
+            continue
+        seen.add(s)
+        lid = int(s)
+        row = conn.execute(
+            "SELECT id FROM {0} WHERE id=? AND type=?".format(MODEL_TABLE),
+            (lid, MODEL_TYPE_LORA),
+        ).fetchone()
+        if row is None:
+            continue
         conn.execute(
-            "INSERT INTO {0} (gallery_id, prompt_id, custom_id) "
-            "VALUES (?,NULL,?)".format(GAL_TAG_TABLE),
-            (gid, int(cid)),
+            "INSERT OR IGNORE INTO {0} (gallery_id, lora_id) VALUES (?,?)".format(GAL_LORA_TABLE),
+            (gid, lid),
         )
 
 
@@ -981,31 +1525,47 @@ def gallery_upsert_records(records):
                     "SELECT id FROM {0} WHERE name=?".format(GAL_IMG_TABLE), (key,)
                 ).fetchone()
                 if row is None:
+                    rid = _as_int_or_none(rec.get("id"))
+                    cols = ["name", "mtime", "size", "model_id",
+                            "prompt", "created_at", "updated_at"]
+                    vals = [key, rec.get("mtime") or 0, rec.get("size") or 0,
+                            _as_int_or_none(rec.get("modelId") or rec.get("model_id")),
+                            rec.get("prompt") or "", now, now]
+                    if rid:
+                        # 显式 id：图片改名时把原行的身份带过来，id 不漂移
+                        cols.insert(0, "id")
+                        vals.insert(0, rid)
                     cur = conn.execute(
-                        "INSERT INTO {0} "
-                        "(name, mtime, size, model, loras, prompt, created_at, updated_at) "
-                        "VALUES (?,?,?,?,?,?,?,?)".format(GAL_IMG_TABLE),
-                        (key, rec.get("mtime") or 0, rec.get("size") or 0,
-                         rec.get("model") or "",
-                         json.dumps(rec.get("loras") or [], ensure_ascii=False),
-                         rec.get("prompt") or "", now, now),
+                        "INSERT INTO {0} ({1}) VALUES ({2})".format(
+                            GAL_IMG_TABLE, ",".join(cols),
+                            ",".join(["?"] * len(vals))),
+                        vals,
                     )
-                    gid = cur.lastrowid
+                    gid = rid or cur.lastrowid
+                    _upsert_gallery_loras(conn, gid, rec.get("loraIds") or [])
                 else:
                     gid = row["id"]
+                    # model_id 用 COALESCE：调用方没给就保持原值，不会被顺手清空
                     conn.execute(
-                        "UPDATE {0} SET mtime=?, size=?, model=?, loras=?, prompt=?, updated_at=? "
+                        "UPDATE {0} SET mtime=?, size=?, "
+                        "model_id=COALESCE(?, model_id), prompt=?, updated_at=? "
                         "WHERE id=?".format(GAL_IMG_TABLE),
                         (rec.get("mtime") or 0, rec.get("size") or 0,
-                         rec.get("model") or "",
-                         json.dumps(rec.get("loras") or [], ensure_ascii=False),
+                         _as_int_or_none(rec.get("modelId") or rec.get("model_id")),
                          rec.get("prompt") or "", now, gid),
                     )
-                    # 标签整体重写：tag 行不随 UPDATE 级联，先清本图旧 tag
+                    _upsert_gallery_loras(conn, gid, rec.get("loraIds") or [])
+                    # 标签整体重写：tag 行不随 UPDATE 级联，先清本图旧 tag；
+                    # 清之前记录旧词条关联（软删词条的旧标签据此保留，不消失）
+                    legacy = set()
+                    for r in conn.execute(
+                        "SELECT prompt_id FROM {0} WHERE gallery_id=? AND prompt_id IS NOT NULL".format(GAL_TAG_TABLE), (gid,)
+                    ).fetchall():
+                        legacy.add(r["prompt_id"])
                     conn.execute(
                         "DELETE FROM {0} WHERE gallery_id=?".format(GAL_TAG_TABLE), (gid,)
                     )
-                _insert_gallery_tags(conn, gid, rec, custom_tag_id)
+                _insert_gallery_tags(conn, gid, rec, custom_tag_id, legacy if row is not None else None)
                 n += 1
             conn.commit()
             return n
@@ -1018,6 +1578,115 @@ def gallery_upsert_records(records):
             return 0
         finally:
             conn.close()
+
+
+def gallery_backfill_model_ids():
+    """把现有图片的 model 名字回填成 model_id（仅兼容未迁移的旧库）。
+
+    id 化改造后 gallery_image 不再自存 model / loras 名字快照：存量库由迁移脚本
+    （RENAME→建新表→INSERT SELECT→DROP）摘列并回填 gallery_lora；本函数仅在
+    旧结构（model 列仍存在、model_id 未回填）时执行 model 名回填，新结构下
+    直接返回 0。
+    返回 {"model": 回填行数, "lora": 0}。
+    """
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info({0})".format(GAL_IMG_TABLE))}
+            if "model" not in cols:
+                return {"model": 0, "lora": 0}
+            rows = conn.execute(
+                "SELECT id, model FROM {0} "
+                "WHERE model IS NOT NULL AND model != ''".format(GAL_IMG_TABLE)
+            ).fetchall()
+        finally:
+            conn.close()
+    pairs = []
+    for r in rows:
+        nm = normalize_model_name(r["model"])
+        if nm:
+            pairs.append((r["id"], model_upsert(MODEL_TYPE_MODEL, nm)))
+    # 一次事务批量写回：七千多行单条提交会非常慢
+    now, done = _now(), 0
+    with _lock:
+        conn = connect()
+        try:
+            for gid, mid in pairs:
+                if not mid:
+                    continue
+                conn.execute(
+                    "UPDATE {0} SET model_id=?, updated_at=? WHERE id=?".format(GAL_IMG_TABLE),
+                    (mid, now, int(gid)),
+                )
+                done += 1
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] model_id 回填失败: {e}")
+        finally:
+            conn.close()
+    return {"model": done, "lora": 0}
+
+
+def gallery_update_key(gid, new_key):
+    """图片改名：只改这一行的 name（相对路径），**id 与 tag 行全部保持不变**。
+
+    比「按新名插一行 + 删旧行」更好：id 不漂移（PNG 里存的 zhule_id 继续有效），
+    tag 行也不用级联删除再重建。返回影响行数。
+    """
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET name=?, updated_at=? WHERE id=?".format(GAL_IMG_TABLE),
+                (new_key or "", _now(), int(gid)),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 图片改名同步失败: {e}")
+            return 0
+        finally:
+            conn.close()
+
+
+def gallery_reserve(rels):
+    """为即将保存的图片预建 DB 行，返回 {rel: id}：**先有身份，后落盘**。
+
+    save_image 先拿行 id 写进 PNG 元数据（zhule_id），图片文件改名后仍按 id
+    认回同一行，不会当成新图另起一行。落盘后由 index_new 补齐 mtime/size。
+    同名行已存在时直接复用其 id（重复保存、序号回绕都不会出错）。
+    """
+    out = {}
+    if not rels:
+        return out
+    now = _now()
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            for rel in rels:
+                key = (rel or "").strip()
+                if not key:
+                    continue
+                row = conn.execute(
+                    "SELECT id FROM {0} WHERE name=?".format(GAL_IMG_TABLE), (key,)
+                ).fetchone()
+                if row is not None:
+                    out[key] = row["id"]
+                    continue
+                cur = conn.execute(
+                    "INSERT INTO {0} (name, mtime, size, model_id, prompt, "
+                    "created_at, updated_at) VALUES (?,0,0,NULL,'',?,?)".format(GAL_IMG_TABLE),
+                    (key, now, now),
+                )
+                out[key] = cur.lastrowid
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 预建图库行失败: {e}")
+        finally:
+            conn.close()
+    return out
 
 
 def gallery_delete_records(keys):

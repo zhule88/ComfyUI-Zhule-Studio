@@ -45,6 +45,7 @@ def register_routes():
     routes.post("/zhule_studio/api/gallery/tag")(gallery.post_gallery_tag)
     routes.post("/zhule_studio/api/gallery/annotate")(gallery.post_gallery_annotate)
     routes.post("/zhule_studio/api/gallery/rename")(gallery.post_gallery_rename)
+    routes.post("/zhule_studio/api/gallery/rename-file")(gallery.post_gallery_rename_file)
 
     # Studio 页面与静态资源
     routes.get("/zhule_studio")(api.get_index)

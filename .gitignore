@@ -12,3 +12,5 @@ prompt/**/images.txt
 modules/studio/state/
 # 图库索引缓存（本地生成，仅本机使用，不上传）
 modules/studio/gallery/
+# 改动历史记录（本地留存，不上传）
+history/

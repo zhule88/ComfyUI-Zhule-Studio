@@ -308,9 +308,11 @@ async def get_wordbank(request):
     if tab is not None:
         result["data"][tab] = payload["data"].get(tab, [])
         return web.json_response(result)
-    # 无指定 tab（首屏/局部刷新）：与冷启动原行为一致，至少保证第一个 tab 有数据
-    if payload["tabs"]:
-        result["data"][payload["tabs"][0]] = payload["data"].get(payload["tabs"][0], [])
+    # 无指定 tab：返回全部 tab 数据。
+    # 首屏场景前端 Wordbank.js 会自行裁剪只保留当前 tab（懒加载语义不变）；
+    # 全量/强制刷新场景（如图库详情标签的 name->card 映射）依赖此全量返回，
+    # 否则非第一个 tab 的词库词条匹配不到，左键点击详情标签会误报「不在词库中」。
+    result["data"] = payload["data"]
     return web.json_response(result)
 
 async def get_image(request):

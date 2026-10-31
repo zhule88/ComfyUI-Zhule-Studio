@@ -3,6 +3,10 @@
 数据模型（与 ZhuleSaveImage v2 / 图库字段化架构一致）：
 - 图片元数据存在 PNG tEXt chunk：zhule_model / zhule_loras / zhule_prompt_tags /
   zhule_custom_tags / prompt / workflow
+- 模型引用已 id 化：zhule_model 与 zhule_loras 的元素写成**单个对象** {"id":..,"n":..}
+  （id 指向 zhule.db 的 model 表，改名后图片自动跟随；n 为兜底展示名）。
+  老图存的仍是纯字符串，读写两侧同时兼容（见 _extract_zhule_model / _json_list），
+  所以存量图一张都不用重写
 - 标签两源（zhule_tags 已废弃并并入 zhule_custom_tags，见 _backfill_tag_fields 存量迁移）：
   * zhule_prompt_tags：ZhuleStudio 提示词选中词（保存时写入，图库只读，可按项删）
   * zhule_custom_tags：自定义标签（SaveImage 自定义标签端口 + 图库详情页打标，可增删）
@@ -68,11 +72,6 @@ def _safe_full(rel):
 
 # ==================== 索引 ====================
 
-def _tag_groups(meta):
-    """name -> group 映射。"""
-    return {t.get("name"): t.get("group") or "其他" for t in meta.get("tags", []) if t.get("name")}
-
-
 def _scan_images(root):
     """递归扫描图片文件，返回 [(rel, full)]，排除系统目录与符号链接回环。
 
@@ -127,13 +126,25 @@ def _is_junction(path):
 
 
 def _json_list(raw, key):
-    """解析 JSON 数组字符串；失败返回 []。"""
+    """解析 JSON 数组字符串；失败返回 []。
+
+    元素支持两种形态：纯字符串（老数据）或 {"id":..,"n":..} 对象（新写入格式），
+    统一提取展示名——两种形态混存时解析结果仍然一致，老图因此不必重写。
+    """
     if not raw:
         return []
     try:
         data = json.loads(raw)
         if isinstance(data, list):
-            return [str(x).strip() for x in data if str(x).strip()]
+            out = []
+            for x in data:
+                if isinstance(x, dict):
+                    s = str(x.get("n") or x.get("name") or "").strip()
+                else:
+                    s = str(x).strip()
+                if s:
+                    out.append(s)
+            return out
     except Exception:
         pass
     return []
@@ -240,7 +251,17 @@ def _extract_zhule_model(texts):
     """提取模型名：优先 zhule_model 元数据；缺失时从 prompt 元数据兜底（兼容 ZhuleCheckpointLoader 等复合模型旧图）。"""
     m = (texts.get("zhule_model") or "").strip()
     if m:
-        return m
+        # 新格式是单个 {"id":..,"n":..} 对象：统一取展示名，兼容旧的纯字符串写入。
+        # 只有一种写法会命中这条：save_image 新图；老图仍是纯字符串，直接往下走。
+        if m.startswith("{"):
+            try:
+                obj = json.loads(m)
+                if isinstance(obj, dict):
+                    m = str(obj.get("n") or obj.get("name") or "").strip()
+            except Exception:
+                pass
+        if m:
+            return m
     pt = texts.get("prompt") or ""
     if not pt:
         return ""
@@ -270,14 +291,25 @@ def _backfill_tag_fields(full, texts):
     1. zhule_prompt_tags 里是老词条名时，按词库反查转成 id 写回（id 化迁移）；
     2. 早期保存节点未写标签字段时，从 prompt 的 ZhuleStudio 选中词快照回填；
     3. zhule_tags（旧手动打标键）已废弃：并入 zhule_custom_tags 后删除该键。
-    返回 (prompt_ids, custom_tags)，prompt_ids 为词条 id 字符串数组。
+    返回 (prompt_ids, custom_tags, pt_names)：
+    - prompt_ids：词条 id 字符串数组
+    - custom_tags：自定义标签**显示名**数组（先按 id 取当前名，取不到用 n 兜底）
+    - pt_names：{id: PNG 自带的默认名}，词条被删、按 id 查不到时用它兜底显示
     """
-    raw_pt = _json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags")
-    pids, legacy_names = _split_tag_ids(raw_pt)
-    custom_tags = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
+    refs = _parse_tag_refs(texts.get("zhule_prompt_tags"))
+    pids = [i for i, _n in refs if i]
+    legacy_names = [n for i, n in refs if n and not i]
+    pt_names = {i: n for i, n in refs if i and n}
+    # 自定义标签：先按 id 取当前**完整路径**（层级/改名后自动跟随），取不到才用 p/n 兜底
+    cidx = _custom_tag_path_index()
+    custom_tags = []
+    for cid, pth, nm in _parse_custom_tag_refs(texts.get("zhule_custom_tags")):
+        _cur = (cidx.get(str(cid)) or pth or nm) if cid else (pth or nm)
+        if _cur:
+            custom_tags.append(_cur)
     manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
     backfill_hit = False
-    if not raw_pt and not custom_tags and texts.get("prompt"):
+    if not refs and not custom_tags and texts.get("prompt"):
         sel = _extract_selected_names(texts.get("prompt"))
         if sel:
             legacy_names = _clean_prompt_tags(sel)
@@ -310,7 +342,7 @@ def _backfill_tag_fields(full, texts):
         updates["zhule_custom_tags"] = json.dumps(merged, ensure_ascii=False)
     if updates and not png_text.write_png_text(full, updates):
         print(f"[ZhuleGallery] 标签字段迁移失败: {full}")
-    return pids, merged
+    return pids, merged, pt_names
 
 
 def _extract_positive_prompt(pt):
@@ -504,17 +536,25 @@ def aggregate(records):
         for l in r.get("loras", []):
             lora_count[l] = lora_count.get(l, 0) + 1
     meta = db.custom_tag_meta()
-    groups = _tag_groups(meta)
-    tags = [{"name": n, "count": c, "group": groups.get(n, "其他")}
-            for n, c in tag_count.items()]
+    tags = [{"name": n, "count": c} for n, c in tag_count.items()]
     # meta 中用户自定义但未使用的 tag 也展示
     for t in meta.get("tags", []):
         n = t.get("name")
         if n and n not in tag_count:
-            tags.append({"name": n, "count": 0, "group": groups.get(n, "其他")})
-    tags.sort(key=lambda x: (x["group"], -x["count"], x["name"]))
-    models = [{"name": n, "count": c} for n, c in sorted(model_count.items())]
-    loras = [{"name": n, "count": c} for n, c in sorted(lora_count.items())]
+            tags.append({"name": n, "count": 0})
+    tags.sort(key=lambda x: (-x["count"], x["name"]))
+    # 选项统一来自 model 表：按 type 分类、isdel=0 才出现（改名后跟着变、删除后消失）。
+    # 计数仍按图片记录统计——只算数量，不决定「有哪些选项」。
+    mrows = db.model_index(only_alive=True)
+    m_names = sorted({v["name"] for v in mrows.values()
+                      if v.get("type") == db.MODEL_TYPE_MODEL and v.get("name")})
+    l_names = sorted({v["name"] for v in mrows.values()
+                      if v.get("type") == db.MODEL_TYPE_LORA and v.get("name")})
+    if not m_names and not l_names:
+        # 兜底：model 表为空时不至于让筛选列表整个消失
+        m_names, l_names = sorted(model_count.keys()), sorted(lora_count.keys())
+    models = [{"name": n, "count": model_count.get(n, 0)} for n in m_names]
+    loras = [{"name": n, "count": lora_count.get(n, 0)} for n in l_names]
     return {"tags": tags, "models": models, "loras": loras,
             "total": len(records)}
 
@@ -729,21 +769,116 @@ def _tag_name(eid):
     return _tag_name_index().get(str(eid)) or ""
 
 
-def _split_tag_ids(raw):
-    """拆分提示词标签数组：纯数字串视为词条 id，其余视为历史词条名（存量数据）。
+def _parse_tag_refs(raw):
+    """把标签元数据解析成 [(id, name), ...]。
 
-    新写入的 PNG 全部是 id；老图存的是名字，迁移后仍可能有未能转 id 的残留。
+    三种形态都认，混在一个数组里也能解析：
+      [{"id":12,"n":"xxx"}]  新格式（对象数组，与 model / lora 同一套形态）
+      [12, 7]                纯 id 数组
+      ["xxx"]                老格式（纯名字）
     """
-    ids, names = [], []
-    for x in raw or []:
-        s = str(x).strip()
-        if not s:
+    out = []
+    if not raw:
+        return out
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return out
+    if not isinstance(data, list):
+        return out
+    for x in data:
+        if isinstance(x, dict):
+            tid = str(x.get("id") or "").strip()
+            nm = str(x.get("n") or x.get("name") or "").strip()
+        elif isinstance(x, bool):
             continue
-        if s.isdigit():
-            ids.append(s)
+        elif isinstance(x, (int, float)):
+            tid, nm = str(int(x)), ""
         else:
-            names.append(s)
-    return ids, names
+            s = str(x).strip()
+            tid, nm = (s, "") if s.isdigit() else ("", s)
+        if tid or nm:
+            out.append((tid, nm))
+    return out
+
+
+def _parse_custom_tag_refs(raw):
+    """把自定义标签元数据解析成 [(id, path, name), ...]。
+
+    在 _parse_tag_refs 基础上多取**完整路径** p（层级化后 '角色/绝区零/尼克'）：
+      [{"id":12,"p":"角色/绝区零/尼克","n":"尼克"}]  层级新格式
+      [{"id":12,"n":"xxx"}]                        扁平老格式（path 回退 n）
+      ["角色/绝区零/尼克"]                          纯路径字符串（老格式）
+    """
+    out = []
+    if not raw:
+        return out
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return out
+    if not isinstance(data, list):
+        return out
+    for x in data:
+        if isinstance(x, dict):
+            tid = str(x.get("id") or "").strip()
+            nm = str(x.get("n") or x.get("name") or "").strip()
+            p = str(x.get("p") or "").strip()
+        elif isinstance(x, bool):
+            continue
+        elif isinstance(x, (int, float)):
+            tid, nm, p = str(int(x)), "", ""
+        else:
+            s = str(x).strip()
+            tid, nm, p = (s, "", "") if s.isdigit() else ("", s, s)
+        if tid or nm or p:
+            out.append((tid, p or nm, nm))
+    return out
+
+
+_CUSTOM_NAME_CACHE = {"ts": 0, "data": None}
+
+
+def _custom_tag_name_index():
+    """自定义标签 id -> 当前显示名，带 30 秒缓存（避免逐图查库）。
+
+    「先按 id 取，取不到才用 PNG 里自带的默认名」的第一跳。
+    """
+    now = time.time()
+    if _CUSTOM_NAME_CACHE["data"] is not None \
+            and (now - _CUSTOM_NAME_CACHE["ts"]) < 30:
+        return _CUSTOM_NAME_CACHE["data"]
+    data = db.custom_tag_name_index()
+    _CUSTOM_NAME_CACHE.update({"ts": now, "data": data})
+    return data
+
+
+_CUSTOM_PATH_CACHE = {"ts": 0, "data": None}
+
+
+def _custom_tag_path_index():
+    """自定义标签 id -> 完整路径（层级化 '角色/绝区零/尼克'），带 30 秒缓存。
+
+    旧扁平数据（顶层节点）路径即自身名，天然兼容。
+    """
+    now = time.time()
+    if _CUSTOM_PATH_CACHE["data"] is not None \
+            and (now - _CUSTOM_PATH_CACHE["ts"]) < 30:
+        return _CUSTOM_PATH_CACHE["data"]
+    data = db.custom_tag_path_index()
+    _CUSTOM_PATH_CACHE.update({"ts": now, "data": data})
+    return data
+
+
+def _custom_tag_path_id_index():
+    """完整路径 -> 自定义标签叶子 id（str），带 30 秒缓存。"""
+    now = time.time()
+    if _CUSTOM_PATH_CACHE["data"] is not None \
+            and (now - _CUSTOM_PATH_CACHE["ts"]) < 30:
+        return {p: i for i, p in _CUSTOM_PATH_CACHE["data"].items()}
+    data = db.custom_tag_path_index()
+    _CUSTOM_PATH_CACHE.update({"ts": now, "data": data})
+    return {p: i for i, p in data.items()}
 
 
 def _remove_prompt_tags(cur, names):
@@ -767,13 +902,13 @@ def _remove_prompt_tags(cur, names):
 
 
 def _rec_custom_tag_ids(rec):
-    """返回 rec 的 custom 类 name->custom_id 映射（与 tagIds 并存，自定义标签定位用）。
+    """返回 rec 的 custom 类 路径->custom_id 映射（与 tagIds 并存，自定义标签定位用）。
 
     仅对「非词条」标签填充：custom 类标签在 custom_tag 字典表有独立 id，
-    改名/层级调整后展示名经 JOIN 实时更新，无需 id 归并兜底。
+    展示名（完整路径）经 JOIN/路径索引实时更新，无需 id 归并兜底。
     """
     custom_ids = rec.setdefault("customTagIds", {})
-    idx = db.custom_tag_id_index()
+    idx = _custom_tag_path_id_index()
     for n in rec.get("tags") or []:
         if n not in custom_ids and n not in (rec.get("tagIds") or {}):
             i = idx.get(n)
@@ -783,8 +918,8 @@ def _rec_custom_tag_ids(rec):
 
 
 def _lookup_custom_tag_id(name, rel):
-    """详情/编辑时取 custom 类 tag 的 id：优先图库索引记录持久化的 customTagIds，
-    否则反查 custom_tag 字典表（name -> custom_id）。"""
+    """详情/编辑时取 custom 类 tag 的 id：优先图库索引记录持久化的 customTagIds
+    （key 为完整路径），否则反查 custom_tag 路径索引（路径 -> custom_id）。"""
     try:
         if _index is not None:
             for r in _index:
@@ -795,7 +930,7 @@ def _lookup_custom_tag_id(name, rel):
                     break
     except Exception:
         pass
-    return db.custom_tag_id_index().get(name) or ""
+    return _custom_tag_path_id_index().get(name) or ""
 
 
 def _tag_cn(name):
@@ -942,8 +1077,21 @@ _TAG_CN_FALLBACK = {
 }
 
 
+_ID_NAME_CACHE = {"sig": None, "data": None}
+
+
 def _id_name_map():
-    """当前词库缓存树 id -> 显示名（扫盘回退且无 id 时为空）。"""
+    """当前词库缓存树 id -> 显示名（扫盘回退且无 id 时为空）。
+
+    按 db.version() 签名缓存，避免点击标签过滤/目录排序时每次匹配都重复
+    全量构建整棵词库树的 id->name 映射（词库大时同样拖慢过滤响应）。
+    """
+    try:
+        sig = "db:" + str(db.version())
+    except Exception:
+        sig = "db:?"
+    if _ID_NAME_CACHE["sig"] == sig and _ID_NAME_CACHE["data"] is not None:
+        return _ID_NAME_CACHE["data"]
     m = {}
     tree = _wb_tree_data()
     if not tree:
@@ -957,7 +1105,60 @@ def _id_name_map():
             walk(n.get("children") or [])
 
     walk(tree)
+    _ID_NAME_CACHE.update({"sig": sig, "data": m})
     return m
+
+
+_TAG_ANC_IDS_CACHE = {"sig": None, "data": None}
+
+
+def _tag_anc_ids():
+    """词条 id -> 祖先 id 集合（不含自身），按 db.version() 签名缓存。
+
+    SQL 过滤需保持原 anc 语义：筛选父级词条时，图片挂任一子级词条也命中。
+    由词库树递归构造一次，避免过滤时对每棵子树全树扫描。
+    """
+    try:
+        sig = "db:" + str(db.version())
+    except Exception:
+        sig = "db:?"
+    if _TAG_ANC_IDS_CACHE["sig"] == sig and _TAG_ANC_IDS_CACHE["data"] is not None:
+        return _TAG_ANC_IDS_CACHE["data"]
+    tree = get_tag_tree()[0]
+    m = {}
+
+    def walk(nodes, anc_ids):
+        for n in nodes:
+            nid = n.get("id")
+            if nid:
+                m[str(nid)] = set(anc_ids)
+                walk(n.get("children") or [], anc_ids + [str(nid)])
+            else:
+                walk(n.get("children") or [], anc_ids)
+
+    walk(tree, [])
+    _TAG_ANC_IDS_CACHE.update({"sig": sig, "data": m})
+    return m
+
+
+def _prompt_subtree_ids(pid):
+    """词条 id 的子树 id 集合（含自身）。
+
+    SQL 过滤前把父级词条展开成全部后代，保持"筛选父级词条命中其分支下图片"
+    的既有 anc 语义（gallery_tag.prompt_id 只存直接关联的叶子词条）。
+    """
+    pid = str(pid).strip()
+    if not pid.isdigit():
+        return {pid} if pid else set()
+    anc = _tag_anc_ids()
+    out = {pid}
+    for cid, a in anc.items():
+        if pid in a:
+            out.add(cid)
+    return out
+
+
+_TAG_ID_GLOBAL_CACHE = {"sig": None, "data": None}
 
 
 def _tag_id_global():
@@ -965,7 +1166,17 @@ def _tag_id_global():
 
     词条改名后旧名仍保留在既有图片记录的 tagIds 中，据此可实现「旧 name 图片
     按新 name 过滤仍命中」（定位用 id、展示用 name）。
+
+    按 (_index_rev, db.version()) 双签名缓存：图片打标/新图或词库增删改任一变化即重建。
+    此前每次匹配都全量遍历 _index 所有图片，点标签过滤时对每条记录重复执行，
+    图库大时呈 O(N²) 级卡顿（点击后延迟数秒）。缓存后只在签名变化时重建一次。
     """
+    try:
+        sig = str(_index_rev) + "|" + str(db.version())
+    except Exception:
+        sig = str(_index_rev) + "|?"
+    if _TAG_ID_GLOBAL_CACHE["sig"] == sig and _TAG_ID_GLOBAL_CACHE["data"] is not None:
+        return _TAG_ID_GLOBAL_CACHE["data"]
     m = {}
     try:
         m.update(_tag_id_index())
@@ -979,6 +1190,7 @@ def _tag_id_global():
                         m[n] = str(i)
     except Exception:
         pass
+    _TAG_ID_GLOBAL_CACHE.update({"sig": sig, "data": m})
     return m
 
 
@@ -1046,6 +1258,26 @@ def _deepest_tag_rel(rec_tags, tag, anc, rel_map):
     词条改名后经 id 归并兜底，旧 name 图片仍可按当前名定位 rel。
     """
     best = None
+    if isinstance(tag, str) and tag.isdigit():
+        # SQL 过滤路径传入词条 id：按记录 id 集合直接定位当前名，再做子树归属判断
+        try:
+            gid = _tag_id_global()
+            id_name = _id_name_map()
+            anc_ids = _tag_anc_ids()
+            for rt in rec_tags:
+                rtid = gid.get(rt)
+                if not rtid:
+                    continue
+                cur = id_name.get(rtid)
+                if not cur:
+                    continue
+                if rtid == tag or tag in anc_ids.get(cur, set()):
+                    rel = rel_map.get(cur)
+                    if rel and (best is None or rel.count("/") > best.count("/")):
+                        best = rel
+        except Exception:
+            return ""
+        return best or ""
     for rt in rec_tags:
         if rt == tag or tag in anc.get(rt, ()):
             rel = rel_map.get(rt)
@@ -1118,10 +1350,14 @@ def _matches(rec, tags, models, loras, q, anc=None, tag_mode="and"):
 # ==================== HTTP handlers ====================
 
 async def get_gallery(request):
-    """列表：?page=&pageSize=&sort=&q=&tags=&models=&loras="""
+    """列表：?page=&pageSize=&sort=&q=&tags=&ctags=&ltags=&models=&loras=
+
+    tags=词条 id（逗号分隔，纯数字）；ctags=自定义标签 id（逗号分隔）；
+    两者均按 id 直查 gallery_tag 表过滤，命中后仅加载候选图 id 的记录，
+    不再全量加载图库后在 Python 里逐条遍历匹配。
+    ltags=旧 name|rel 兼容路径（老 localStorage 状态 / URL 直达无 id 时兜底）。
+    """
     _t0 = time.perf_counter()
-    records = get_index()
-    _t_idx = time.perf_counter() - _t0
     try:
         page = max(1, int(request.query.get("page", 1)))
     except ValueError:
@@ -1139,14 +1375,51 @@ async def get_gallery(request):
             tags.append((n, r))
         else:
             tags.append(t)
+    ctags = _split_csv(request.query.get("ctags"))
+    ltags = []
+    for t in _split_csv(request.query.get("ltags")):
+        if "|" in t:
+            n, _, r = t.partition("|")
+            ltags.append((n, r))
+        else:
+            ltags.append(t)
     models = _split_csv(request.query.get("models"))
     loras = _split_csv(request.query.get("loras"))
     tag_mode = (request.query.get("mode") or "and").strip().lower()
     if tag_mode not in ("and", "or"):
         tag_mode = "and"
 
-    _, anc = get_tag_tree()
-    filtered = [r for r in records if _matches(r, tags, models, loras, q, anc, tag_mode)]
+    # 标签过滤主路径：优先按 id 走 SQL（gallery_tag 直查）；仅当请求含非数字 name
+    # （老状态 / URL 直达 / 旧前端）时回退原内存逐条匹配。
+    legacy_name_tags = []
+    for t in tags:
+        n = t[0] if isinstance(t, tuple) else t
+        if not (isinstance(n, str) and n.isdigit()):
+            legacy_name_tags.append(t)
+    if legacy_name_tags or ltags:
+        records = get_index()
+        _, anc = get_tag_tree()
+        use_tags = tags + ltags
+        filtered = [r for r in records if _matches(r, use_tags, models, loras, q, anc, tag_mode)]
+    else:
+        # 父级词条展开为子树 id（保持 anc 语义），再交给 SQL 直查 gallery_tag；
+        # 每个词条一个分组，and 模式逐组命中后交集（图须同时挂这些词条分支的标签）
+        prompt_groups = []
+        for t in tags:
+            n = t[0] if isinstance(t, tuple) else t
+            if isinstance(n, str) and n.isdigit():
+                prompt_groups.append(list(_prompt_subtree_ids(n)))
+        gids = db.gallery_query_tag_gids(prompt_groups, ctags, tag_mode)
+        if gids is None:
+            records = get_index()
+        elif not gids:
+            records = []
+        else:
+            records = db.gallery_load_records(gids) or []
+        _t_idx = time.perf_counter() - _t0
+        _, anc = get_tag_tree()
+        # 标签已由 SQL 过滤，此处只处理 q / models / loras
+        filtered = [r for r in records if _matches(r, [], models, loras, q, anc, tag_mode)]
     if sort == "time_asc":
         filtered.sort(key=lambda r: r["mtime"])
     elif sort == "time_desc":
@@ -1184,9 +1457,55 @@ async def get_gallery_meta(request):
     return web.json_response(data)
 
 
+def _build_custom_tag_tree():
+    """自定义标签层级树（供 tagtree 接口合并展示）。
+
+    custom_tag 表按 parent_id 组织层级；构造为与词库树同构的节点
+    [{id, name, rel, leaf, children}]，rel 用**完整路径**（'测试/喜欢'）保证节点 key 唯一。
+    顶层**不包总壳**：直接返回自定义标签的顶层节点数组（如 '测试' 分支），
+    由调用方拼到词库树之后，二者同级并列（来源靠 isCustom 标记区分）。
+    """
+    rows = db.custom_tag_rows()
+    if not rows:
+        return []
+    nodes = {i: {"id": i, "name": n, "parent": p, "children": []}
+             for i, p, n in rows if n}
+    roots = []
+    for nid, node in nodes.items():
+        if node["parent"] is not None and node["parent"] in nodes:
+            nodes[node["parent"]]["children"].append(node)
+        else:
+            roots.append(node)
+
+    def sort_rec(ns):
+        ns.sort(key=lambda x: x["id"])
+        for n in ns:
+            sort_rec(n["children"])
+    sort_rec(roots)
+
+    def to_tree(ns, prefix):
+        out = []
+        for n in ns:
+            rel = "/".join([prefix, n["name"]]) if prefix else n["name"]
+            kids = to_tree(n["children"], rel)
+            out.append({
+                "id": str(n["id"]),
+                "name": n["name"],
+                "rel": rel,
+                "leaf": not kids,
+                "isCustom": True,
+                "children": kids,
+            })
+        return out
+    return to_tree(roots, "")
+
+
 async def get_gallery_tagtree(request):
-    """标签层级树：基于词库 prompt 目录的目录结构（顶层=Tab，叶子=词条）。"""
+    """标签层级树：词库 prompt 目录树（顶层=Tab，叶子=词条）+ 自定义标签层级树（不套总壳，置于树末，二者同级并列）。"""
     tree, _ = get_tag_tree()
+    custom_tree = _build_custom_tag_tree()
+    if custom_tree:
+        tree = list(tree) + custom_tree
     return web.json_response({
         "tree": tree,
         "builtAt": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1223,19 +1542,25 @@ async def get_gallery_detail(request):
     texts = png_text.read_png_text(full)
     wf = texts.get("workflow") or ""
     pt = texts.get("prompt") or ""
-    # 两源标签按来源标记：custom 类（自定义标签）可增删排在前面；prompt 类（词库词条）只读
+    # 两源标签按来源标记：prompt 类（词库词条）只读排在前；custom 类（自定义标签）可增删排在后
     # 提示词标签在 PNG 内是词条 id，展示时经 id 还原名字（词条改名后标签跟着变）
-    pids, legacy = _split_tag_ids(_json_list(texts.get("zhule_prompt_tags"),
-                                             "zhule_prompt_tags"))
-    custom = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
+    refs = _parse_tag_refs(texts.get("zhule_prompt_tags"))
+    pids = [i for i, _n in refs if i]
+    # 只有名字、没有 id 的老数据：按名字反查（转不出 id 的就按名字展示）
+    legacy = [n for i, n in refs if n and not i]
+    # 词条被删、按 id 查不到时用 PNG 里自带的默认名兜底
+    pt_names = {i: n for i, n in refs if i and n}
+    # 自定义标签：先按 id 取当前**完整路径**（层级/改名后跟着变），取不到才用 PNG 里的默认名
+    cidx = _custom_tag_path_index()
+    custom = []
+    for cid, pth, nm in _parse_custom_tag_refs(texts.get("zhule_custom_tags")):
+        _cur = (cidx.get(str(cid)) or pth or nm) if cid else (pth or nm)
+        if _cur:
+            custom.append(_cur)
     seen = set()
     tags = []
-    for n in custom:
-        tags.append({"id": _lookup_custom_tag_id(n, rel), "name": n, "prompt": False,
-                     "custom": True, "cn": _tag_cn(n), "en": _tag_en(n)})
-        seen.add(n)
     for eid in pids:
-        n = _tag_name(eid)
+        n = _tag_name(eid) or pt_names.get(str(eid)) or ""
         if n and n not in seen:
             # id 由 PNG 直接给出，无需按名字反查
             tags.append({"id": eid, "name": n, "prompt": True,
@@ -1250,6 +1575,10 @@ async def get_gallery_detail(request):
                 tags.append({"id": id_idx.get(n) or "", "name": n, "prompt": True,
                              "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
                 seen.add(n)
+    for n in custom:
+        tags.append({"id": _lookup_custom_tag_id(n, rel), "name": n, "prompt": False,
+                     "custom": True, "cn": _tag_cn(n), "en": _tag_en(n)})
+        seen.add(n)
     data = {
         "path": rel,
         "name": os.path.basename(full),
@@ -1524,20 +1853,19 @@ async def post_gallery_batch_link(request):
 
 
 async def post_gallery_tag(request):
-    """body: { name, group } 创建 tag（含分组）。"""
+    """body: { name } 创建自定义标签。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
     name = (body.get("name") or "").strip()
-    group = (body.get("group") or "其他").strip() or "其他"
     if not name:
         return web.json_response({"error": "标签名不能为空"}, status=400)
-    if len(name) > 60 or len(group) > 30:
+    if len(name) > 60:
         return web.json_response({"error": "名称过长"}, status=400)
-    # 自定义标签字典+分组落在 zhule.db custom_tag 表，不再写 gallery/meta.json
-    created = db.custom_tag_set_group(name, group)
-    return web.json_response({"ok": True, "created": created})
+    # 自定义标签落在 zhule.db custom_tag 表，不再写 gallery/meta.json
+    cid = db.custom_tag_upsert(name)
+    return web.json_response({"ok": True, "created": cid != 0, "id": cid})
 
 
 def _norm_tag_names(v):
@@ -1558,7 +1886,7 @@ async def post_gallery_annotate(request):
     if not full or not os.path.isfile(full):
         return web.json_response({"error": "文件不存在"}, status=404)
 
-    # 自定义标签为唯一可写标签字段：tags 全量重写，remove_custom 按名过滤
+    # 自定义标签为唯一可写标签字段：tags 全量重写，remove_custom 按**完整路径**过滤
     texts = png_text.read_png_text(full)
     custom_cur = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
     updates = {}
@@ -1566,16 +1894,36 @@ async def post_gallery_annotate(request):
         tags = body.get("tags")
         if not isinstance(tags, list):
             return web.json_response({"error": "tags 必须是数组"}, status=400)
-        clean = [str(x).strip() for x in tags if str(x).strip()]
+        clean = []
+        for x in tags:
+            s = str(x or "").strip().strip("/")
+            if s:
+                clean.append(s)
         if len(clean) > 100:
             return web.json_response({"error": "标签过多"}, status=400)
-        custom_cur = clean
-        updates["zhule_custom_tags"] = json.dumps(clean, ensure_ascii=False)
+        # 层级注册：每个路径按 / 拆段逐级 find-or-create，写对象数组（含叶子 id 与完整路径 p）
+        refs = []
+        for p in clean:
+            r = db.custom_tag_path_ref(p)
+            if r is None:
+                continue
+            refs.append(r if r.get("id") else {"p": r["p"], "n": r["n"]})
+        custom_cur = refs
+        updates["zhule_custom_tags"] = json.dumps(refs, ensure_ascii=False)
     if body.get("remove_custom") is not None:
         names = _norm_tag_names(body.get("remove_custom"))
         if names is None:
             return web.json_response({"error": "remove_custom 必须是字符串数组"}, status=400)
-        custom_cur = [x for x in custom_cur if x not in names]
+        # 兼容 dict（对象数组：按 p 兜底 n 过滤）与纯字符串（老格式）两种存量形态
+        kept = []
+        for x in custom_cur:
+            if isinstance(x, dict):
+                key = str(x.get("p") or x.get("n") or "").strip()
+            else:
+                key = str(x).strip()
+            if key and key not in names:
+                kept.append(x)
+        custom_cur = kept
         updates["zhule_custom_tags"] = json.dumps(custom_cur, ensure_ascii=False)
     if body.get("remove_prompt") is not None:
         names = _norm_tag_names(body.get("remove_prompt"))
@@ -1647,11 +1995,17 @@ def _find_model_file(kind, name):
 
 
 def _do_rename_work(kind, old, new, base_old):
-    """后台执行：重命名模型文件 + 批量更新引用该模型的图片 PNG 元数据与索引。
+    """后台执行：改 model 表一行 + 同步内存索引。
 
     old：原名（可带后缀）；new：新全名（后端已补后缀）；base_old：原名去后缀。
+
+    图片侧存的是 model 表的 id（老图只有名字，按名字兜底反查），所以改名
+    **不再逐张重写 PNG** —— 只改 model 表那一行，展示名由读取侧按 id 实时解析。
+    这一步把「遍历七千张读 PNG、重写元数据、全表替换」瘦成了一条 UPDATE。
     """
-    records = get_index()
+    mtype = db.MODEL_TYPE_MODEL if kind == "model" else db.MODEL_TYPE_LORA
+    mrow = db.model_lookup(mtype, old)
+    new_name = db.normalize_model_name(new)
     updated = 0
     renamed_file = False
     file_err = None
@@ -1671,45 +2025,23 @@ def _do_rename_work(kind, old, new, base_old):
                 renamed_file = True
             except OSError as e:
                 file_err = f"模型文件重命名失败: {e}"
-    # 2) 批量更新图片 PNG 元数据（文件数未知，可能较多，放在后台线程执行）
-    for r in records:
-        rel = r.get("key")
-        full = _safe_full(rel)
-        if not full or not os.path.isfile(full):
-            continue
-        texts = png_text.read_png_text(full)
-        updates = {}
+    # 2) 改 model 表那一行：存了 id 的图片因此自动跟随，不会再裂成两条
+    if mrow:
+        if not db.model_rename(mrow["id"], new_name):
+            file_err = file_err or "模型表改名失败"
+    else:
+        db.model_upsert(mtype, new_name)
+    # 3) 内存索引改展示名（纯内存，无文件 IO、无全表替换）
+    for r in get_index() or []:
         if kind == "model":
-            cur = _extract_zhule_model(texts)
-            if cur and (cur == old or (base_old and os.path.splitext(cur)[0] == base_old)):
-                updates["zhule_model"] = new
+            if r.get("model") in (old, base_old):
+                r["model"] = new_name
+                updated += 1
         else:
-            loras = _json_list(texts.get("zhule_loras"), "zhule_loras")
-            hit = False
-            new_loras = []
-            seen = set()
-            for l in loras:
-                l2 = new if (l == old or (base_old and os.path.splitext(l)[0] == base_old)) else l
-                if l2 not in seen:
-                    seen.add(l2)
-                    new_loras.append(l2)
-                if l2 != l:
-                    hit = True
-            if hit:
-                updates["zhule_loras"] = json.dumps(new_loras, ensure_ascii=False)
-        if not updates:
-            continue
-        if not png_text.write_png_text(full, updates):
-            file_err = file_err or f"PNG 元数据写入失败: {rel}"
-            continue
-        updated += 1
-        if kind == "model":
-            r["model"] = new
-        else:
-            r["loras"] = _json_list(updates["zhule_loras"], "zhule_loras")
-    # 3) 写回索引缓存（zhule.db 图库表）
-    if not db.gallery_save_records(records):
-        print(f"[ZhuleGallery] 后台重命名索引缓存写入失败（zhule.db 图库表）")
+            ls = r.get("loras") or []
+            if old in ls or base_old in ls:
+                r["loras"] = [new_name if x in (old, base_old) else x for x in ls]
+                updated += 1
     print(f"[ZhuleGallery] 后台重命名完成: kind={kind} {old}->{new} updated={updated} file_renamed={renamed_file}")
     _drop_detail_cache()  # 重命名会批量改写多图元数据且保留 mtime，详情缓存全部失效
     _rename_state["done"] = True
@@ -1755,31 +2087,191 @@ async def post_gallery_rename(request):
     return web.json_response({"ok": True, "async": True, "target": new_full})
 
 
+async def post_gallery_rename_file(request):
+    """图片原地改名：body { path, new }。
+
+    new 为纯文件名（**不含目录与扩展名**），自动保留原扩展名。
+    同步范围：磁盘文件 + 索引 key（内存列表与 zhule.db 行）+ 缩略图 + 详情缓存。
+
+    os.rename 不改动文件内容也不更新 mtime，故列表按时间的排序位置保持不变；
+    但缩略图 key 是 sha1(rel|mtime)，rel 变化会导致整个 key 改变，所以这里
+    把旧缩略图直接改名为新 key——既避免残留垃圾文件，也省去一次重新解码生成。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+
+    rel = (body.get("path") or "").strip()
+    new = (body.get("new") or "").strip()
+    if not rel:
+        return web.json_response({"error": "路径不能为空"}, status=400)
+    if not new:
+        return web.json_response({"error": "新名称不能为空"}, status=400)
+    if len(new) > 200:
+        return web.json_response({"error": "名称过长"}, status=400)
+    # 非法字符（含路径分隔符）：改名只允许在本目录内换名字，不能借機跨目录写
+    if new in (".", "..") or new.startswith(".") or re.search(r'[\\/:*?"<>|]', new):
+        return web.json_response({"error": "名称不合法"}, status=400)
+
+    full = _safe_full(rel)
+    if not full or not os.path.isfile(full):
+        return web.json_response({"error": "图片不存在"}, status=404)
+
+    _old_dir, old_name = (rel.rsplit("/", 1) if "/" in rel else ("", rel))
+    old_base, ext = os.path.splitext(old_name)
+    if new == old_base:
+        return web.json_response({"ok": True, "unchanged": True,
+                                  "path": rel, "name": old_name})
+
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    new_rel = (parent + "/" if parent else "") + new + ext
+    dst = _safe_full(new_rel)
+    if not dst:
+        return web.json_response({"error": "目标路径越界"}, status=400)
+    if os.path.exists(dst):
+        return web.json_response({"error": "同名文件已存在"}, status=409)
+
+    try:
+        old_mtime = int(os.stat(full).st_mtime)
+    except OSError:
+        old_mtime = 0
+    try:
+        os.rename(full, dst)
+    except OSError as e:
+        return web.json_response({"error": "改名失败: " + str(e)}, status=500)
+
+    try:
+        st = os.stat(dst)
+        new_mtime, new_size = int(st.st_mtime), st.st_size
+    except OSError:
+        new_mtime, new_size = old_mtime, 0
+
+    old_thumb = _thumb_path(rel, old_mtime)
+    new_thumb = _thumb_path(new_rel, new_mtime)
+    if os.path.isfile(old_thumb):
+        try:
+            if os.path.isfile(new_thumb):
+                os.remove(old_thumb)
+            else:
+                os.rename(old_thumb, new_thumb)
+        except OSError:
+            pass  # 缩略图失败不影响改名结果，缺失时会按需重新生成
+
+    new_rec = None
+    index = get_index()
+    for i, r in enumerate(index):
+        if r.get("key") != rel:
+            continue
+        rec = dict(r)
+        rec["key"] = new_rel
+        rec["name"] = new + ext
+        rec["mtime"] = new_mtime
+        rec["size"] = new_size
+        index[i] = rec
+        new_rec = rec
+        break
+    if new_rec is not None:
+        # 行级迁移：先按新 key 落库（tag 行随之重建），再删旧 key。
+        # 记录里的 promptIds / customTags 在两种来源下都存在，标签不会丢。
+        if new_rec.get("id"):
+            # 只改这一行的 name：id 与 tag 行全部保留，PNG 里的 zhule_id 继续有效
+            if not db.gallery_update_key(new_rec["id"], new_rel):
+                print("[ZhuleGallery] 图片改名后索引写入失败: " + new_rel)
+        else:
+            # 没有 id 的老记录：退回按名字插新行 + 删旧行
+            if not db.gallery_upsert_records([new_rec]):
+                print("[ZhuleGallery] 图片改名后索引写入失败: " + new_rel)
+            db.gallery_delete_records([rel])
+
+    _drop_detail_cache()
+    return web.json_response({"ok": True, "path": new_rel, "name": new + ext,
+                              "oldPath": rel, "mtime": new_mtime, "size": new_size})
+
+
 # ---------------------------------------------------------------------------
+def _extract_ref_id(raw):
+    """从模型类元数据取 id：新格式是 {"id":..,"n":..} 对象，老格式是纯名字（返回 None）。"""
+    s = (raw or "").strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    try:
+        return int(obj.get("id"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _make_record(rel, full):
     """按 build_index 同款字段逻辑构造单条索引记录（只处理一张图）。"""
     st = os.stat(full)
     texts = png_text.read_png_text(full)
     model = _extract_zhule_model(texts)
     loras = _json_list(texts.get("zhule_loras"), "zhule_loras")
+    # 图片自身身份：PNG 里存的 gallery 行 id（新图由 save_image 写入）。
+    # 有它，图片文件被改名后仍能认回同一行，不会当成新图另起一行。
+    self_id = None
+    _sid = (texts.get("zhule_id") or "").strip()
+    if _sid.isdigit():
+        self_id = int(_sid)
+    # 模型 id：新格式是 {"id":..,"n":..} 对象；老图只有名字就按名字查表
+    model_id = _extract_ref_id(texts.get("zhule_model"))
+    if not model_id and model:
+        _r = db.model_lookup(db.MODEL_TYPE_MODEL, model)
+        model_id = _r["id"] if _r else None
+    # LoRA id：zhule_loras 新格式是 {"id":..,"n":..} 对象数组，直接取 id；
+    # 老格式纯名字按名查表兜底。lora_ids 缺失曾导致 _make_record 抛 NameError，
+    # 新图 index_new 被静默吞掉、图库只留 mtime=0 的空行。
+    lora_ids = []
+    try:
+        _lo = json.loads(texts.get("zhule_loras") or "[]")
+        if isinstance(_lo, list):
+            for x in _lo:
+                if isinstance(x, dict):
+                    _lid = x.get("id")
+                    if _lid is not None:
+                        try:
+                            lora_ids.append(int(_lid))
+                        except (TypeError, ValueError):
+                            pass
+                        continue
+                    _ln = str(x.get("n") or x.get("name") or "").strip()
+                else:
+                    _ln = str(x).strip()
+                if _ln:
+                    _r = db.model_lookup(db.MODEL_TYPE_LORA, _ln)
+                    if _r and _r.get("id"):
+                        lora_ids.append(_r["id"])
+    except Exception:
+        pass
     # 落库只存正面提示词文本：整份 workflow/prompt JSON 由详情接口实时读 PNG，不落库
     _pp = _extract_positive_prompt(texts.get("prompt")) or ""
     # 提示词标签按词条 id 传递；_backfill 顺带把存量的老词条名转成 id 并写回 PNG
-    pids, custom_tags = _backfill_tag_fields(full, texts)
-    # id -> 显示名：词条改名后展示名实时跟着变，标签不脱钩
+    pids, custom_tags, pt_names = _backfill_tag_fields(full, texts)
+    # id -> 显示名：词条改名后展示名实时跟着变，标签不脱钩。
+    # 词条被删（按 id 查不到）时用 PNG 里自带的默认名兜底
     tag_ids = {}
     for _i in pids:
-        _n = _tag_name(_i)
+        _n = _tag_name(_i) or pt_names.get(str(_i)) or ""
         if _n:
             tag_ids[_n] = _i
-    tags = list(custom_tags) + [n for n in tag_ids if n not in custom_tags]
+    # 展示顺序：提示词标签（词库词条）在前，自定义标签在后
+    tags = [n for n in tag_ids if n not in custom_tags] + list(custom_tags)
     rec = {
         "key": rel,
         "name": os.path.basename(full),
         "mtime": int(st.st_mtime),
         "size": st.st_size,
+        "id": self_id,
         "model": model,
+        "modelId": model_id,
         "loras": loras,
+        "loraIds": lora_ids,
         "tags": tags,
         "tagIds": tag_ids,
         "customTags": list(custom_tags),
@@ -1821,7 +2313,8 @@ def index_new(pairs):
     for rel, full in pairs or []:
         try:
             recs.append(_make_record(rel, full))
-        except OSError:
+        except Exception as e:
+            print(f"[ZhuleGallery] index_new 跳过 {rel}: {e}")
             continue
     if not recs:
         return 0

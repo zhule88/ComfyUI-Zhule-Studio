@@ -51,13 +51,6 @@ def _as_list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
-def _at(values: list, idx: int, default):
-    """按索引取值；越界回退到最后一个，空列表用默认值。"""
-    if not values:
-        return default
-    return values[min(idx, len(values) - 1)]
-
-
 def get_checkpoint_defaults(meta: dict) -> dict:
     """提取推荐参数（原始数组，不挑选）。缺字段补默认值。"""
     base_model = str(meta.get("base_model") or "Unknown")

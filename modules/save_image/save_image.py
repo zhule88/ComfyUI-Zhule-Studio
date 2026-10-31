@@ -3,8 +3,11 @@
 - 保存位置固定 output/zhule_studio/zhule_img/，文件名 zhule_0001.png 起按全局序号递增
 - 元数据写入：
   * prompt / workflow：拖回画布还原工作流
-  * zhule_model：优先取输入「自定义模型」，为空时从 prompt 提取主模型；写入前统一去扩展名后缀
-  * zhule_loras：优先取输入「自定义lora」，为空时从 prompt 提取 LoRA 列表（数组）；写入前统一去扩展名后缀
+  * zhule_model：优先取输入「自定义模型」，为空时从 prompt 提取主模型；写入前先归一
+    （去目录 + 去后缀：绝对路径会被截成纯文件名，否则按绝对路径入库会污染筛选列表），
+    再到 model 表取 id，最终写成**单个对象** {"id":..,"n":..}——id 跟随改名，n 兜底
+  * zhule_loras：优先取输入「自定义lora」，为空时从 prompt 提取 LoRA 列表（数组）；
+    归一与取 id 同上，每个元素一个对象，而不是 id/name 占两个字段
   * zhule_prompt_tags：保存时从出图时刻 workflow（ZhuleStudio 输入节点 _selected 快照）
     自动提取的**词条 id 数组**（图库只读）。按 id 存而非词条名，词条改名/移动后标签不脱钩
   * zhule_custom_tags：来自可选输入 自定义标签（JSON 数组字符串）；图库详情页在同一字段上增删，
@@ -82,7 +85,10 @@ def _extract_model_and_loras(prompt):
 
 
 def _parse_tags(raw):
-    """解析 tags 输入（自定义tags）：JSON 数组字符串；失败则按行拆分。"""
+    """解析 tags 输入（自定义标签）：JSON 数组字符串；否则按逗号/换行拆分。
+
+    层级路径以 / 分隔段（如 角色/绝区零/尼克），多个路径用英文逗号分隔。
+    """
     if not raw:
         return []
     s = str(raw).strip()
@@ -96,7 +102,13 @@ def _parse_tags(raw):
         return [str(x).strip() for x in data if str(x).strip()]
     if isinstance(data, str) and data.strip():
         return [data.strip()]
-    return [line.strip() for line in s.splitlines() if line.strip()]
+    out = []
+    for line in s.replace("，", ",").splitlines():
+        for part in line.split(","):
+            p = part.strip().strip("/")
+            if p:
+                out.append(p)
+    return out
 
 
 def _parse_selected(raw):
@@ -206,17 +218,7 @@ class ZhuleSaveImage:
                 "自定义标签": ("STRING", {
                     "multiline": False,
                     "default": "",
-                    "placeholder": "填写 JSON 数组字符串，如 [\"tag1\", \"tag2\"]",
-                }),
-                "自定义模型": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "留空自动提取；填写则优先使用，如 anime.safetensors",
-                }),
-                "自定义lora": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "留空自动提取；填写则优先使用，JSON 数组字符串",
+                    "placeholder": "以 / 分隔的层级标签路径，如 角色/绝区零/尼克；多个用英文逗号分隔",
                 }),
             },
             "hidden": {
@@ -249,31 +251,54 @@ class ZhuleSaveImage:
                     seq = max(seq, int(base[prefix_len:]))
         return seq + 1
 
-    def save(self, 图像, 自定义标签="", 自定义模型="", 自定义lora="",
+    def save(self, 图像, 自定义标签="",
              prompt=None, extra_pnginfo=None, unique_id=None, **kwargs):
-        manual_model = str(自定义模型 or "").strip()
-        manual_loras_raw = 自定义lora
         output_dir = os.path.join(
             folder_paths.get_output_directory(), "zhule_studio", OUTPUT_SUBDIR)
         os.makedirs(output_dir, exist_ok=True)
 
         seq = self._next_seq(output_dir)
+        # 模型/LoRA 一律由 prompt 自动提取（不再支持自定义输入覆盖）
         model, loras = _extract_model_and_loras(prompt)
-        # 手动输入优先：填了自定义模型/LoRA 就覆盖自动提取结果
-        if manual_model:
-            model = manual_model
-        manual_loras = _parse_tags(manual_loras_raw)
-        if manual_loras:
-            loras = manual_loras
-        # 无论来源，写入前统一去除扩展名后缀（图库快速访问用，不带 .safetensors 等）
-        if model:
-            model = _strip_ext(model)
-        if loras:
-            loras = [_strip_ext(x) for x in loras if _strip_ext(x)]
+        # 无论来源，写入前统一归一（去目录 + 去后缀）。绝对路径在这里被截成纯文件名，
+        # 否则模型会按绝对路径入库：筛选列表出现一坨巨长条目，还和同名真名裂成两条。
+        # id 与 name 合成一个对象写入：只占一个字段，改名后自动跟随，名字做兜底。
+        try:
+            from ..studio import db as _db
+        except Exception:
+            _db = None
+        if _db is not None:
+            model_ref = _db.model_ref(_db.MODEL_TYPE_MODEL, model) if model else None
+            lora_refs = [r for r in (_db.model_ref(_db.MODEL_TYPE_LORA, x)
+                                     for x in loras) if r] if loras else []
+        else:
+            model_ref = {"n": _strip_ext(model)} if model else None
+            lora_refs = [{"n": y} for y in (_strip_ext(x) for x in loras)
+                         if y] if loras else []
+        # 日志仍按展示名打印，保持与旧日志一致
+        model = (model_ref or {}).get("n") or ""
+        loras = [r.get("n") for r in lora_refs if isinstance(r, dict)]
         prompt_tag_ids = _extract_prompt_tag_ids(prompt)
+        # 自定义标签：按 / 路径逐级注册（顶层 parent_id=NULL，独立路径不合并），
+        # 写对象数组 {"id":叶子id, "p":完整路径, "n":叶子名}；读取侧按 id 取当前路径，
+        # 取不到才用 p/n 兜底，图库与 PNG 元数据保持一致
         custom_tags = _parse_tags(自定义标签)
+        if _db is not None:
+            pt_refs = _db.tag_refs(prompt_tag_ids)
+            ct_refs = [r for r in (_db.custom_tag_path_ref(x) for x in custom_tags)
+                       if r]
+        else:
+            pt_refs = [{"id": int(x), "n": ""}
+                       for x in prompt_tag_ids if str(x).strip().isdigit()]
+            ct_refs = [{"p": x.strip("/"), "n": x.strip("/").rsplit("/", 1)[-1]}
+                       for x in custom_tags if x and x.strip("/")]
 
         saved = []
+        # 先入库拿到行 id（图片身份），写进 PNG 元数据后再落盘；
+        # 落盘完成由 index_new 补齐 mtime/size，id 保持不变
+        _ids = _db.gallery_reserve(
+            [f"{FILE_PREFIX}_{seq + i:04d}.png" for i in range(len(图像))]
+        ) if _db is not None else {}
         for i, img in enumerate(图像):
             arr = (img.cpu().numpy() * 255).astype(np.uint8)
             image = Image.fromarray(arr)
@@ -287,15 +312,22 @@ class ZhuleSaveImage:
                 metadata.add_text(
                     "workflow", json.dumps(extra_pnginfo["workflow"])
                 )
-            if model:
-                metadata.add_text("zhule_model", model)
-            if loras:
-                metadata.add_text("zhule_loras", json.dumps(loras))
-            if prompt_tag_ids:
+            if model_ref:
+                metadata.add_text("zhule_model",
+                                  json.dumps(model_ref, ensure_ascii=False))
+            if lora_refs:
+                metadata.add_text("zhule_loras",
+                                  json.dumps(lora_refs, ensure_ascii=False))
+            # 图片自身身份：图库行的 id。文件被改名后靠它认回同一行
+            _sid = _ids.get(file_name)
+            if _sid:
+                metadata.add_text("zhule_id", str(_sid))
+            if pt_refs:
                 metadata.add_text("zhule_prompt_tags",
-                                 json.dumps(prompt_tag_ids))
-            if custom_tags:
-                metadata.add_text("zhule_custom_tags", json.dumps(custom_tags))
+                                  json.dumps(pt_refs, ensure_ascii=False))
+            if ct_refs:
+                metadata.add_text("zhule_custom_tags",
+                                  json.dumps(ct_refs, ensure_ascii=False))
 
             image.save(full_path, pnginfo=metadata, compress_level=4)
             saved.append((file_name, full_path))

@@ -42,12 +42,3 @@ def _is_safe(abs_path):
         return False
 
 
-def _is_safe_for_delete(abs_path):
-    abs_path = os.path.abspath(abs_path)
-    for base in (_get_input_dir(), _get_output_dir()):
-        try:
-            if os.path.commonpath([base, abs_path]) == base:
-                return True
-        except ValueError:
-            continue
-    return False

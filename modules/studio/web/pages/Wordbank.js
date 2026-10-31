@@ -64,7 +64,8 @@ export default {
                    @click="clearChip(depth)">全部</div>
               <div v-for="name in line" :key="name"
                    class="chip"
-                   :class="{active: getSelections()[depth].includes(name), 'in-pool': isChipInPool(depth, name)}"
+                   :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipInPool(depth, name)}]"
+                   :style="chipStyle(name)"
                    draggable="true"
                    @click="toggleChip(depth, name)"
                    @contextmenu.prevent="togglePoolForChip(depth, name)"
@@ -296,6 +297,7 @@ export default {
             <span v-if="editIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
           </div>
           <div class="actions">
+            <button class="btn danger" @click="askDeleteWord(editTarget)">删除</button>
             <button class="btn" @click="cancelEdit">取消</button>
             <button class="btn primary" @click="submitEdit" :disabled="editing">保存</button>
           </div>
@@ -307,7 +309,7 @@ export default {
         <div class="confirm-dialog">
           <div class="confirm-title">确认删除</div>
           <div class="confirm-msg">
-            是否确认删除当前提示词「{{ delConfirm.name }}」，此操作不可恢复。
+            是否确认删除当前提示词「{{ delConfirm.name }}」？删除后不再显示（数据仍保留在库中，可后续恢复）。
           </div>
           <div class="confirm-actions">
             <button class="btn" @click="delConfirm = null">取消</button>
@@ -325,7 +327,7 @@ export default {
           </div>
           <div v-if="viewer.file.images && viewer.file.images.length" class="viewer-media">
             <img :src="imageUrl(viewer.file.images[viewer.idx])" :alt="viewer.file.name"
-                 @dblclick="zoomView(imageUrl(viewer.file.images[viewer.idx]))"
+                 @dblclick="zoomView(imageUrl(viewer.file.images[viewer.idx]), viewer.file.name || '', viewer.file)"
                  data-tip="双击全屏缩放查看">
             <div class="viewer-nav" v-if="viewer.file.images.length > 1">
               <button @click="viewerPrev">‹</button>
@@ -348,6 +350,13 @@ export default {
     </transition>
   `,
   setup() {
+    // ---------- 持久化竞态守卫 ----------
+    // 首屏初始化期间，深度 watch([data,pref,...], saveState) 可能被早期状态变更提前触发
+    // （如首次渲染 getSelections() 创建空 selections 写入 data，或 restoreState 前其它赋值），
+    // 若此时写盘会把默认/半初始化状态覆盖已保存存档，导致 restoreState 读到被污染的存档而静默跳过。
+    // 因此引入 stateRestored：恢复完成前 saveState 一律 return；restoreState 完成后才放行写盘。
+    let stateRestored = false;
+
     // ---------- 轻量 Toast（3 秒自动消失，替代原生 alert） ----------
     const toast = reactive({ show: false, type: 'info', msg: '' });
     let toastTimer = null;
@@ -423,7 +432,8 @@ export default {
     }
     const pref = reactive(loadPref());
     watch(pref, () => {
-      try { localStorage.setItem(PREF_KEY, JSON.stringify({ ...pref })); } catch (e) { /* ignore */ }
+      try { localStorage.setItem(PREF_KEY, JSON.stringify({ ...pref })); }
+      catch (e) { console.warn('zhule: 词库偏好保存失败（PREF_KEY）:', e); }
     }, { deep: true });
 
     const viewer = reactive({ open: false, file: null, idx: 0 });
@@ -448,6 +458,8 @@ export default {
     };
 
     const saveState = () => {
+      // 恢复完成前禁止写入：初始化竞态期间的中间状态不得覆盖已保存存档
+      if (!stateRestored) return;
       const state = {
         pref: { ...pref },
         activeTab: data.activeTab,
@@ -463,7 +475,8 @@ export default {
         tabOrder: [...tabOrder.value],
         chipOrder: JSON.parse(JSON.stringify(chipOrder)),
       };
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 存储失败忽略 */ }
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+      catch (e) { console.warn('zhule: 词库状态保存失败（localStorage/序列化）:', e); }
     };
 
     const restoreState = () => {
@@ -471,13 +484,21 @@ export default {
       try {
         let state = null;
         try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (e) { state = null; }
-        if (!state) return;
-        if (state.pref && typeof state.pref === 'object') {
-          if (state.pref.cardMode === 'image' || state.pref.cardMode === 'file') pref.cardMode = state.pref.cardMode;
-          if (typeof state.pref.columns === 'number' && state.pref.columns >= 1 && state.pref.columns <= 20) pref.columns = state.pref.columns;
-          if (typeof state.pref.translate === 'boolean') pref.translate = state.pref.translate;
-          if (typeof state.pref.genCount === 'number' && state.pref.genCount >= 0 && state.pref.genCount <= 99) pref.genCount = state.pref.genCount;
-          if (typeof state.pref.autoSelectParent === 'boolean') pref.autoSelectParent = state.pref.autoSelectParent;
+        // 明确判定无可恢复：同样视为恢复流程完成，放行后续写盘
+        if (!state) { stateRestored = true; return; }
+        // pref 恢复优先读独立 key（pref 每次变化实时写 PREF_KEY，比整包快照更新；
+        // 整包 JSON.stringify 失败时 PREF_KEY 仍有效，避免旧快照覆盖新偏好）。
+        // 旧存档无 PREF_KEY 时回退到整包里的 pref 快照，保证升级不丢配置。
+        const freshPref = loadPref();
+        let prefKeyFresh = false;
+        try { prefKeyFresh = localStorage.getItem(PREF_KEY) != null; } catch (e) { prefKeyFresh = false; }
+        const srcPref = (prefKeyFresh || !(state.pref && typeof state.pref === 'object')) ? freshPref : state.pref;
+        if (srcPref && typeof srcPref === 'object') {
+          if (srcPref.cardMode === 'image' || srcPref.cardMode === 'file') pref.cardMode = srcPref.cardMode;
+          if (typeof srcPref.columns === 'number' && srcPref.columns >= 1 && srcPref.columns <= 20) pref.columns = srcPref.columns;
+          if (typeof srcPref.translate === 'boolean') pref.translate = srcPref.translate;
+          if (typeof srcPref.genCount === 'number' && srcPref.genCount >= 0 && srcPref.genCount <= 99) pref.genCount = srcPref.genCount;
+          if (typeof srcPref.autoSelectParent === 'boolean') pref.autoSelectParent = srcPref.autoSelectParent;
         }
         if (Array.isArray(state.tabOrder)) tabOrder.value = state.tabOrder.filter(n => typeof n === 'string');
         if (state.chipOrder && typeof state.chipOrder === 'object') {
@@ -551,9 +572,12 @@ export default {
           // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
           syncPlaceholders();
         }
+        // 恢复流程正常完成：标记守卫放行，此后状态变更才允许写盘
+        stateRestored = true;
       } catch (e) {
-        // 存档损坏时仅放弃恢复，不阻断页面加载
+        // 存档损坏时仅放弃恢复，不阻断页面加载；损坏同样视为"已尝试恢复"，放行后续写盘
         console.warn('词库状态恢复失败，已忽略：', e);
+        stateRestored = true;
       }
     };
 
@@ -631,9 +655,72 @@ export default {
       const v = e && e.detail && e.detail.autoSelectParent;
       if (typeof v === 'boolean') pref.autoSelectParent = v;
     }
+    // 通用删除免确认（设置面板 zhule-pref-changed 广播完整 pref，detail.common.noDeleteConfirm）
+    const noDeleteConfirm = ref(readNoDeleteConfirm());
+    function readNoDeleteConfirm() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
+        if (raw && raw.common && typeof raw.common.noDeleteConfirm === 'boolean') return raw.common.noDeleteConfirm;
+      } catch (e) { /* ignore */ }
+      return false;
+    }
+    // 全局标签主题/圆角/颜色种子（与图库标签样式一致，作用于词库小分类 chip）
+    const tagTheme = ref(readTagTheme());
+    const tagRound = ref(readTagRound());
+    const tagSeed = ref(readTagSeed());
+    function readTagTheme() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
+        if (raw && raw.gallery && ['dark', 'light', 'plain'].includes(raw.gallery.tagTheme)) return raw.gallery.tagTheme;
+      } catch (e) { /* ignore */ }
+      return 'dark';
+    }
+    function readTagRound() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
+        if (raw && raw.gallery && typeof raw.gallery.tagRound === 'boolean') return raw.gallery.tagRound;
+      } catch (e) { /* ignore */ }
+      return true;
+    }
+    function readTagSeed() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
+        if (raw && raw.gallery && typeof raw.gallery.tagSeed === 'string' && raw.gallery.tagSeed) return raw.gallery.tagSeed;
+      } catch (e) { /* ignore */ }
+      return 'zhule';
+    }
+    function onGlobalPrefChanged(e) {
+      const c = e && e.detail && e.detail.common;
+      if (c && typeof c.noDeleteConfirm === 'boolean') noDeleteConfirm.value = c.noDeleteConfirm;
+      const g = e && e.detail && e.detail.gallery;
+      if (g) {
+        if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
+        if (typeof g.tagRound === 'boolean') tagRound.value = g.tagRound;
+        if (typeof g.tagSeed === 'string') tagSeed.value = g.tagSeed || '';
+      }
+    }
     const addCardContentCn = ref('');
     const addCardInput = ref(null);
     const addingCard = ref(false);
+
+    // 词库小分类 chip 复用全局标签主题类（颜色仅由 --tag-bg 注入，主题/圆角走 CSS 类）
+    const chipThemeClass = computed(() => {
+      let c = 'zhg-tag-theme-' + tagTheme.value;
+      if (tagRound.value === false) c += ' zhg-tag-square';
+      return c;
+    });
+    // 确定性散列色：同一分类名恒定同色，混入全局颜色种子——换种子整套换色（与图库标签颜色机制一致）
+    function chipStyle(name) {
+      const s = String(tagSeed.value || '') + '|' + String(name);
+      let h = 2166136261;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      h >>>= 0;
+      const hue = h % 360;
+      return { '--tag-bg': 'hsl(' + hue + ', 55%, 42%)' };
+    }
 
     // 父列明确（非"全部"）时才显示小类加号：depth 0 的父列是 tab（恒选定），更深层需上层有选中
     const canAddChip = (depth) => {
@@ -804,7 +891,10 @@ export default {
     const delConfirm = ref(null);
     const deleting = ref(false);
 
-    const askDeleteWord = (file) => { delConfirm.value = file; };
+    const askDeleteWord = (file) => {
+      if (noDeleteConfirm.value) { delConfirm.value = file; confirmDeleteWord(); return; }
+      delConfirm.value = file;
+    };
 
     const confirmDeleteWord = async () => {
       if (!delConfirm.value || deleting.value) return;
@@ -820,6 +910,11 @@ export default {
           showToast('删除失败：' + json.error, 'error');
         } else {
           showToast('已删除：' + delConfirm.value.name, 'success');
+          // 若删除来源是编辑弹窗，同步关闭编辑面板
+          if (editTarget.value && editTarget.value.relPath === delConfirm.value.relPath) {
+            editTarget.value = null;
+            editing.value = false;
+          }
         }
         delConfirm.value = null;
         await load();
@@ -1046,6 +1141,9 @@ export default {
         if (force || !tabs.value.includes(data.activeTab)) {
           // 全量刷新 / activeTab 失效时恢复存档并落到合法 tab
           restoreState();
+          // restoreState 已恢复 tabOrder.value；但本函数早前（fetch 后）已用初始空 tabOrder
+          // 执行过一次 orderTabs()，必须在此重新应用一次，否则刷新后 tab 顺序不会按存档恢复
+          orderTabs();
           if (tabs.value.length && !tabs.value.includes(data.activeTab)) data.activeTab = tabs.value[0];
         }
         loaded.value = true;
@@ -1056,6 +1154,8 @@ export default {
       } catch (e) {
         error.value = '加载词库失败：' + e.message;
         loaded.value = true;
+        // 首屏加载失败时 restoreState 未执行，放行守卫避免词库页后续交互永不落盘
+        stateRestored = true;
       }
     };
 
@@ -1463,8 +1563,8 @@ const submitAddTab = async () => {
     };
 
     const zoomCardImage = (file) => {
-      if (file.images && file.images.length) zoomView(imageUrl(file.images[getImgIdx(file)]));
-      else zoomView(defaultImageUrl, (file.name || '') + '（暂无参考图）');
+      if (file.images && file.images.length) zoomView(imageUrl(file.images[getImgIdx(file)]), file.name || '', file);
+      else zoomView(defaultImageUrl, (file.name || '') + '（暂无参考图）', file);
     };
     // 跳转图库：优先传词条 id（纯数字，服务端按 promptIds 匹配），词条改名后筛选不失效；
     // 取不到 id（如散 txt 卡片未入库）时才退回名字
@@ -1479,14 +1579,63 @@ const submitAddTab = async () => {
     // ============ 全屏查看器（公共模块，命令式，非响应式） ============
     let fullViewer = null;
     let createFullViewerFn = null;
-    async function zoomView(url, caption) {
+    // 放大查看器当前展示的词条（供底部按钮回调读取）
+    let zoomCtx = { file: null };
+
+    // 在放大查看器中展示某词条的当前参考图；无参考图时回退默认图
+    const openZoomedFile = (file) => {
+      if (file.images && file.images.length) fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
+      else fullViewer.open(defaultImageUrl, (file.name || '') + '（暂无参考图）');
+    };
+    // 切换提示词：以当前筛选结果（filteredFiles）为范围，dir=±1 上下一条
+    const zoomWordAt = (dir) => {
+      const cur = zoomCtx.file;
+      const list = filteredFiles.value;
+      if (!cur || !list.length) return;
+      let idx = list.findIndex(f => f.relPath === cur.relPath);
+      if (idx < 0) idx = 0;
+      const target = list[(idx + dir + list.length) % list.length];
+      zoomCtx.file = target;
+      openZoomedFile(target);
+    };
+    // 随机提示词：随机范围 = 当前提示词所在的筛选结果集合（非全部词条）
+    const zoomRandomWord = () => {
+      const cur = zoomCtx.file;
+      const list = filteredFiles.value;
+      if (!list.length) return;
+      let i = Math.floor(Math.random() * list.length);
+      if (list.length > 1 && list[i] === cur) i = (i + 1) % list.length;
+      const target = list[i];
+      zoomCtx.file = target;
+      openZoomedFile(target);
+    };
+    // 切换参考图：基于当前词条 file.images，dir=±1 上一张/下一张
+    const zoomRefAt = (dir) => {
+      const file = zoomCtx.file;
+      if (!file || !file.images || !file.images.length) return;
+      const n = file.images.length;
+      setImgIdx(file, (getImgIdx(file) + dir + n) % n);
+      fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
+    };
+
+    async function zoomView(url, caption, file) {
       if (!createFullViewerFn) {
         const mod = await import('/zhule_modules/common/zhule_fullviewer.js');
         createFullViewerFn = mod.createFullViewer;
         fullViewer = createFullViewerFn({
-          tip: '滚轮缩放 · 左键拖拽 · 双击复位 · 点击或 ✕ 退出',
+          // 词库放大界面不再显示操作提示（空 tip 隐藏提示条）
+          tip: '',
+          actions: [
+            // 对称图标栏：大图标（外圈）切换提示词，小图标（内圈）切换参考图，骰子随机居中
+            { label: '‹', tip: '上一提示词', size: 'lg', onClick: () => zoomWordAt(-1) },
+            { label: '‹', tip: '上一张参考图', size: 'sm', onClick: () => zoomRefAt(-1) },
+            { label: '🎲', tip: '随机提示词（当前范围）', dice: true, onClick: zoomRandomWord },
+            { label: '›', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
+            { label: '›', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
+          ],
         });
       }
+      if (file) zoomCtx.file = file;
       if (fullViewer) fullViewer.open(url, caption);
     }
     const viewerPrev = () => {
@@ -2197,12 +2346,14 @@ const submitAddTab = async () => {
       };
       document.addEventListener('click', clickBlocker, true);
       window.addEventListener('zhule-wordbank-pref', onWordbankPref);
+      window.addEventListener('zhule-pref-changed', onGlobalPrefChanged);
       window.addEventListener('zhule:wordbank-changed', onWordbankChanged);
       load(); // 首屏加载数据（加载遮罩已移除）
     });
     onBeforeUnmount(() => {
       if (clickBlocker) document.removeEventListener('click', clickBlocker, true);
       window.removeEventListener('zhule-wordbank-pref', onWordbankPref);
+      window.removeEventListener('zhule-pref-changed', onGlobalPrefChanged);
       window.removeEventListener('zhule:wordbank-changed', onWordbankChanged);
       if (fullViewer) fullViewer.close();
       window.removeEventListener('paste', onUploadRefPaste);
@@ -2229,6 +2380,7 @@ const submitAddTab = async () => {
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       canAddChip, chipParentLabel, canAddCard, addCardParentLabel, addCardIsTxt,
+      chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
       addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard,
       setCardMode, toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,

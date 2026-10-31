@@ -58,6 +58,29 @@ const VIEWER_CSS = `
   border: 1px solid rgba(255, 255, 255, 0.12);
   pointer-events: none; z-index: 2;
 }
+.zfv-actions {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 20px; background: rgba(20, 24, 33, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  z-index: 3;
+}
+.zfv-actions button {
+  min-width: 30px; height: 30px; padding: 0 4px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: #eef2f9;
+  border: none; border-radius: 8px;
+  font-size: 15px; line-height: 1; cursor: pointer;
+  user-select: none; touch-action: none; transition: background 0.12s;
+}
+.zfv-actions button:hover { background: rgba(255, 255, 255, 0.14); }
+.zfv-actions button.zfv-action-lg { min-width: 40px; height: 36px; font-size: 19px; }
+.zfv-actions button.zfv-action-sm { min-width: 24px; height: 24px; font-size: 13px; }
+.zfv-actions button.zfv-action-dice { font-size: 17px; background: rgba(255, 170, 60, 0.16); }
+.zfv-actions button.zfv-action-dice:hover { background: rgba(255, 170, 60, 0.28); }
+.zfv-actions .zfv-action-sep {
+  width: 1px; height: 18px; background: rgba(255, 255, 255, 0.15); margin: 0 2px;
+}
 `;
 
 function ensureCss() {
@@ -71,12 +94,17 @@ function ensureCss() {
 /**
  * 创建全屏图片查看器实例。
  * @param {object} options
- * @param {string} [options.tip] 底部提示文案
+ * @param {string} [options.tip] 底部提示文案；传空字符串/null 则不渲染提示条
+ * @param {Array<object>} [options.actions] 底部按钮组（可选，向后兼容）：
+ *   每项 { label, tip?, dice?, size?, onClick }。dice 为 true 时套用强调样式；
+ *   size 可选 'lg'（大图标）/ 'sm'（小图标），不传为默认中等尺寸。
+ *   按钮点击不会冒泡到 overlay（不触发关闭/拖拽）。
  * @param {Function} [options.onClose] 关闭后的回调（可空）
  * @returns {{ open: Function, close: Function, isOpen: boolean }}
  */
 export function createFullViewer(options = {}) {
-  const tip = options.tip || '滚轮缩放 · 左键拖拽 · 双击复位 · 点击或 ✕ 退出';
+  const tip = options.tip || '';
+  const actions = Array.isArray(options.actions) ? options.actions : [];
   const onClose = typeof options.onClose === 'function' ? options.onClose : null;
 
   ensureCss();
@@ -93,6 +121,7 @@ export function createFullViewer(options = {}) {
   const tipEl = document.createElement('div');
   tipEl.className = 'zfv-tip';
   tipEl.textContent = tip;
+  if (!tip) tipEl.style.display = 'none';
 
   const closeBtn = document.createElement('div');
   closeBtn.className = 'zfv-close';
@@ -106,6 +135,36 @@ export function createFullViewer(options = {}) {
   overlay.appendChild(tipEl);
   overlay.appendChild(closeBtn);
   overlay.appendChild(capEl);
+
+  // 底部按钮组：仅当调用方传入 actions 时渲染（向后兼容）
+  const actionsEl = document.createElement('div');
+  actionsEl.className = 'zfv-actions';
+  if (actions.length) {
+    actions.forEach((a, i) => {
+      if (a.sep) {
+        const sep = document.createElement('div');
+        sep.className = 'zfv-action-sep';
+        actionsEl.appendChild(sep);
+        return;
+      }
+      const btn = document.createElement('button');
+      btn.textContent = a.label || '';
+      const cls = [
+        a.dice ? 'zfv-action-dice' : '',
+        a.size === 'lg' ? 'zfv-action-lg' : (a.size === 'sm' ? 'zfv-action-sm' : ''),
+      ].filter(Boolean).join(' ');
+      btn.className = cls;
+      if (a.tip) btn.title = a.tip;
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof a.onClick === 'function') a.onClick();
+      });
+      actionsEl.appendChild(btn);
+    });
+    overlay.appendChild(actionsEl);
+  }
+
   document.body.appendChild(overlay);
 
   // 命令式状态：普通变量，不经过任何响应式系统

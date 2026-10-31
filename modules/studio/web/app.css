@@ -331,7 +331,16 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: flex; flex-direction: column; gap: 14px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
 }
-.edit-dialog .title { font-size: 14px; font-weight: 600; color: var(--text); }
+.edit-dialog .title { font-size: 14px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 8px; }
+/* 编辑弹窗标题右侧删除红叉（复用卡片删除红叉风格） */
+.edit-dialog .title .edit-del { width: 22px; height: 22px; border-radius: 4px;
+  background: transparent; color: var(--text-3);
+  border: 1px solid transparent; cursor: pointer;
+  font-size: 12px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all 0.12s; padding: 0; margin-left: auto; }
+.edit-dialog .title .edit-del:hover { background: rgba(229, 72, 77, 0.18); color: #ff6b6b; border-color: #e5484d; }
 .edit-dialog .field { display: flex; flex-direction: column; gap: 6px; }
 .edit-dialog .field label { color: var(--text-3); font-size: 12px; }
 .edit-dialog input[type="number"],
@@ -639,8 +648,44 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-tag.readonly { background: #232837; color: var(--text-3); border-style: dashed;
   border-color: var(--border-2); }
 .zhg-tag.readonly:hover { background: #232837; color: var(--text-3); border-color: var(--border-2); }
-.zhg-tag.hl-prompt, .zhg-tag.hl-custom { color: #fff; font-weight: 600; border-style: solid; border-color: transparent; }
+.zhg-tag.hl-prompt, .zhg-tag.hl-custom { font-weight: 600; border: 1px solid transparent; }
 .zhg-tag.hl-prompt:hover, .zhg-tag.hl-custom:hover { border-color: transparent; }
+/* 标签主题（设置页 tagTheme/tagRound，参考 Element Plus Tag 的 dark/light/plain）：
+   颜色由详情注入 --tag-bg（随机色），这里只负责按主题套背景/描边/文字。
+   作用于四类标签载体：图库详情 .zhg-tag.hl-*、词库小分类 .chip、
+   外部过滤区 .zhg-sel-tag、标签树 .zhg-ttp-chip（排除 .hl-custom 保留自定义橙色区分） */
+/* dark：实色底 + 白字，hover 提亮 */
+.zhg-tag-theme-dark.hl-prompt, .zhg-tag-theme-dark.hl-custom,
+.zhg-tag-theme-dark.chip, .zhg-tag-theme-dark.zhg-sel-tag,
+.zhg-tag-theme-dark.zhg-ttp-chip:not(.hl-custom) { background: var(--tag-bg, #2a9d8f); color: #fff; }
+.zhg-tag-theme-dark.hl-prompt:hover, .zhg-tag-theme-dark.hl-custom:hover,
+.zhg-tag-theme-dark.chip:hover, .zhg-tag-theme-dark.zhg-sel-tag:hover,
+.zhg-tag-theme-dark.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 78%, #fff); }
+/* light：浅色底（与白色混合，任何背景都可读）+ 主色文字（压暗保证对比度） */
+.zhg-tag-theme-light.hl-prompt, .zhg-tag-theme-light.hl-custom,
+.zhg-tag-theme-light.chip, .zhg-tag-theme-light.zhg-sel-tag,
+.zhg-tag-theme-light.zhg-ttp-chip:not(.hl-custom) { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 14%, #fff); color: color-mix(in srgb, var(--tag-bg, #2a9d8f) 72%, #1a1d24); }
+.zhg-tag-theme-light.hl-prompt:hover, .zhg-tag-theme-light.hl-custom:hover,
+.zhg-tag-theme-light.chip:hover, .zhg-tag-theme-light.zhg-sel-tag:hover,
+.zhg-tag-theme-light.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 26%, #fff); }
+/* plain：透明底 + 彩色文字 + 细描边，hover 淡底 + 实描边 */
+.zhg-tag-theme-plain.hl-prompt, .zhg-tag-theme-plain.hl-custom,
+.zhg-tag-theme-plain.chip, .zhg-tag-theme-plain.zhg-sel-tag,
+.zhg-tag-theme-plain.zhg-ttp-chip:not(.hl-custom) { background: transparent; color: var(--tag-bg, #2a9d8f); border: 1px solid color-mix(in srgb, var(--tag-bg, #2a9d8f) 55%, transparent); }
+.zhg-tag-theme-plain.hl-prompt:hover, .zhg-tag-theme-plain.hl-custom:hover,
+.zhg-tag-theme-plain.chip:hover, .zhg-tag-theme-plain.zhg-sel-tag:hover,
+.zhg-tag-theme-plain.zhg-ttp-chip:not(.hl-custom):hover { background: color-mix(in srgb, var(--tag-bg, #2a9d8f) 16%, transparent); border-color: var(--tag-bg, #2a9d8f); }
+/* 外部过滤区状态增强（主题覆盖底色后仍可识别 on=生效 / off=待生效）：
+   on 用内阴影提亮描边，off 降透明 + 虚线描边 */
+.zhg-tag-theme-dark.zhg-sel-tag.on, .zhg-tag-theme-light.zhg-sel-tag.on,
+.zhg-tag-theme-plain.zhg-sel-tag.on { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--tag-bg, #2a9d8f) 45%, #fff); }
+.zhg-tag-theme-dark.zhg-sel-tag.off, .zhg-tag-theme-light.zhg-sel-tag.off,
+.zhg-tag-theme-plain.zhg-sel-tag.off { opacity: 0.62; border-style: dashed; }
+/* 词库 chip 选中态（active）：主题基础上加白描边高亮 */
+.zhg-tag-theme-dark.chip.active, .zhg-tag-theme-light.chip.active,
+.zhg-tag-theme-plain.chip.active { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--tag-bg, #2a9d8f) 45%, #fff); }
+/* 圆角开关：关闭时近直角（覆盖 .zhg-tag 默认 12px 圆角，同时作用于 chip/sel-tag/ttp-chip） */
+.zhg-tag-square, .zhg-tag-square.chip, .zhg-tag-square.zhg-sel-tag, .zhg-tag-square.zhg-ttp-chip { border-radius: 3px; }
 .zhg-tag .zhg-tag-del { cursor: pointer; color: #ff7b7b; opacity: 0.8; font-weight: 700; }
 .zhg-tag .zhg-tag-del:hover { opacity: 1; }
 .zhg-tag-add { display: inline-flex; align-items: center; padding: 3px 10px;
@@ -821,6 +866,20 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-rename-btn { padding: 2px 6px; font-size: 11px; flex-shrink: 0; opacity: .9; }
 .zhg-rename-btn:hover { opacity: 1; }
 
+/* 详情「文件」行原地重命名：双击变输入框 */
+.zhg-detail-v.zhg-file-cell { cursor: text; }
+.zhg-detail-v.zhg-file-cell .zhg-file-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: rgba(0, 0, 0, .35);
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+}
+
 /* ===== 图库上下布局（GalleryTopDown）===== */
 .gallery-td-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .zhg-td-filters {
@@ -914,7 +973,13 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .settings-body { padding: 8px 16px 16px; }
 .settings-group { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .settings-group:last-child { border-bottom: none; }
-.settings-group-title { font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.settings-group-title { display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--text-2); margin-bottom: 8px; cursor: pointer; user-select: none;
+  padding: 2px 0; border-radius: 6px; transition: color 0.12s; }
+.settings-group-title:hover { color: var(--text); }
+.settings-chevron { flex: none; color: var(--text-3); transition: transform 0.18s; }
+.settings-group.collapsed .settings-chevron { transform: rotate(180deg); }
+.settings-group.collapsed .settings-group-title { margin-bottom: 0; }
 .settings-row { display: flex; align-items: center; justify-content: space-between;
   padding: 6px 0; font-size: 13px; color: var(--text); }
 .settings-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; cursor: pointer; }
@@ -925,8 +990,33 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .settings-switch-slider::before { content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: #fff; transition: 0.2s; }
 .settings-switch input:checked + .settings-switch-slider::before { left: 18px; }
+/* 通用设置文本开关：删除时弹出确认框（字符串字段，点击切换 开启/关闭） */
+.settings-text-toggle { flex: none; padding: 3px 12px; font-size: 12px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-2); color: var(--text-2);
+  cursor: pointer; transition: all 0.12s; white-space: nowrap; }
+.settings-text-toggle:hover { color: var(--text); border-color: var(--text-2); }
+.settings-text-toggle.on { background: var(--primary, #4f8cff); border-color: var(--primary, #4f8cff); color: #fff; }
+/* 随机颜色种子：输入框 + 刷新图标按钮 */
+.settings-seed-box { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.settings-seed-input { width: 130px; padding: 4px 8px; font-size: 12px; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; outline: none; }
+.settings-seed-input:focus { border-color: var(--accent, #4f8cff); }
+.settings-seed-rnd { display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-2); color: var(--text-2); cursor: pointer; transition: all 0.12s; }
+.settings-seed-rnd:hover { color: var(--accent, #4f8cff); border-color: var(--accent, #4f8cff); }
 .settings-select { width: 100%; padding: 6px 8px; font-size: 13px; color: var(--text);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color-scheme: dark; }
+.settings-seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: 8px; flex: none; }
+.settings-seg-btn { padding: 4px 12px; font-size: 12px; color: var(--text-2); background: transparent;
+  border: none; border-radius: 6px; cursor: pointer; transition: all 0.12s; white-space: nowrap; }
+.settings-seg-btn:hover { color: var(--text); background: var(--card-hover); }
+.settings-seg-btn.on { background: var(--primary, #4f8cff); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+/* 标签样式演示块：用真实标签样式渲染选项，选中态用描边高亮 */
+.settings-theme-pick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.demo-tag { --tag-bg: #4f8cff; cursor: pointer; font-size: 12px; transition: outline-color .15s, box-shadow .15s; }
+.demo-tag.demo-on { outline: 2px solid var(--accent, #4f8cff); outline-offset: 2px; box-shadow: 0 0 6px rgba(79, 140, 255, .35); }
 .settings-none { padding: 12px 0; font-size: 12px; color: var(--text-2); }
 .settings-hint { font-size: 11px; color: var(--text-2); margin-top: 6px; line-height: 1.6; }
 .settings-color { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border);
@@ -1056,6 +1146,21 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .zhg-ttp-loading { padding: 20px; text-align: center; color: var(--text-3); }
 .zhg-ttp-err { padding: 20px; text-align: center; color: var(--red); }
+/* 编辑面板：自定义标签分支（后端标记 isCustom）用橙色系与词库标签区分 */
+.zhg-ttp-chip.hl-custom { background: rgba(224,123,57,.18); border-color: #e07b39; color: #ffd9bd; }
+.zhg-ttp-chip.hl-custom:hover { background: rgba(224,123,57,.32); border-color: #f08c45; color: #fff; }
+.zhg-ttp-chip.hl-custom.leaf { background: rgba(224,123,57,.10); border-color: rgba(224,123,57,.45); color: #ffc59a; }
+.zhg-ttp-chip.hl-custom.leaf:hover { background: rgba(224,123,57,.30); border-color: #f08c45; color: #fff; }
+
+/* 详情页自定义标签层级树（DetailTagNode）：父'测试'下挂子'喜欢'，非扁平路径 */
+.zhg-dtag-wrap { display: block; }
+.zhg-dtag-group { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px;
+  background: rgba(224,123,57,.12); color: #ffb87e; border: 1px dashed rgba(224,123,57,.55);
+  border-radius: 12px; font-size: 11px; font-weight: 600; cursor: pointer; user-select: none;
+  transition: all 0.12s; }
+.zhg-dtag-group:hover { background: rgba(224,123,57,.24); color: #ffd9bd; }
+.zhg-dtag-arrow { font-size: 10px; opacity: .85; margin-left: 2px; }
+.zhg-dtag-kids { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 
 /* 标签区齿轮入口 */
 .zhg-tag-gear {

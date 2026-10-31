@@ -7,10 +7,21 @@ import GalleryTopDown from './pages/GalleryTopDown.js';
 const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
   gallery: { showName: true, showTime: true, showModel: true, showTags: true, timeFmt: 'yyyy-MM-dd HH:mm',
-    promptTagColor: '#2a9d8f', customTagColor: '#e07b39' },
+    tagTheme: 'light', tagRound: true,
+    // 标签颜色种子：所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
+    tagSeed: 'zhule' },
   wordbank: { autoSelectParent: true },
+  // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
+  // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
+  common: { noDeleteConfirm: false, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
+// 标签主题（参考 Element Plus Tag 的 effect）：dark 深色实底 / light 浅色柔和底 / plain 描边透明底
+const TAG_THEMES = [
+  { key: 'dark', label: '深色' },
+  { key: 'light', label: '浅色' },
+  { key: 'plain', label: '描边' },
+];
 
 function loadPref() {
   try {
@@ -18,6 +29,7 @@ function loadPref() {
     return {
       gallery: Object.assign({}, DEFAULT_PREF.gallery, (raw && raw.gallery) || {}),
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
+      common: Object.assign({}, DEFAULT_PREF.common, (raw && raw.common) || {}),
     };
   } catch (e) {
     return JSON.parse(JSON.stringify(DEFAULT_PREF));
@@ -51,13 +63,50 @@ const App = {
       pref.value.gallery.timeFmt = fmt;
       savePref();
     }
-    function setTagColor(kind, color) {
-      pref.value.gallery[kind] = color;
+    function setTagTheme(theme) {
+      pref.value.gallery.tagTheme = theme;
+      savePref();
+    }
+    function setTagRound(round) {
+      pref.value.gallery.tagRound = round;
+      savePref();
+    }
+    function toggleNoDeleteConfirm() {
+      pref.value.common.noDeleteConfirm = pref.value.common.noDeleteConfirm === false;
+      savePref();
+    }
+    function setTagSeed(seed) {
+      pref.value.gallery.tagSeed = (seed || '').trim();
+      savePref();
+    }
+    function randomTagSeed() {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let s = '';
+      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      pref.value.gallery.tagSeed = s;
+      savePref();
+      return s;
+    }
+    // 设置面板大类折叠：状态写入 common.collapsedGroups，随 pref 持久化并广播
+    function isCollapsed(key) {
+      const c = pref.value.common.collapsedGroups;
+      return !!(c && c[key]);
+    }
+    function toggleCollapse(key) {
+      const c = pref.value.common.collapsedGroups || {};
+      c[key] = !isCollapsed(key);
+      pref.value.common.collapsedGroups = c;
       savePref();
     }
     // 词库单独配置：读取词库自身存档里的 autoSelectParent，并实时写入该存档
+    // 优先读写独立 pref key（zhule_wordbank_pref_v1），与词库组件的整包 state 解耦，
+    // 避免设置页读-改-写整包与 Wordbank.js 深度 watch saveState 互相覆盖（写竞态）。
     const wordbankAutoParent = ref(readWordbankAutoParent());
     function readWordbankAutoParent() {
+      try {
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null');
+        if (p && typeof p.autoSelectParent === 'boolean') return p.autoSelectParent;
+      } catch (e) { /* ignore */ }
       try {
         const raw = JSON.parse(localStorage.getItem('zhule_wordbank_state_v2') || 'null');
         if (raw && raw.pref && typeof raw.pref.autoSelectParent === 'boolean') return raw.pref.autoSelectParent;
@@ -68,11 +117,10 @@ const App = {
       const v = !wordbankAutoParent.value;
       wordbankAutoParent.value = v;
       try {
-        const raw = JSON.parse(localStorage.getItem('zhule_wordbank_state_v2') || 'null') || {};
-        if (!raw.pref || typeof raw.pref !== 'object') raw.pref = {};
-        raw.pref.autoSelectParent = v;
-        localStorage.setItem('zhule_wordbank_state_v2', JSON.stringify(raw));
-      } catch (e) { /* ignore */ }
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null') || {};
+        p.autoSelectParent = v;
+        localStorage.setItem('zhule_wordbank_pref_v1', JSON.stringify(p));
+      } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
       window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { autoSelectParent: v } }));
     }
     // 数据库重建：仅设置页保留入口，正常使用不需要触发
@@ -141,7 +189,8 @@ const App = {
           wordbankCleaningCn.value = false;
         });
     }
-    return { showSettings, pref, TIME_FMTS, toggleField, setTimeFmt, setTagColor,
+    return { showSettings, pref, TIME_FMTS, TAG_THEMES, toggleField, setTimeFmt, setTagTheme, setTagRound,
+      toggleNoDeleteConfirm, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
@@ -185,9 +234,55 @@ const App = {
             <button class="settings-close" @click="showSettings = false">✕</button>
           </div>
           <div class="settings-body">
+            <!-- 通用设置：对所有页面生效 -->
+            <div class="settings-group" :class="{ 'collapsed': isCollapsed('common') }">
+              <div class="settings-group-title" @click="toggleCollapse('common')">
+                <span>通用设置</span>
+                <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <div class="settings-group-body" v-show="!isCollapsed('common')">
+                <div class="settings-row">
+                  <span class="settings-label">删除时弹出确认框</span>
+                  <button class="settings-text-toggle" :class="{ on: pref.common.noDeleteConfirm !== true }" @click="toggleNoDeleteConfirm">{{ pref.common.noDeleteConfirm !== true ? '开启' : '关闭' }}</button>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">主题</span>
+                  <div class="settings-theme-pick">
+                    <button v-for="th in TAG_THEMES" :key="th.key"
+                            class="zhg-tag hl-prompt demo-tag"
+                            :class="['zhg-tag-theme-' + th.key, (pref.gallery.tagRound === false ? 'zhg-tag-square' : ''), { 'demo-on': (pref.gallery.tagTheme || 'light') === th.key }]"
+                            @click="setTagTheme(th.key)">{{ th.label }}</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">边角</span>
+                  <div class="settings-theme-pick">
+                    <button class="zhg-tag hl-prompt demo-tag"
+                            :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), { 'demo-on': pref.gallery.tagRound !== false }]"
+                            @click="setTagRound(true)">圆角</button>
+                    <button class="zhg-tag hl-prompt demo-tag"
+                            :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), 'zhg-tag-square', { 'demo-on': pref.gallery.tagRound === false }]"
+                            @click="setTagRound(false)">方角</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">随机颜色种子</span>
+                  <span class="settings-seed-box">
+                    <input class="settings-seed-input" :value="pref.gallery.tagSeed" @change="setTagSeed($event.target.value)" spellcheck="false" />
+                    <button class="settings-seed-rnd" data-tip="换一组随机颜色" @click="randomTagSeed()">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
             <template v-if="isGallery">
-              <div class="settings-group">
-                <div class="settings-group-title">图库卡片显示字段</div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-fields') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-fields')">
+                  <span>图库卡片显示字段</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-fields')">
                 <div class="settings-row" v-for="opt in [
                   { key: 'showName', label: '文件名' },
                   { key: 'showTime', label: '时间' },
@@ -199,9 +294,14 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
+                </div>
               </div>
-              <div class="settings-group">
-                <div class="settings-group-title">图库筛选条件开关</div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-filters') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-filters')">
+                  <span>图库筛选条件开关</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-filters')">
                 <div class="settings-hint">关闭后对应筛选列在筛选面板中隐藏，已选条件仍生效。</div>
                 <div class="settings-row" v-for="opt in [
                   { key: 'showModelFilter', label: '模型筛选列' },
@@ -213,39 +313,40 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
+                </div>
               </div>
-              <div class="settings-group">
-                <div class="settings-group-title">时间格式</div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-timefmt') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-timefmt')">
+                  <span>时间格式</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-timefmt')">
                 <select class="settings-select" :value="pref.gallery.timeFmt" @change="setTimeFmt($event.target.value)">
                   <option v-for="f in TIME_FMTS" :key="f" :value="f">{{ f }}</option>
                 </select>
-              </div>
-              <div class="settings-group">
-                <div class="settings-group-title">标签高亮颜色</div>
-                <div class="settings-row">
-                  <span class="settings-label">提示词标签</span>
-                  <input type="color" class="settings-color" :value="pref.gallery.promptTagColor"
-                         @input="setTagColor('promptTagColor', $event.target.value)">
                 </div>
-                <div class="settings-row">
-                  <span class="settings-label">自定义标签</span>
-                  <input type="color" class="settings-color" :value="pref.gallery.customTagColor"
-                         @input="setTagColor('customTagColor', $event.target.value)">
-                </div>
-                <div class="settings-hint">高亮色即时生效，仅作用于图库详情的只读标签（提示词 / 工作流来源）。</div>
               </div>
-              <div class="settings-group">
-                <div class="settings-group-title">数据库</div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-db') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-db')">
+                  <span>数据库</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-db')">
                 <div class="settings-row">
                   <button class="settings-danger-btn" :disabled="rebuilding" @click="rebuildDB">重建图库</button>
                 </div>
                 <div class="settings-hint rebuild-hint" :data-tip="'仅在图片索引异常时才需要重建，例如新增图片未显示、信息过期或索引文件损坏。系统正常运行时会自动维护索引，正常情况请勿点击。重建需重新扫描全部图片元数据，耗时数分钟，期间图库列表暂时不可用。'">⚠️ 正常情况用不到，请勿随意点击。</div>
                 <div class="settings-hint" v-if="rebuildNotice">{{ rebuildNotice }}</div>
+                </div>
               </div>
             </template>
             <template v-if="isWordbank">
-              <div class="settings-group">
-                <div class="settings-group-title">词库设置</div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('wordbank-main') }">
+                <div class="settings-group-title" @click="toggleCollapse('wordbank-main')">
+                  <span>词库设置</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('wordbank-main')">
                 <div class="settings-row">
                   <span class="settings-label">选中子类自动关联父类</span>
                   <label class="settings-switch">
@@ -260,6 +361,7 @@ const App = {
                 </div>
                 <div class="settings-hint">扫描英文 prompt.txt，删除混入的中文字符；中文提示词文件自动跳过。</div>
                 <div class="settings-hint" v-if="wordbankCleanNotice">{{ wordbankCleanNotice }}</div>
+                </div>
               </div>
             </template>
             <div class="settings-none" v-if="!isGallery && !isWordbank">当前页面暂无设置项</div>
