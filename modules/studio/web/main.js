@@ -8,14 +8,35 @@ const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
   gallery: { showName: true, showTime: true, showModel: true, showTags: true, timeFmt: 'yyyy-MM-dd HH:mm',
     tagTheme: 'light', tagRound: true,
-    // 标签颜色种子：所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
-    tagSeed: 'zhule' },
+    // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
+    tagSeed: 'zhule',
+    // 标签颜色配置（方案E）：level=simple 简单模式（全局一套规则）/ complex 分区模式（各区独立）
+    // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
+    // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
+    tagColor: {
+      level: 'simple',
+      globalMode: 'diff',
+      globalColor: '#2a9d8f',
+      areas: {
+        detail: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        filter: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        edit: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
+      },
+    } },
   wordbank: { autoSelectParent: true },
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
   // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
   common: { noDeleteConfirm: false, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
+// 标签颜色分区（方案E复杂模式）：四个区域独立配置
+const TAG_COLOR_AREAS = [
+  { key: 'detail', label: '详情区' },
+  { key: 'filter', label: '筛选区' },
+  { key: 'edit', label: '编辑面板' },
+  { key: 'wordbank', label: '词库分类' },
+];
 // 标签主题（参考 Element Plus Tag 的 effect）：dark 深色实底 / light 浅色柔和底 / plain 描边透明底
 const TAG_THEMES = [
   { key: 'dark', label: '深色' },
@@ -36,11 +57,32 @@ function seedColor(seed) {
   return 'hsl(' + (h % 360) + ', ' + (60 + (h % 4) * 6) + '%, ' + (38 + (h % 3) * 5) + '%)';
 }
 
+// 标签颜色配置归一化：兼容旧版存档（无 tagColor 字段）与残缺数据，保证四区字段齐全
+function normalizeTagColor(tc) {
+  const base = JSON.parse(JSON.stringify(DEFAULT_PREF.gallery.tagColor));
+  if (!tc || typeof tc !== 'object') return base;
+  const out = Object.assign({}, base, tc);
+  if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
+  if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
+  if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
+  out.areas = {};
+  ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
+    const a = (tc.areas && tc.areas[k]) || {};
+    out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
+    if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
+    if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
+    if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
+  });
+  return out;
+}
+
 function loadPref() {
   try {
     const raw = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    const g = Object.assign({}, DEFAULT_PREF.gallery, (raw && raw.gallery) || {});
+    g.tagColor = normalizeTagColor(raw && raw.gallery && raw.gallery.tagColor);
     return {
-      gallery: Object.assign({}, DEFAULT_PREF.gallery, (raw && raw.gallery) || {}),
+      gallery: g,
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
       common: Object.assign({}, DEFAULT_PREF.common, (raw && raw.common) || {}),
     };
@@ -92,6 +134,7 @@ const App = {
       pref.value.gallery.tagSeed = (seed || '').trim();
       savePref();
     }
+    // 标签颜色：仅简单模式「全局异色」使用随机种子
     function randomTagSeed() {
       const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
       let s = '';
@@ -99,6 +142,37 @@ const App = {
       pref.value.gallery.tagSeed = s;
       savePref();
       return s;
+    }
+    // 方案E 标签颜色弹窗：开关、模式切换、取色与种子编辑统一入口
+    const colorPopupOpen = ref(false);
+    const colorPopupArea = ref('detail');
+    function colorPopupOpenFor(areaKey) {
+      colorPopupArea.value = areaKey;
+      colorPopupOpen.value = true;
+    }
+    function setTagColorLevel(level) {
+      pref.value.gallery.tagColor.level = level;
+      savePref();
+    }
+    function setGlobalTagColorMode(mode) {
+      pref.value.gallery.tagColor.globalMode = mode;
+      savePref();
+    }
+    function setGlobalTagColor(color) {
+      pref.value.gallery.tagColor.globalColor = color;
+      savePref();
+    }
+    function setAreaTagColorMode(mode) {
+      pref.value.gallery.tagColor.areas[colorPopupArea.value].mode = mode;
+      savePref();
+    }
+    function setAreaTagColor(color) {
+      pref.value.gallery.tagColor.areas[colorPopupArea.value].color = color;
+      savePref();
+    }
+    function setAreaTagSeed(seed) {
+      pref.value.gallery.tagColor.areas[colorPopupArea.value].seed = (seed || '').trim();
+      savePref();
     }
     // 设置面板大类折叠：状态写入 common.collapsedGroups，随 pref 持久化并广播
     function isCollapsed(key) {
@@ -202,8 +276,10 @@ const App = {
           wordbankCleaningCn.value = false;
         });
     }
-    return { showSettings, pref, TIME_FMTS, TAG_THEMES, toggleField, setTimeFmt, setTagTheme, setTagRound,
+    return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+      colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
+      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
@@ -287,6 +363,14 @@ const App = {
                   </div>
                 </div>
                 <div class="settings-row">
+                  <span class="settings-label">标签颜色</span>
+                  <span class="settings-seed-box">
+                    <button class="settings-seed-rnd" data-tip="设置标签颜色方案" @click="colorPopupOpenFor('detail')">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
+                    </button>
+                  </span>
+                </div>
+                <div class="settings-row" v-if="pref.gallery.tagColor && pref.gallery.tagColor.level === 'simple' && pref.gallery.tagColor.globalMode === 'diff'">
                   <span class="settings-label">随机颜色种子</span>
                   <span class="settings-seed-box">
                     <input class="settings-seed-input" :value="pref.gallery.tagSeed" @change="setTagSeed($event.target.value)" spellcheck="false" />
@@ -386,6 +470,79 @@ const App = {
               </div>
             </template>
             <div class="settings-none" v-if="!isGallery && !isWordbank">当前页面暂无设置项</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签颜色设置弹窗（方案E）：层级切换 + 模式/取色/种子 -->
+      <div class="color-popup-mask" v-if="colorPopupOpen" @click.self="colorPopupOpen = false">
+        <div class="color-popup">
+          <div class="color-popup-head">
+            <span class="color-popup-title">标签颜色</span>
+            <button class="color-popup-close" @click="colorPopupOpen = false">✕</button>
+          </div>
+          <div class="color-popup-body">
+            <div class="color-popup-seg">
+              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'simple' }" @click="setTagColorLevel('simple')">简单</button>
+              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'complex' }" @click="setTagColorLevel('complex')">分区</button>
+            </div>
+            <template v-if="pref.gallery.tagColor.level === 'simple'">
+              <div class="color-popup-row">
+                <span class="color-popup-label">模式</span>
+                <div class="color-popup-seg">
+                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.globalMode === 'diff' }" @click="setGlobalTagColorMode('diff')">异色</button>
+                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.globalMode === 'same' }" @click="setGlobalTagColorMode('same')">同色</button>
+                </div>
+              </div>
+              <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'same'">
+                <span class="color-popup-label">颜色</span>
+                <div class="color-popup-pick">
+                  <span class="color-popup-swatch" :style="{ '--swatch': pref.gallery.tagColor.globalColor }"></span>
+                  <button class="color-popup-btn" @click="$refs.globalColorInput && $refs.globalColorInput.click()">选择颜色</button>
+                  <input ref="globalColorInput" type="color" :value="pref.gallery.tagColor.globalColor"
+                         @input="setGlobalTagColor($event.target.value)" class="color-popup-input" />
+                </div>
+              </div>
+              <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'diff'">
+                <span class="color-popup-label">种子</span>
+                <div class="color-popup-pick">
+                  <input class="settings-seed-input" :value="pref.gallery.tagSeed" @change="setTagSeed($event.target.value)" spellcheck="false" />
+                  <button class="color-popup-btn" @click="randomTagSeed()">随机</button>
+                </div>
+              </div>
+              <div class="color-popup-hint">异色：每标签按种子散列出稳定颜色，换种子整套换色；同色：全部标签统一一色。</div>
+            </template>
+            <template v-else>
+              <div class="color-popup-seg color-popup-area-seg">
+                <button v-for="a in TAG_COLOR_AREAS" :key="a.key"
+                        class="color-popup-seg-btn" :class="{ on: colorPopupArea === a.key }"
+                        @click="colorPopupArea = a.key">{{ a.label }}</button>
+              </div>
+              <div class="color-popup-row">
+                <span class="color-popup-label">模式</span>
+                <div class="color-popup-seg">
+                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.areas[colorPopupArea].mode === 'diff' }" @click="setAreaTagColorMode('diff')">异色</button>
+                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.areas[colorPopupArea].mode === 'same' }" @click="setAreaTagColorMode('same')">同色</button>
+                </div>
+              </div>
+              <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'same'">
+                <span class="color-popup-label">颜色</span>
+                <div class="color-popup-pick">
+                  <span class="color-popup-swatch" :style="{ '--swatch': pref.gallery.tagColor.areas[colorPopupArea].color }"></span>
+                  <button class="color-popup-btn" @click="$refs.areaColorInput && $refs.areaColorInput.click()">选择颜色</button>
+                  <input ref="areaColorInput" type="color" :value="pref.gallery.tagColor.areas[colorPopupArea].color"
+                         @input="setAreaTagColor($event.target.value)" class="color-popup-input" />
+                </div>
+              </div>
+              <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'diff'">
+                <span class="color-popup-label">种子</span>
+                <div class="color-popup-pick">
+                  <input class="settings-seed-input" :value="pref.gallery.tagColor.areas[colorPopupArea].seed" @change="setAreaTagSeed($event.target.value)" spellcheck="false" />
+                  <button class="color-popup-btn" @click="setAreaTagSeed('')">重置</button>
+                </div>
+              </div>
+              <div class="color-popup-hint">分区模式：四个区域可分别设「异色（按种子散列）/ 同色（统一一色）」；区域种子留空时沿用全局种子。</div>
+            </template>
           </div>
         </div>
       </div>

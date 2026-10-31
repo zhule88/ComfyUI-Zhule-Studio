@@ -203,13 +203,46 @@ const DEFAULT_PREF = {
     timeFmt: 'yyyy-MM-dd HH:mm',
     tagTheme: 'light',
     tagRound: true,
-    // 标签颜色种子：所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
+    // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
+    // 标签颜色配置（方案E）：level=simple 简单模式（全局一套规则）/ complex 分区模式（各区独立）
+    // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
+    // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
+    tagColor: {
+      level: 'simple',
+      globalMode: 'diff',
+      globalColor: '#2a9d8f',
+      areas: {
+        detail: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        filter: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        edit: { mode: 'diff', color: '#2a9d8f', seed: '' },
+        wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
+      },
+    },
   },
   common: {
     noDeleteConfirm: false,
   },
 };
+
+// 标签颜色配置归一化：兼容旧版存档（无 tagColor 字段）与残缺数据，保证四区字段齐全
+function normalizeTagColor(tc) {
+  const base = JSON.parse(JSON.stringify(DEFAULT_PREF.gallery.tagColor));
+  if (!tc || typeof tc !== 'object') return base;
+  const out = Object.assign({}, base, tc);
+  if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
+  if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
+  if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
+  out.areas = {};
+  ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
+    const a = (tc.areas && tc.areas[k]) || {};
+    out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
+    if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
+    if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
+    if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
+  });
+  return out;
+}
 
 function loadPref() {
   try {
@@ -219,6 +252,7 @@ function loadPref() {
     const out = JSON.parse(JSON.stringify(DEFAULT_PREF));
     if (p && p.gallery) Object.assign(out.gallery, p.gallery);
     if (p && p.common) Object.assign(out.common, p.common);
+    out.gallery.tagColor = normalizeTagColor(p && p.gallery && p.gallery.tagColor);
     return out;
   } catch (e) {
     return JSON.parse(JSON.stringify(DEFAULT_PREF));
@@ -261,8 +295,9 @@ export function useGalleryCommon(opts = {}) {
     const p = (e && e.detail) || loadPref();
     const prev = JSON.parse(JSON.stringify(pref));
     Object.assign(pref, p);
-    // 标签颜色种子变化：即时按新种子重算已打开详情的标签色
-    if (prev.gallery.tagSeed !== pref.gallery.tagSeed) refreshTagColors();
+    // 标签颜色配置变化（种子/模式/颜色）：即时重算已打开详情的标签色
+    if (prev.gallery.tagSeed !== pref.gallery.tagSeed
+      || JSON.stringify(prev.gallery.tagColor || null) !== JSON.stringify(pref.gallery.tagColor || null)) refreshTagColors();
     if (opts.onPrefChangedExtra) opts.onPrefChangedExtra(p, prev);
   }
   const filters = reactive({ q: '', sortField: 'time', sortDir: 'desc', tags: [], models: [], loras: [], tagMode: 'and' });
@@ -682,8 +717,8 @@ export function useGalleryCommon(opts = {}) {
   // ---- 标签颜色（基于全局种子 + 标签名的确定性散列）：同一标签恒定同色，
   // 设置页「随机颜色种子」换种子整套换色；右键改色仅本次查看内存覆盖 ----
   const tagColorMap = ref({});
-  function seedHash(name) {
-    const s = String(pref.gallery.tagSeed || '') + '|' + String(name);
+  function seedHash(name, seed) {
+    const s = String(seed || pref.gallery.tagSeed || '') + '|' + String(name);
     let h = 2166136261;
     for (let i = 0; i < s.length; i++) {
       h ^= s.charCodeAt(i);
@@ -695,9 +730,21 @@ export function useGalleryCommon(opts = {}) {
     const lit = 38 + (h % 3) * 5; // 38/43/48 微调明度
     return 'hsl(' + hue + ', ' + sat + '%, ' + lit + '%)';
   }
+  // 标签区域配色统一入口（方案E）：按级别与模式决定某个区域的标签颜色。
+  // simple：全局异色 = 全局种子散列（同一标签恒定同色，换种子整套换色）；全局同色 = 统一一色。
+  // complex：按区域配置；异色 = 区域种子散列（区域种子留空回退全局种子）；同色 = 区域统一色。
+  function colorFor(areaKey, name) {
+    const tc = pref.gallery.tagColor;
+    if (!tc || tc.level !== 'complex') {
+      return (tc && tc.globalMode === 'same') ? tc.globalColor : seedHash(name);
+    }
+    const a = tc.areas && tc.areas[areaKey];
+    if (!a || a.mode === 'diff') return seedHash(name, a && a.seed);
+    return a.color;
+  }
   function refreshTagColors() {
     const map = {};
-    uniqueDetailTags.value.forEach((t) => { map[t.name] = seedHash(t.name); });
+    uniqueDetailTags.value.forEach((t) => { map[t.name] = colorFor('detail', t.name); });
     tagColorMap.value = map;
   }
   // 右键临时改色：弹系统取色器，仅改内存映射，不落盘
@@ -783,13 +830,17 @@ export function useGalleryCommon(opts = {}) {
   // 新增未着色标签回退统一色（自定义标签与提示词标签同色，不再单独橙色区分）。
   const TAG_FALLBACK = { prompt: '#2a9d8f', custom: '#2a9d8f' };
   function tagStyle(t) {
-    const c = tagColorMap.value[t.name] || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
+    const c = tagColorMap.value[t.name] || colorFor('detail', t.name) || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
     return c ? { '--tag-bg': c } : null;
   }
-  // 外部过滤区 / 编辑面板标签配色：与详情区同一套散列色（每标签恒定不同色），
-  // 右键临时改色过的标签优先用内存覆盖色；其余按种子确定性散列，换种子即整套换色。
+  // 外部过滤区标签配色（filter 区域）：右键临时改色过的标签优先用内存覆盖色；
+  // 其余按该区域配置取色（简单模式=全局规则，分区模式=filter 区域规则）。
   function tagColorOf(name) {
-    return tagColorMap.value[name] || seedHash(name);
+    return tagColorMap.value[name] || colorFor('filter', name);
+  }
+  // 编辑面板标签配色（edit 区域）：与外部过滤区同规则，但分区模式下独立取色。
+  function editColorOf(name) {
+    return tagColorMap.value[name] || colorFor('edit', name);
   }
   // 标签主题类（设置页 tagTheme/tagRound，zhule-pref-changed 即时生效）：
   // zhg-tag-theme-dark|light|plain + 圆角关闭时追加 zhg-tag-square（近直角）
@@ -1492,7 +1543,7 @@ export function useGalleryCommon(opts = {}) {
     addTagFilter, clearTagFilter, toggleTagMode, visibleTags,
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
-    openDetail, closeDetail, zoomView, tagStyle, tagColorOf,
+    openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf,
     askDelete, cancelDelete, confirmDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

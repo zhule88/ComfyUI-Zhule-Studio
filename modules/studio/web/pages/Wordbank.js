@@ -668,6 +668,7 @@ export default {
     const tagTheme = ref(readTagTheme());
     const tagRound = ref(readTagRound());
     const tagSeed = ref(readTagSeed());
+    const tagColor = ref(readTagColor());
     function readTagTheme() {
       try {
         const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
@@ -689,6 +690,29 @@ export default {
       } catch (e) { /* ignore */ }
       return 'zhule';
     }
+    function readTagColor() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
+        const tc = raw && raw.gallery && raw.gallery.tagColor;
+        if (!tc || typeof tc !== 'object') return null;
+        const base = { level: 'simple', globalMode: 'diff', globalColor: '#2a9d8f',
+          areas: { detail: { mode: 'diff', color: '#2a9d8f', seed: '' }, filter: { mode: 'diff', color: '#2a9d8f', seed: '' }, edit: { mode: 'diff', color: '#2a9d8f', seed: '' }, wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' } } };
+        const out = Object.assign({}, base, tc);
+        if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
+        if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
+        if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
+        out.areas = {};
+        ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
+          const a = (tc.areas && tc.areas[k]) || {};
+          out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
+          if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
+          if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
+          if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
+        });
+        return out;
+      } catch (e) { /* ignore */ }
+      return null;
+    }
     function onGlobalPrefChanged(e) {
       const c = e && e.detail && e.detail.common;
       if (c && typeof c.noDeleteConfirm === 'boolean') noDeleteConfirm.value = c.noDeleteConfirm;
@@ -697,6 +721,7 @@ export default {
         if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
         if (typeof g.tagRound === 'boolean') tagRound.value = g.tagRound;
         if (typeof g.tagSeed === 'string') tagSeed.value = g.tagSeed || '';
+        tagColor.value = readTagColor();
       }
     }
     const addCardContentCn = ref('');
@@ -709,17 +734,29 @@ export default {
       if (tagRound.value === false) c += ' zhg-tag-square';
       return c;
     });
-    // 确定性散列色：同一分类名恒定同色，混入全局颜色种子——换种子整套换色（与图库标签颜色机制一致）
+    // 词库小分类 chip 颜色：复用设置页「标签颜色」方案（wordbank 区域）
+    // - 无配置或简单「全局异色」：种子散列色（同一分类名恒定同色，换种子整套换色）
+    // - 简单「全局同色」：统一一色
+    // - 分区模式：按 wordbank 区域配置（同色=区域统一色 / 异色=区域种子散列，区域种子留空沿用全局种子）
     function chipStyle(name) {
-      const s = String(tagSeed.value || '') + '|' + String(name);
-      let h = 2166136261;
-      for (let i = 0; i < s.length; i++) {
-        h ^= s.charCodeAt(i);
-        h = Math.imul(h, 16777619);
+      const hashColor = (seed) => {
+        const s = String(seed || '') + '|' + String(name);
+        let h = 2166136261;
+        for (let i = 0; i < s.length; i++) {
+          h ^= s.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        h >>>= 0;
+        return 'hsl(' + (h % 360) + ', 55%, 42%)';
+      };
+      const tc = tagColor.value;
+      if (tc && tc.level === 'complex') {
+        const a = tc.areas && tc.areas.wordbank;
+        if (a && a.mode === 'same') return { '--tag-bg': a.color || '#2a9d8f' };
+        return hashColor((a && a.seed) || tagSeed.value);
       }
-      h >>>= 0;
-      const hue = h % 360;
-      return { '--tag-bg': 'hsl(' + hue + ', 55%, 42%)' };
+      if (tc && tc.globalMode === 'same') return { '--tag-bg': tc.globalColor || '#2a9d8f' };
+      return hashColor(tagSeed.value);
     }
 
     // 父列明确（非"全部"）时才显示小类加号：depth 0 的父列是 tab（恒选定），更深层需上层有选中
