@@ -1,4 +1,4 @@
-import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, ConfirmDialog } from './galleryCommon.js';
+import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, ConfirmDialog, tagKey } from './galleryCommon.js';
 
 export default {
   name: 'Gallery',
@@ -84,7 +84,7 @@ export default {
             <div class="zhg-block-body">
               <!-- 外部过滤区：俄罗斯套娃包裹式展开；左键切换启用（红=待生效/蓝=生效），右键展开子标签，Ctrl+右键逐级优先收起，✕暂时隐藏 -->
               <div class="zhg-sel-tags" v-if="visibleTags.length">
-                <out-node v-for="t in visibleTags" :key="'st'+t.name" :node="t" :depth="0"
+                <out-node v-for="t in visibleTags" :key="tagKey(t)" :node="t" :depth="0"
                           :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"
                           @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
               </div>
@@ -170,11 +170,15 @@ export default {
                         :data-tip="'提示词标签（运行时注入，只读）左键查看词条，右键临时改色'">
                     {{ t.name }}
                   </span>
-                  <!-- 自定义标签（层级树）：父级分组（如 '测试'）可展开，叶子（如 '喜欢'）才是可编辑标签 -->
-                  <detail-tag-node v-for="t in customDetailTree" :key="t.path" :node="t" :depth="0"
-                                   :theme-cls="tagThemeClass"
-                                   @edit="editDetailTag" @delete="askDeleteTag"></detail-tag-node>
-                  <span v-if="!promptDetailTags.length && !customDetailTree.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
+                  <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
+                  <span class="zhg-tag hl-custom" :class="[tagThemeClass]"
+                        :style="t.style || {}"
+                        :data-tip="'自定义标签，左键编辑词条，右键删除（遵循删除确认设置）'"
+                        v-for="t in customFlatTags" :key="'dtc' + tagKey(t)"
+                        @click.stop="editDetailTag(t)" @contextmenu.prevent="askDeleteTag(t)">
+                    {{ t.display }}
+                  </span>
+                  <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
                 </div>
               </div>
               <div class="zhg-detail-tag-add">

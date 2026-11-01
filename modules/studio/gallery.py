@@ -1550,13 +1550,22 @@ async def get_gallery_detail(request):
     legacy = [n for i, n in refs if n and not i]
     # 词条被删、按 id 查不到时用 PNG 里自带的默认名兜底
     pt_names = {i: n for i, n in refs if i and n}
-    # 自定义标签：先按 id 取当前**完整路径**（层级/改名后跟着变），取不到才用 PNG 里的默认名
-    cidx = _custom_tag_path_index()
-    custom = []
+    # 自定义标签：展示层只需当前**叶子名**（id->name，层级/改名后跟着变），
+    # 与父类无关；取不到才用 PNG 里的默认名/路径末段兜底。完整路径只用于图库级筛选与写盘快照
+    nidx = _custom_tag_name_index()
+    custom = []  # (展示名, id 或空串（自由文本）)
     for cid, pth, nm in _parse_custom_tag_refs(texts.get("zhule_custom_tags")):
-        _cur = (cidx.get(str(cid)) or pth or nm) if cid else (pth or nm)
+        if cid:
+            # 新格式：展示用当前叶子名，id 直用 PNG 内 cid（唯一标识，绝不按名反查）
+            _cur = nidx.get(str(cid)) or nm or (re.split(r"[/\\:\-]", pth or "")[-1] or pth)
+            _key = str(cid)
+        else:
+            # 数据库出现前的自由文本：与数据库标签无对应关系，原样展示、id 留空，
+            # 绝不反查名册（碰巧同名会错绑）
+            _cur = pth or nm or ""
+            _key = ""
         if _cur:
-            custom.append(_cur)
+            custom.append((_cur, _key))
     seen = set()
     tags = []
     for eid in pids:
@@ -1575,8 +1584,10 @@ async def get_gallery_detail(request):
                 tags.append({"id": id_idx.get(n) or "", "name": n, "prompt": True,
                              "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
                 seen.add(n)
-    for n in custom:
-        tags.append({"id": _lookup_custom_tag_id(n, rel), "name": n, "prompt": False,
+    for n, key in custom:
+        # id 只来自 PNG 内 cid（新格式对象）；自由文本无 id 就留空，不反查名册
+        tid = key if (key and key.isdigit()) else ""
+        tags.append({"id": tid, "name": n, "prompt": False,
                      "custom": True, "cn": _tag_cn(n), "en": _tag_en(n)})
         seen.add(n)
     data = {
@@ -1886,7 +1897,7 @@ async def post_gallery_annotate(request):
     if not full or not os.path.isfile(full):
         return web.json_response({"error": "文件不存在"}, status=404)
 
-    # 自定义标签为唯一可写标签字段：tags 全量重写，remove_custom 按**完整路径**过滤
+    # 自定义标签为唯一可写标签字段：tags 全量重写；remove_custom 兼容 id/完整路径/叶子名三种匹配
     texts = png_text.read_png_text(full)
     custom_cur = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
     updates = {}
@@ -1914,15 +1925,18 @@ async def post_gallery_annotate(request):
         names = _norm_tag_names(body.get("remove_custom"))
         if names is None:
             return web.json_response({"error": "remove_custom 必须是字符串数组"}, status=400)
-        # 兼容 dict（对象数组：按 p 兜底 n 过滤）与纯字符串（老格式）两种存量形态
+        # 兼容 dict（对象数组：p 完整路径 / n 叶子名 / id 三者任一命中即删）
+        # 与纯字符串（老格式，按原样匹配）两种存量形态
         kept = []
         for x in custom_cur:
             if isinstance(x, dict):
-                key = str(x.get("p") or x.get("n") or "").strip()
+                hit = any(str(x.get(k) or "").strip() in names for k in ("p", "n", "id"))
+                if not hit:
+                    kept.append(x)
             else:
                 key = str(x).strip()
-            if key and key not in names:
-                kept.append(x)
+                if key and key not in names:
+                    kept.append(x)
         custom_cur = kept
         updates["zhule_custom_tags"] = json.dumps(custom_cur, ensure_ascii=False)
     if body.get("remove_prompt") is not None:

@@ -4,13 +4,26 @@ const API = {
   tagtree: '/zhule_studio/api/gallery/tagtree',
 };
 
-// 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无 '/' 时原样返回）
+// 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无分隔符时原样返回）。
+// 分隔符支持 / \ - : 四种。
+const TAG_PATH_SEPS = /[\/\\:\-]/;
 function leafName(n) {
   const s = String(n || '');
-  const parts = s.split('/');
+  const parts = s.split(TAG_PATH_SEPS);
   let i = parts.length - 1;
   while (i >= 0 && !parts[i]) i--;
   return i >= 0 ? parts[i] : s;
+}
+// 标签唯一键：有 id 优先用 id（custom/prompt 加前缀区分域），无 id 的老状态回退 name|rel。
+// 与 galleryCommon.tagKey 保持一致（本文件独立实现，避免循环 import）。
+function tagKey(t) {
+  if (!t) return '';
+  const raw = (t.id != null && t.id !== '') ? String(t.id) : '';
+  if (raw) {
+    const kind = t.kind || (t.isCustom ? 'custom' : '');
+    return (kind === 'custom' ? 'c:' : 'p:') + raw;
+  }
+  return 'n:' + String(t.name || '') + '|' + String(t.rel || '');
 }
 // 递归构建自定义标签层级树（完整路径 '测试/喜欢' → 父'测试'分组 + 子'喜欢'叶子）。
 // 节点与全量自定义树同构 {name, rel, leaf, isCustom, id, children}；叶子携带原始标签对象 tag（含 id）。
@@ -19,7 +32,7 @@ function buildPathTree(tags) {
   const roots = [];
   const map = {};
   for (const t of tags || []) {
-    const parts = String(t.name || '').split('/').filter((s) => s);
+    const parts = String(t.name || '').split(TAG_PATH_SEPS).filter((s) => s);
     if (!parts.length) continue;
     let prefix = '';
     let cur = null;
@@ -160,19 +173,25 @@ export default {
     // 只切换筛选启用状态——保证外部过滤区只展示顶层标签。
     function ancestorInSelected(node) {
       const rel = String(node.rel || node.name || '');
-      const segs = rel.split('/').filter(Boolean);
+      const segs = rel.split(TAG_PATH_SEPS).filter(Boolean);
       segs.pop(); // 去掉自身
       if (!segs.length) return false;
       return segs.some((s) => props.selected.some((t) => t.name === s || t.rel === s));
     }
     function setFilter(node) {
-      if (ancestorInSelected(node)) { emit('toggle', node.name); return; }
+      if (ancestorInSelected(node)) { emit('toggle', node); return; }
       emit('add', node);
     }
-    // 面板内已放置标签：点击移除
-    function removeFilter(name) {
-      const t = props.selected.find((x) => x.name === name);
-      if (t) emit('remove', name);
+    // 面板内已放置标签：点击移除（按 id 唯一键匹配，同名不同 id 互不干扰）
+    function removeFilter(item) {
+      const name = typeof item === 'string' ? item : (item && item.name);
+      if (!name) return;
+      const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
+      const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
+      const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+      const k = tagKey({ name, rel, id, kind });
+      const t = k ? props.selected.find((x) => tagKey(x) === k) : null;
+      if (t) emit('remove', t);
     }
     function clearAll() {
       if (props.selected.length) emit('clear');
@@ -225,7 +244,7 @@ export default {
     }
 
     return {
-      tree, wbTree, csTree, leafName, loading, err, setFilter, removeFilter, clearAll, close, selTagStyle,
+      tree, wbTree, csTree, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close, selTagStyle,
       wbPct, zoneStyle, startSplitDrag,
     };
   },
@@ -241,7 +260,7 @@ export default {
         <div class="zhg-ttp-selected" v-if="selected.length">
           <span class="zhg-ttp-sel-label">外部过滤区：</span>
           <span class="zhg-sel-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
-                v-for="t in selected" :key="'st'+t.name" @click="removeFilter(t.name)">
+                v-for="t in selected" :key="tagKey(t)" @click="removeFilter(t)">
             {{ leafName(t.name) }}<span class="zhg-sel-tag-x">✕</span>
           </span>
           <a class="zhg-ttp-reset" @click="clearAll">清空</a>

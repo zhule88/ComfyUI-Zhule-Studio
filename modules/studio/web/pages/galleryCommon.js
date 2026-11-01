@@ -14,15 +14,27 @@ import { useMarqueeSelect } from './marqueeSelect.js';
 
 export { TagTreePanel, OutNode, DetailTagNode, ConfirmDialog };
 
-// 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无 '/' 时原样返回）
+// 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无分隔符时原样返回）。
+// 分隔符支持 / \ - : 四种（/ 与 \ 转义、- 转义保证字面匹配）。
+const TAG_PATH_SEPS = /[\/\\:\-]/;
 export function leafName(n) {
   const s = String(n || '');
-  const parts = s.split('/');
+  const parts = s.split(TAG_PATH_SEPS);
   let i = parts.length - 1;
   while (i >= 0 && !parts[i]) i--;
   return i >= 0 ? parts[i] : s;
 }
-// 卡片标签展示数组：提示词标签（词库词条）在前、自定义标签在后（自定义只显示叶子名）
+// 标签唯一键：有 id 优先用 id（custom/prompt 加前缀区分域），无 id 的老状态回退 name|rel。
+// 全链路匹配（外部过滤区去重/激活/删除）一律以本键为准，禁止再按裸 name 匹配。
+export function tagKey(t) {
+  if (!t) return '';
+  const raw = (t.id != null && t.id !== '') ? String(t.id) : '';
+  if (raw) {
+    const kind = t.kind || (t.isCustom ? 'custom' : '');
+    return (kind === 'custom' ? 'c:' : 'p:') + raw;
+  }
+  return 'n:' + String(t.name || '') + '|' + String(t.rel || '');
+}
 export function cardTags(it) {
   const all = (it && it.tags) ? it.tags : [];
   const cs = (it && Array.isArray(it.customTags)) ? it.customTags : [];
@@ -72,8 +84,8 @@ const OutNode = {
     // 子节点取自树数据（tagTreeKidsMap），与 tagTreePanel 共用同一棵树；无树数据时退回 node.children
     // 隐藏 = 完全移除：树内递归渲染同样过滤掉 hidden 项（等价 v-if=false），隐藏大标签时整棵子树随之消失
     const kids = () => {
-      const all = props.treeKidsFn ? props.treeKidsFn(props.node.name) : (props.node.children || []);
-      return props.isHidden ? all.filter((c) => !props.isHidden(c.name)) : all;
+      const all = props.treeKidsFn ? props.treeKidsFn(props.node) : (props.node.children || []);
+      return props.isHidden ? all.filter((c) => !props.isHidden(c)) : all;
     };
     const hasKids = () => kids().length > 0;
     // 子树深度：叶子 0；与 tagTreePanel 相同缩放规则 scale=1+depth*0.3，基准 12px
@@ -99,9 +111,9 @@ const OutNode = {
     const boxStyle = () => ({ ...chipStyle() });
     function onClick(e) {
       // Ctrl+左键：隐藏（完全移除，不可逆；恢复靠编辑面板 tagTreePanel 重新左键点击放置）
-      if (e.ctrlKey) { e.preventDefault(); emit('hide', props.node.name); return; }
+      if (e.ctrlKey) { e.preventDefault(); emit('hide', props.node); return; }
       // 普通左键：直接启用/禁用该标签过滤，不产生外部独立标签
-      emit('toggle', props.node.name);
+      emit('toggle', props.node);
     }
     // 右键行为（与 tagTreePanel 编辑面板 Ctrl+右键语义完全一致）：
     // Ctrl+右键：展开还原——已展开则收起自身并拦截；未展开则不拦截、冒泡给父级展开容器逐级向上收起
@@ -130,13 +142,13 @@ const OutNode = {
   },
   template: `
     <div class="zhg-out-wrap" :class="{ open: expanded }">
-      <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node.name), off: !isActive(node.name), leaf: !hasKids() }]" :style="chipStyle()"
-            :data-tip="(isActive(node.name) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
+      <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node), off: !isActive(node), leaf: !hasKids() }]" :style="chipStyle()"
+            :data-tip="(isActive(node) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
         {{ leafName(node.name) }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
       </span>
       <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
-        <out-node v-for="c in kids()" :key="c.name" :node="c" :depth="depth + 1"
+        <out-node v-for="c in kids()" :key="c.rel || c.name" :node="c" :depth="depth + 1"
                   :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls" :color-of="colorOf"
                   @toggle="fwdToggle" @add="fwdAdd" @hide="fwdHide"></out-node>
       </div>
@@ -340,7 +352,8 @@ export function useGalleryCommon(opts = {}) {
       if (raw && raw.version === 1 && Array.isArray(raw.tags)) {
         const valid = raw.tags
           .filter((t) => t && typeof t.name === 'string')
-          .map((t) => ({ name: t.name, rel: t.rel || '', active: !!t.active, hidden: !!t.hidden, inner: !!t.inner, id: t.id || '', kind: t.kind || '' }));
+          .map((t) => ({ name: t.name, rel: t.rel || '', active: !!t.active, hidden: !!t.hidden, inner: !!t.inner, id: t.id || '', kind: t.kind || '' }))
+          .filter((t, i, arr) => { const k = tagKey(t); return !k || arr.findIndex((o) => tagKey(o) === k) === i; });
         if (valid.length) filters.tags = valid;
       }
     } catch (e) { /* ignore: 解析失败，保留空 tags */ }
@@ -463,9 +476,10 @@ export function useGalleryCommon(opts = {}) {
     // 携带 id/kind：词条 id（prompt）或自定义标签 id（custom），点击后后端按 id 直查 gallery_tag
     const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
     const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
-    // 放到外部过滤区（编辑面板左键点击触发）：同名未隐藏则移除（toggle）；同名已隐藏=经编辑面板重新放置，
-    // 清除隐藏标记恢复显示并置为启用（hidden=false, active=true，与"隐藏不可逆、恢复靠编辑面板重新放置"语义一致）；否则新增待生效（默认红）
-    const i = filters.tags.findIndex((t) => t.name === name);
+    // 放到外部过滤区（编辑面板左键点击触发）：按唯一键（id 优先，无 id 回退 name|rel）判定；
+    // 同名但 id 不同（如 '测试/喜欢' 与顶层 '喜欢'）视为不同标签，互不覆盖
+    const k = tagKey({ name, rel, id, kind });
+    const i = k ? filters.tags.findIndex((t) => tagKey(t) === k) : -1;
     if (i >= 0) {
       if (filters.tags[i].hidden) {
         filters.tags[i].hidden = false;
@@ -484,18 +498,27 @@ export function useGalleryCommon(opts = {}) {
   // 外部过滤区：左键点击直接启用/禁用（红=待生效 / 蓝=生效）
   // 未入列（套娃内子标签首次点击）：直接启用并以 inner 标记入列，顶层 visibleTags 过滤 inner 不产生外部独立标签
   // 隐藏不可逆（Ctrl+左键完全移除），恢复靠编辑面板重新放置，故这里不再处理 hidden
-  function toggleTagActive(name) {
-    const t = filters.tags.find((x) => x.name === name);
+  // 匹配一律按唯一键（id 优先），同名不同 id（'测试/喜欢' vs '喜欢'）各自独立启停
+  function toggleTagActive(item) {
+    const name = typeof item === 'string' ? item : (item && item.name);
+    if (!name) return;
+    const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
+    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
+    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+    const k = tagKey({ name, rel, id, kind });
+    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
     if (!t) {
-      const meta = tagKidMeta.value[name] || {};
-      filters.tags.push({ name, rel: '', id: meta.id || '', kind: meta.isCustom ? 'custom' : 'prompt', active: true, hidden: false, inner: true });
+      // 首次放置：优先用节点自带 id；老状态/无 id 节点用树元信息兜底回填
+      const metaKey = rel || name;
+      const meta = (tagKidMeta.value[metaKey] || {});
+      filters.tags.push({ name, rel, id: id || meta.id || '', kind: kind || (meta.isCustom ? 'custom' : 'prompt'), active: true, hidden: false, inner: true });
       applyFilter();
       saveTagPref();
       return;
     }
     // 已入列但缺 id（老 localStorage 状态 / URL 直达）：用树元信息回填后走 SQL
     if (!t.id) {
-      const meta = tagKidMeta.value[name];
+      const meta = tagKidMeta.value[t.rel || t.name];
       if (meta && meta.id) { t.id = meta.id; t.kind = meta.isCustom ? 'custom' : 'prompt'; }
     }
     t.active = !t.active;
@@ -504,10 +527,16 @@ export function useGalleryCommon(opts = {}) {
   }
   // 外部过滤区：Ctrl+左键隐藏（完全移除，不可逆）——扁平列表项标记 hidden 并清除 active，
   // 渲染层统一按 hidden 过滤后标签彻底消失不占位（隐藏大标签时整棵子树随之消失）；无任何恢复入口
-  function hideTag(name) {
-    const t = filters.tags.find((x) => x.name === name);
+  function hideTag(item) {
+    const name = typeof item === 'string' ? item : (item && item.name);
+    if (!name) return;
+    const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
+    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
+    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+    const k = tagKey({ name, rel, id, kind });
+    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
     if (t) { t.hidden = true; t.active = false; }
-    else filters.tags.push({ name, rel: '', active: false, hidden: true, inner: true });
+    else filters.tags.push({ name, rel, id, kind, active: false, hidden: true, inner: true });
     applyFilter();
     saveTagPref();
   }
@@ -515,7 +544,8 @@ export function useGalleryCommon(opts = {}) {
   const visibleTags = computed(() => filters.tags.filter((t) => !t.hidden && !t.inner));
   // 树内递归渲染判断隐藏态：隐藏 = 完全移除，渲染时按此过滤（等价 v-if=false），隐藏大标签时整棵子树随之消失
   function isTagHidden(name) {
-    const t = filters.tags.find((x) => x.name === name);
+    const k = tagKey(typeof name === 'object' && name ? name : { name });
+    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
     return !!(t && t.hidden);
   }
   // 外部过滤区：右键展开子标签需要的树数据（name -> children）
@@ -536,9 +566,17 @@ export function useGalleryCommon(opts = {}) {
         const kidMeta = {};
         (function walk(ns) {
           for (const n of ns) {
-            map[n.name] = (n.children || []).map((c) => ({ name: c.name, rel: c.rel, children: c.children || [] }));
+            // map/kidMeta 键用 rel（完整路径）保证重名节点（'测试/喜欢' vs '喜欢'）不互相覆盖
+            const key = n.rel || n.name;
+            map[key] = (n.children || []).map((c) => ({
+              id: (c.id != null && c.id !== '') ? String(c.id) : '',
+              name: c.name,
+              rel: c.rel,
+              isCustom: !!c.isCustom,
+              children: c.children || [],
+            }));
             if (n.id != null && n.id !== '') idMap[String(n.id)] = n.name;
-            kidMeta[n.name] = { id: (n.id != null && n.id !== '') ? String(n.id) : '', isCustom: !!n.isCustom };
+            kidMeta[key] = { id: (n.id != null && n.id !== '') ? String(n.id) : '', isCustom: !!n.isCustom, rel: n.rel || '', name: n.name };
             walk(n.children || []);
           }
         })(d.tree);
@@ -549,18 +587,21 @@ export function useGalleryCommon(opts = {}) {
       }
     } catch (e) { /* 静默失败，右键展开无子标签可显示 */ }
   }
-  // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 name 找回 id/kind，让过滤走 SQL
+  // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 rel|name 找回 id/kind，让过滤走 SQL
   function backfillTagIds() {
     for (const t of filters.tags) {
       if (t.id) continue;
-      const meta = tagKidMeta.value[t.name];
+      const meta = tagKidMeta.value[t.rel || t.name];
       if (meta && meta.id) {
         t.id = meta.id;
         t.kind = meta.isCustom ? 'custom' : 'prompt';
       }
     }
   }
-  function treeKids(name) { return tagTreeKidsMap.value[name] || []; }
+  function treeKids(item) {
+    const key = (typeof item === 'object' && item) ? (item.rel || item.name) : String(item || '');
+    return tagTreeKidsMap.value[key] || [];
+  }
   function toggleTagExpand(name) {
     ensureTagTree();
     const s = new Set(expandedTags.value);
@@ -568,11 +609,13 @@ export function useGalleryCommon(opts = {}) {
     expandedTags.value = s;
   }
   function isTagActive(name) {
-    const t = filters.tags.find((x) => x.name === name);
+    const k = tagKey(typeof name === 'object' && name ? name : { name });
+    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
     return !!(t && t.active);
   }
   function inTagFilter(name) {
-    return filters.tags.some((x) => x.name === name);
+    const k = tagKey(typeof name === 'object' && name ? name : { name });
+    return k ? filters.tags.some((x) => tagKey(x) === k) : false;
   }
   function clearTagFilter() {
     if (filters.tags.length) {
@@ -668,13 +711,13 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
   }
 
-  // 把自定义标签（完整路径 name，如 '测试/喜欢'）按 / 拆分构建层级树。
+  // 把自定义标签（完整路径 name，如 '测试/喜欢'）按分隔符拆分构建层级树。
   // 同一图片若同时关联 '测试' 与 '测试/喜欢'，'测试' 节点既携带标签也可展开子节点。
   function buildCustomTagTree(tags, colorMap) {
     const roots = [];
     for (const t of tags) {
       if (!t || !t.custom) continue;
-      const parts = String(t.name || '').split('/').filter((s) => s);
+      const parts = String(t.name || '').split(TAG_PATH_SEPS).filter((s) => s);
       if (!parts.length) continue;
       let level = roots;
       let prefix = '';
@@ -1079,7 +1122,10 @@ export function useGalleryCommon(opts = {}) {
     if (t.prompt) {
       await annotate({ remove_prompt: [t.name] });
     } else {
-      await annotate({ remove_custom: [t.name] });
+      // 自定义标签删除走 id（唯一标识）：详情 tags 的 id 即 PNG 内 cid；
+      // 老数据无 id 时才回退叶子名（后端 remove_custom 兼容 id/路径/叶子名三种匹配）
+      const id = t.id != null && t.id !== '' ? String(t.id) : t.name;
+      await annotate({ remove_custom: [id] });
     }
   }
   // ============ 词库词条编辑（左键点击详情 tag 呼出，逻辑与词库 Wordbank.js 完全一致） ============
@@ -1380,8 +1426,9 @@ export function useGalleryCommon(opts = {}) {
     if (i >= 0) filters.loras.splice(i, 1); else filters.loras.push(name);
     applyFilter();
   }
-  function removeTag(name) {
-    const i = filters.tags.findIndex((t) => t.name === name);
+  function removeTag(item) {
+    const k = tagKey(typeof item === 'object' && item ? item : { name: item });
+    const i = k ? filters.tags.findIndex((t) => tagKey(t) === k) : -1;
     if (i >= 0) filters.tags.splice(i, 1);
     applyFilter();
     saveTagPref();
@@ -1553,6 +1600,7 @@ export function useGalleryCommon(opts = {}) {
     loading, loadingMore, allLoaded, dirty, tagPanelOpen, detail,
     quickTag, toast, toastType, toastIcon, delTarget, mainEl, gridEl,
     leafName, cardTags,
+    tagKey,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,

@@ -7,6 +7,7 @@
 """
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -18,6 +19,8 @@ DB_PATH = os.path.join(_STUDIO_DIR, "zhule.db")
 TABLE = "prompt"  # 词库表（2259 行；另存在 AUTOINCREMENT 序列）
 
 _lock = threading.RLock()
+# 自定义标签路径分隔符：/ \ - : 四种均视为层级分隔；注册/展示统一按 / 归一存储。
+_TAG_PATH_SEP_RE = re.compile(r"[/\\:\-]")
 _version = 0
 
 
@@ -1018,7 +1021,7 @@ def custom_tag_upsert_path(path):
     p = (path or "").strip().strip("/")
     if not p:
         return 0
-    segs = [s.strip() for s in p.split("/") if s and s.strip()]
+    segs = [s.strip() for s in _TAG_PATH_SEP_RE.split(p) if s and s.strip()]
     if not segs:
         return 0
     pid = None
@@ -1040,7 +1043,7 @@ def custom_tag_path_ref(path):
     p = (path or "").strip().strip("/")
     if not p:
         return None
-    segs = [s.strip() for s in p.split("/") if s and s.strip()]
+    segs = [s.strip() for s in _TAG_PATH_SEP_RE.split(p) if s and s.strip()]
     if not segs:
         return None
     cid = custom_tag_upsert_path(p)
@@ -1436,7 +1439,7 @@ def _insert_gallery_tags(conn, gid, rec, custom_tag_id, legacy=None):
         if not t or t in seen:
             continue
         seen.add(t)
-        segs = [s.strip() for s in t.split("/") if s and s.strip()]
+        segs = [s.strip() for s in _TAG_PATH_SEP_RE.split(t) if s and s.strip()]
         if not segs:
             continue
         # 层级注册：顶层在 parent_id=NULL 下 find-or-create，后续段挂在前一段下。
