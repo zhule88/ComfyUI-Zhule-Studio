@@ -284,14 +284,8 @@ class ZhuleSaveImage:
         # 取不到才用 p/n 兜底，图库与 PNG 元数据保持一致
         custom_tags = _parse_tags(自定义标签)
         if _db is not None:
-            # 前端正常时应带词条 id；旧工作流/历史快照只有 name 时按显示名反查 id 兜底，
-            # 避免 _selected 快照 id 缺失导致提示词标签整段丢失（tag_refs 只认数字 id）
-            _name2id = _db.tag_id_index()
-            _resolved_ids = [
-                x if str(x).strip().isdigit()
-                else str((_name2id.get(str(x).strip()) or "") or "")
-                for x in prompt_tag_ids
-            ]
+            # 提示词标签只认词条 id：老快照/旧工作流里的自由文本名不反查、直接跳过
+            _resolved_ids = [x for x in prompt_tag_ids if str(x).strip().isdigit()]
             pt_refs = _db.tag_refs(_resolved_ids)
             ct_refs = [r for r in (_db.custom_tag_path_ref(x) for x in custom_tags)
                        if r]

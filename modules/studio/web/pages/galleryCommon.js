@@ -51,7 +51,6 @@ export const API = {
   detail: '/zhule_studio/api/gallery/detail',
   workflow: '/zhule_studio/api/gallery/workflow',
   thumb: '/zhule_studio/api/gallery/thumb',
-  tag: '/zhule_studio/api/gallery/tag',
   annotate: '/zhule_studio/api/gallery/annotate',
   rename: '/zhule_studio/api/gallery/rename',
   renameFile: '/zhule_studio/api/gallery/rename-file',
@@ -1123,9 +1122,9 @@ export function useGalleryCommon(opts = {}) {
       await annotate({ remove_prompt: [t.name] });
     } else {
       // 自定义标签删除走 id（唯一标识）：详情 tags 的 id 即 PNG 内 cid；
-      // 老数据无 id 时才回退叶子名（后端 remove_custom 兼容 id/路径/叶子名三种匹配）
-      const id = t.id != null && t.id !== '' ? String(t.id) : t.name;
-      await annotate({ remove_custom: [id] });
+      // 无 id 的老自由文本与 DB 无对应，不删（不回退叶子名）
+      if (t.id == null || t.id === '') return;
+      await annotate({ remove_custom: [String(t.id)] });
     }
   }
   // ============ 词库词条编辑（左键点击详情 tag 呼出，逻辑与词库 Wordbank.js 完全一致） ============

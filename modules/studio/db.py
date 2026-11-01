@@ -687,18 +687,6 @@ def normalize_model_name(raw):
     return name.strip()
 
 
-def infer_model_type(raw):
-    """按路径中的模型库目录推断 type；推断不出返回 None，由调用方按引用位置决定。"""
-    s = (raw or "").strip().replace("\\", "/").lower()
-    for d in _MODEL_DIRS:
-        if d in s:
-            return MODEL_TYPE_MODEL
-    for d in _LORA_DIRS:
-        if d in s:
-            return MODEL_TYPE_LORA
-    return None
-
-
 def _ensure_model_schema(conn):
     """确保模型字典表存在（幂等）。
 
@@ -806,24 +794,6 @@ def model_rename(mid, new_name):
             return True
         except sqlite3.Error as e:
             print(f"[ZhuleDB] 模型改名失败: {e}")
-            return False
-        finally:
-            conn.close()
-
-
-def model_set_deleted(mid, isdel=True):
-    """软删除/恢复。行永远在：已删除的不进筛选选项，但老图按 id 仍能查到名字。"""
-    with _lock:
-        conn = connect()
-        try:
-            conn.execute(
-                "UPDATE {0} SET isdel=?, updated_at=? WHERE id=?".format(MODEL_TABLE),
-                (1 if isdel else 0, _now(), int(mid)),
-            )
-            conn.commit()
-            return True
-        except sqlite3.Error as e:
-            print(f"[ZhuleDB] 模型删除状态更新失败: {e}")
             return False
         finally:
             conn.close()
@@ -940,15 +910,6 @@ def custom_tag_upsert(name):
             return 0
         finally:
             conn.close()
-
-
-def custom_tag_ref(name):
-    """自定义标签名 -> {"id":..,"n":..}；拿不到 id 时退化为 {"n": 名字}。"""
-    n = (name or "").strip()
-    if not n:
-        return None
-    cid = custom_tag_upsert(n)
-    return {"id": cid, "n": n} if cid else {"n": n}
 
 
 # -------------------- 自定义标签层级（/ 路径） --------------------
@@ -1087,15 +1048,6 @@ def custom_tag_path_index():
     return out
 
 
-def custom_tag_path_id_index():
-    """完整路径 -> 自定义标签叶子 id（str）。由 id->路径索引反置，路径重复时取 id 小者。"""
-    out = {}
-    for i, p in custom_tag_path_index().items():
-        if p and p not in out:
-            out[p] = i
-    return out
-
-
 def custom_tag_rows():
     """自定义标签全量行 [(id, parent_id, name)]，供前端层级树构造（tagtree 接口合并）。
 
@@ -1164,15 +1116,14 @@ def gallery_load_records(ids=None):
     ids 为空集合时直接返回 []；ids 为 None 时加载全量（原行为不变）。
 
     返回 list[dict]，每条含：
-    key/name/mtime/size/model/loras/loraIds/tags/tagIds/customTagIds/prompt/hasPrompt。
+    key/name/mtime/size/model/loras/loraIds/tags/tagIds/customTags/prompt/hasPrompt。
     key 即 gallery_image.name（图库相对路径，与磁盘记录行为一致）；
     model 为 model_id JOIN model 表取到的当前模型名（改名自动跟随）；
     loras 为 lora 名数组（gallery_lora 关联 + lora_id JOIN model 表实时取）；
     loraIds 为 lora_id 数组（写回时直接落 gallery_lora，不再按名字猜）；
     tags 为标签显示名数组（prompt 类经 id->name 反查，custom 类经 custom_id LEFT
     JOIN custom_tag 取名——不再读自存 name）；
-    tagIds 为 prompt 类 name->prompt_id 映射；customTagIds 为 custom 类
-    name->custom_id 映射（词条/自定义标签改名后按 id 不脱钩）；
+    tagIds 为 prompt 类 name->prompt_id 映射（词条改名后按 id 不脱钩）；
     prompt 为图片 prompt 文本（DB 直读，避免每次读 PNG）；
     hasPrompt 由 prompt 非空推导。
     注：hasWF 已不落库（列表链路无消费者），真实值以详情接口
@@ -1283,7 +1234,6 @@ def gallery_load_records(ids=None):
             "tags": tag_names,
             "tagIds": ids,
             "customTags": custom_names,
-            "customTagIds": custom_ids,
             # 反查回 id：行级 upsert 直接按 id 落库，不再次按名字猜
             "promptIds": list(ids.values()),
             "prompt": im["prompt"] or "",
@@ -1581,54 +1531,6 @@ def gallery_upsert_records(records):
             return 0
         finally:
             conn.close()
-
-
-def gallery_backfill_model_ids():
-    """把现有图片的 model 名字回填成 model_id（仅兼容未迁移的旧库）。
-
-    id 化改造后 gallery_image 不再自存 model / loras 名字快照：存量库由迁移脚本
-    （RENAME→建新表→INSERT SELECT→DROP）摘列并回填 gallery_lora；本函数仅在
-    旧结构（model 列仍存在、model_id 未回填）时执行 model 名回填，新结构下
-    直接返回 0。
-    返回 {"model": 回填行数, "lora": 0}。
-    """
-    with _lock:
-        conn = connect()
-        try:
-            _ensure_gallery_schema(conn)
-            cols = {r["name"] for r in conn.execute("PRAGMA table_info({0})".format(GAL_IMG_TABLE))}
-            if "model" not in cols:
-                return {"model": 0, "lora": 0}
-            rows = conn.execute(
-                "SELECT id, model FROM {0} "
-                "WHERE model IS NOT NULL AND model != ''".format(GAL_IMG_TABLE)
-            ).fetchall()
-        finally:
-            conn.close()
-    pairs = []
-    for r in rows:
-        nm = normalize_model_name(r["model"])
-        if nm:
-            pairs.append((r["id"], model_upsert(MODEL_TYPE_MODEL, nm)))
-    # 一次事务批量写回：七千多行单条提交会非常慢
-    now, done = _now(), 0
-    with _lock:
-        conn = connect()
-        try:
-            for gid, mid in pairs:
-                if not mid:
-                    continue
-                conn.execute(
-                    "UPDATE {0} SET model_id=?, updated_at=? WHERE id=?".format(GAL_IMG_TABLE),
-                    (mid, now, int(gid)),
-                )
-                done += 1
-            conn.commit()
-        except sqlite3.Error as e:
-            print(f"[ZhuleDB] model_id 回填失败: {e}")
-        finally:
-            conn.close()
-    return {"model": done, "lora": 0}
 
 
 def gallery_update_key(gid, new_key):

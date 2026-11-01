@@ -42,7 +42,6 @@ def register_routes():
     routes.post("/zhule_studio/api/gallery/delete")(gallery.post_gallery_delete)
     routes.post("/zhule_studio/api/gallery/batch-delete")(gallery.post_gallery_batch_delete)
     routes.post("/zhule_studio/api/gallery/batch-link")(gallery.post_gallery_batch_link)
-    routes.post("/zhule_studio/api/gallery/tag")(gallery.post_gallery_tag)
     routes.post("/zhule_studio/api/gallery/annotate")(gallery.post_gallery_annotate)
     routes.post("/zhule_studio/api/gallery/rename")(gallery.post_gallery_rename)
     routes.post("/zhule_studio/api/gallery/rename-file")(gallery.post_gallery_rename_file)

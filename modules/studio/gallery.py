@@ -7,7 +7,7 @@
   （id 指向 zhule.db 的 model 表，改名后图片自动跟随；n 为兜底展示名）。
   老图存的仍是纯字符串，读写两侧同时兼容（见 _extract_zhule_model / _json_list），
   所以存量图一张都不用重写
-- 标签两源（zhule_tags 已废弃并并入 zhule_custom_tags，见 _backfill_tag_fields 存量迁移）：
+- 标签两源（zhule_tags 已废弃并并入 zhule_custom_tags，见 _parse_record_tags 解析）：
   * zhule_prompt_tags：ZhuleStudio 提示词选中词（保存时写入，图库只读，可按项删）
   * zhule_custom_tags：自定义标签（SaveImage 自定义标签端口 + 图库详情页打标，可增删）
 - 图库根目录：output/zhule_studio/zhule_img（只扫这一个目录，历史旧目录一律忽略）
@@ -150,103 +150,6 @@ def _json_list(raw, key):
     return []
 
 
-def _clean_prompt_tags(tags):
-    """清洗提示词标签：剔除伪标签，兼容历史错误写入的整段提示词。
-
-    正常词条名来自词库词条文件名/最后一级目录名；整段正向提示词（按逗号或段落
-    误拆）表现为：超长、含换行、或含多个逗号且长度明显大于词条名。"""
-    if not tags:
-        return []
-    out = []
-    for t in tags:
-        s = str(t).strip()
-        if not s:
-            continue
-        if len(s) > 100:
-            continue
-        if "\n" in s or "\r" in s:
-            continue
-        if s.count(",") >= 2 and len(s) > 40:
-            continue
-        out.append(s)
-    return out
-
-
-def _split_tags(raw):
-    """解析标签输入：JSON 数组字符串；失败则按行拆分（与 save_image._parse_tags 语义一致）。"""
-    if not raw:
-        return []
-    s = str(raw).strip()
-    if not s:
-        return []
-    try:
-        data = json.loads(s)
-        if isinstance(data, list):
-            return [str(x).strip() for x in data if str(x).strip()]
-        if isinstance(data, str) and data.strip():
-            return [data.strip()]
-    except Exception:
-        pass
-    return [line.strip() for line in s.splitlines() if line.strip()]
-
-
-def _extract_selected_names(pt):
-    """从 PNG 内 prompt JSON 提取 ZhuleStudio 选中词 name 数组（提示词标签来源）。"""
-    if not pt:
-        return []
-    try:
-        prompt = json.loads(pt)
-    except Exception:
-        return []
-    if not isinstance(prompt, dict):
-        return []
-    for node in prompt.values():
-        if isinstance(node, dict) and node.get("class_type") == "ZhuleStudio":
-            try:
-                sel = json.loads((node.get("inputs") or {}).get("_selected", "[]") or "[]")
-            except Exception:
-                sel = []
-            if not isinstance(sel, list):
-                return []
-            # 空快照（新节点/手动 Run 未选词）直接返回空，不再从 state 文件兜底
-            if not sel:
-                return []
-            names = []
-            for s in sel:
-                if isinstance(s, dict):
-                    # 新格式 [{name, content}]：取词条名
-                    n = str(s.get("name") or "").strip()
-                    if n:
-                        names.append(n)
-                else:
-                    # 旧格式纯字符串：原样保留
-                    t = str(s).strip()
-                    if t:
-                        names.append(t)
-            return names
-    return []
-
-
-def _extract_save_tags(pt):
-    """从 PNG 内 prompt JSON 提取 ZhuleSaveImage 节点 自定义标签 端口值（自定义 tag 回填来源）。
-    兼容新旧端口名：新图端口为 自定义标签，旧图为 自定义tags / tags。"""
-    if not pt:
-        return []
-    try:
-        prompt = json.loads(pt)
-    except Exception:
-        return []
-    if not isinstance(prompt, dict):
-        return []
-    for node in prompt.values():
-        if isinstance(node, dict) and node.get("class_type") == "ZhuleSaveImage":
-            inputs = node.get("inputs") or {}
-            raw = inputs.get("自定义标签") or inputs.get("自定义tags") or inputs.get("tags")
-            if raw:
-                return _split_tags(raw)
-    return []
-
-
 def _extract_zhule_model(texts):
     """提取模型名：优先 zhule_model 元数据；缺失时从 prompt 元数据兜底（兼容 ZhuleCheckpointLoader 等复合模型旧图）。"""
     m = (texts.get("zhule_model") or "").strip()
@@ -284,21 +187,18 @@ def _extract_zhule_model(texts):
     return ""
 
 
-def _backfill_tag_fields(full, texts):
-    """存量迁移：把提示词标签的老「词条名」转成词条 id，并把废弃键 zhule_tags 并入自定义标签。
+def _parse_record_tags(texts):
+    """解析 PNG 元数据中的标签字段（纯读取，不写回、不反查）。
 
-    三件事，都遵循「仅在确实有变化时才写 PNG」（全量重建时避免无谓重写每张图）：
-    1. zhule_prompt_tags 里是老词条名时，按词库反查转成 id 写回（id 化迁移）；
-    2. 早期保存节点未写标签字段时，从 prompt 的 ZhuleStudio 选中词快照回填；
-    3. zhule_tags（旧手动打标键）已废弃：并入 zhule_custom_tags 后删除该键。
+    提示词标签只认词条 id（老自由文本名与词库无对应，不反查）；自定义标签
+    先按 id 取当前完整路径，取不到才用 p/n 兜底。
     返回 (prompt_ids, custom_tags, pt_names)：
     - prompt_ids：词条 id 字符串数组
-    - custom_tags：自定义标签**显示名**数组（先按 id 取当前名，取不到用 n 兜底）
+    - custom_tags：自定义标签显示名数组
     - pt_names：{id: PNG 自带的默认名}，词条被删、按 id 查不到时用它兜底显示
     """
     refs = _parse_tag_refs(texts.get("zhule_prompt_tags"))
     pids = [i for i, _n in refs if i]
-    legacy_names = [n for i, n in refs if n and not i]
     pt_names = {i: n for i, n in refs if i and n}
     # 自定义标签：先按 id 取当前**完整路径**（层级/改名后自动跟随），取不到才用 p/n 兜底
     cidx = _custom_tag_path_index()
@@ -307,42 +207,7 @@ def _backfill_tag_fields(full, texts):
         _cur = (cidx.get(str(cid)) or pth or nm) if cid else (pth or nm)
         if _cur:
             custom_tags.append(_cur)
-    manual = _json_list(texts.get("zhule_tags"), "zhule_tags")
-    backfill_hit = False
-    if not refs and texts.get("prompt"):
-        sel = _extract_selected_names(texts.get("prompt"))
-        if sel:
-            legacy_names = _clean_prompt_tags(sel)
-            backfill_hit = True
-        custom = _extract_save_tags(texts.get("prompt"))
-        if custom:
-            custom_tags = custom
-            backfill_hit = True
-    # 老词条名 -> id（词库里已删的词条转不出 id，读取侧跳过即可，不写回空数组）
-    if legacy_names:
-        idx = _tag_id_index()
-        for n in legacy_names:
-            i = idx.get(n)
-            if i and i not in pids:
-                pids.append(i)
-    # 旧手动标签并入自定义标签（去重保序）
-    merged = list(custom_tags)
-    for t in manual:
-        if t not in merged:
-            merged.append(t)
-    updates = {}
-    # 仅确实拿到 id 时才写回：老名全部失落（词条已删）时不覆盖，避免把数据写成空
-    if (legacy_names or backfill_hit) and pids:
-        updates["zhule_prompt_tags"] = json.dumps(pids, ensure_ascii=False)
-    if manual:
-        # 有旧手动标签：并入后整体重写，并删除废弃键（write_png_text 中 None 表示删除）
-        updates["zhule_custom_tags"] = json.dumps(merged, ensure_ascii=False)
-        updates["zhule_tags"] = None
-    elif backfill_hit and custom_tags:
-        updates["zhule_custom_tags"] = json.dumps(merged, ensure_ascii=False)
-    if updates and not png_text.write_png_text(full, updates):
-        print(f"[ZhuleGallery] 标签字段迁移失败: {full}")
-    return pids, merged, pt_names
+    return pids, custom_tags, pt_names
 
 
 def _extract_positive_prompt(pt):
@@ -870,17 +735,6 @@ def _custom_tag_path_index():
     return data
 
 
-def _custom_tag_path_id_index():
-    """完整路径 -> 自定义标签叶子 id（str），带 30 秒缓存。"""
-    now = time.time()
-    if _CUSTOM_PATH_CACHE["data"] is not None \
-            and (now - _CUSTOM_PATH_CACHE["ts"]) < 30:
-        return {p: i for i, p in _CUSTOM_PATH_CACHE["data"].items()}
-    data = db.custom_tag_path_index()
-    _CUSTOM_PATH_CACHE.update({"ts": now, "data": data})
-    return {p: i for i, p in data.items()}
-
-
 def _remove_prompt_tags(cur, names):
     """按展示名从提示词标签数组里删除条目。
 
@@ -899,38 +753,6 @@ def _remove_prompt_tags(cur, names):
             continue
         out.append(s)
     return out
-
-
-def _rec_custom_tag_ids(rec):
-    """返回 rec 的 custom 类 路径->custom_id 映射（与 tagIds 并存，自定义标签定位用）。
-
-    仅对「非词条」标签填充：custom 类标签在 custom_tag 字典表有独立 id，
-    展示名（完整路径）经 JOIN/路径索引实时更新，无需 id 归并兜底。
-    """
-    custom_ids = rec.setdefault("customTagIds", {})
-    idx = _custom_tag_path_id_index()
-    for n in rec.get("tags") or []:
-        if n not in custom_ids and n not in (rec.get("tagIds") or {}):
-            i = idx.get(n)
-            if i:
-                custom_ids[n] = i
-    return custom_ids
-
-
-def _lookup_custom_tag_id(name, rel):
-    """详情/编辑时取 custom 类 tag 的 id：优先图库索引记录持久化的 customTagIds
-    （key 为完整路径），否则反查 custom_tag 路径索引（路径 -> custom_id）。"""
-    try:
-        if _index is not None:
-            for r in _index:
-                if r.get("key") == rel:
-                    got = (r.get("customTagIds") or {}).get(name)
-                    if got:
-                        return got
-                    break
-    except Exception:
-        pass
-    return _custom_tag_path_id_index().get(name) or ""
 
 
 def _tag_cn(name):
@@ -1863,22 +1685,6 @@ async def post_gallery_batch_link(request):
         return web.json_response({"ok": False, "error": f"批量硬链接失败: {e}"}, status=500)
 
 
-async def post_gallery_tag(request):
-    """body: { name } 创建自定义标签。"""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "JSON 解析失败"}, status=400)
-    name = (body.get("name") or "").strip()
-    if not name:
-        return web.json_response({"error": "标签名不能为空"}, status=400)
-    if len(name) > 60:
-        return web.json_response({"error": "名称过长"}, status=400)
-    # 自定义标签落在 zhule.db custom_tag 表，不再写 gallery/meta.json
-    cid = db.custom_tag_upsert(name)
-    return web.json_response({"ok": True, "created": cid != 0, "id": cid})
-
-
 def _norm_tag_names(v):
     """归一化标签名数组 → set[str]；非法返回 None。"""
     if not isinstance(v, list):
@@ -2265,8 +2071,8 @@ def _make_record(rel, full):
         pass
     # 落库只存正面提示词文本：整份 workflow/prompt JSON 由详情接口实时读 PNG，不落库
     _pp = _extract_positive_prompt(texts.get("prompt")) or ""
-    # 提示词标签按词条 id 传递；_backfill 顺带把存量的老词条名转成 id 并写回 PNG
-    pids, custom_tags, pt_names = _backfill_tag_fields(full, texts)
+    # 提示词标签按词条 id 传递；纯解析，不写回 PNG
+    pids, custom_tags, pt_names = _parse_record_tags(texts)
     # id -> 显示名：词条改名后展示名实时跟着变，标签不脱钩。
     # 词条被删（按 id 查不到）时用 PNG 里自带的默认名兜底
     tag_ids = {}
@@ -2289,21 +2095,18 @@ def _make_record(rel, full):
         "tags": tags,
         "tagIds": tag_ids,
         "customTags": list(custom_tags),
-        "customTagIds": {},
         "promptIds": pids,
         "hasWF": bool(texts.get("workflow")),
         "hasPrompt": bool(_pp),
         "prompt": _pp,
     }
-    # tagIds 已由 id 直接得来，无需 _rec_tag_ids 按名字反查
-    _rec_custom_tag_ids(rec)
     return rec
 
 
 def _write_index_cache():
     """全量写回 zhule.db 图库表（gallery_image / gallery_tag）。
 
-    内存内部格式（tags 为 name 字符串数组 + tagIds/customTagIds）直接交给 DB 层：
+    内存内部格式（tags 为 name 字符串数组 + tagIds）直接交给 DB 层：
     prompt 类标签按词库显示名反查 id 落 prompt_id 外键；custom 类标签按
     custom_tag 字典反查/插入落 custom_id 外键。
     """
