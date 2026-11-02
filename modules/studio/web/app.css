@@ -825,7 +825,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-detail-section-title { font-size: 12px; font-weight: 700; color: var(--accent);
   display: flex; align-items: center; gap: 6px; }
 .zhg-detail-hint { color: var(--text-3); font-size: 10px; font-weight: 400; }
-.zhg-detail-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.zhg-detail-tags { display: flex; flex-wrap: wrap; gap: 9px; }
 .zhg-lora { padding: 2px 8px; background: rgba(76, 58, 122, 0.35); color: var(--purple);
   border: 1px solid var(--purple-dim); border-radius: 10px; font-size: 11px; white-space: nowrap; }
 .zhg-cat-options { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1081,11 +1081,13 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 7px);
   transform: translateX(-50%) translateY(3px);
-  max-width: 300px; padding: 5px 9px; border-radius: 6px;
+  /* 不截断：短提示贴内容宽，长提示按 max-width 换行整体展示（此前 nowrap+ellipsis 会截断） */
+  width: max-content; max-width: min(360px, calc(100vw - 32px));
+  padding: 5px 9px; border-radius: 6px;
   border: 1px solid var(--border);
   background: #2b2f36; color: #e8eaed;
-  font-size: 12px; line-height: 1.5;
-  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+  font-size: 12px; line-height: 1.5; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; overflow: visible;
   box-shadow: 0 4px 12px rgba(0,0,0,.4);
   z-index: 2147483000; opacity: 0; pointer-events: none;
   transition: opacity .15s ease, transform .15s ease;
@@ -1104,11 +1106,13 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 /* ===== 全局 tooltip（JS 驱动，fixed 顶层，不再受组件 stacking context 遮挡） ===== */
 .zh-global-tip {
   position: fixed; z-index: 2147483647; display: none;
-  max-width: 320px; padding: 6px 10px; border-radius: 6px;
+  /* 不截断：超出宽度自动换行，整段提示完整可见（此前 nowrap+ellipsis 会截断） */
+  width: max-content; max-width: min(360px, calc(100vw - 32px));
+  padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--border);
   background: #2b2f36; color: #e8eaed;
-  font-size: 12px; line-height: 1.5;
-  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+  font-size: 12px; line-height: 1.5; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; overflow: visible;
   box-shadow: 0 4px 14px rgba(0,0,0,.45);
   pointer-events: none;
 }

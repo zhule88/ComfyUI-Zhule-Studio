@@ -291,11 +291,10 @@ def delete_subtree(node_id):
             conn.close()
 
 
-def _reorder(pid, ordered_raws):
-    """按 ordered_raws 顺序给指定父层的子节点赋连续 sort_order=1..n。
+def _reorder(pid, ordered_ids):
+    """按 ordered_ids（子节点 DB id 数组）顺序给指定父层的子节点赋连续 sort_order=1..n。
 
-    匹配先按原始名（编号前缀）再按显示名；未出现在列表中的现有节点按原规则排到末尾。
-    返回更新的节点数。
+    未出现在列表中的现有节点按原规则排到末尾。返回更新的节点数。
     """
     with _lock:
         conn = connect()
@@ -306,20 +305,16 @@ def _reorder(pid, ordered_raws):
             ).fetchall()
         finally:
             conn.close()
-    item_map = {}
-    for r in rows:
-        so = r["sort_order"] or 0
-        item_map.setdefault(f"{so:02d}_{r['name']}" if so > 0 else r["name"], r["id"])
-        item_map.setdefault(r["name"], r["id"])
+    row_ids = {r["id"] for r in rows}
     ordered, seen = [], set()
-    for rawname in ordered_raws or []:
-        if not rawname:
+    for nid in ordered_ids or []:
+        try:
+            nid = int(nid)
+        except (TypeError, ValueError):
             continue
-        nid = item_map.get(rawname)
-        if nid is None or nid in seen:
-            continue
-        ordered.append(nid)
-        seen.add(nid)
+        if nid in row_ids and nid not in seen:
+            ordered.append(nid)
+            seen.add(nid)
     rest = [r for r in rows if r["id"] not in seen]
     rest.sort(key=lambda r: (
         0 if (r["sort_order"] or 0) > 0 else 1,
@@ -1243,13 +1238,53 @@ def gallery_load_records(ids=None):
     return records
 
 
+def gallery_get_by_name(key):
+    """按图库相对路径取单条详情记录（字段同 gallery_load_records 单条 + customIds）。
+
+    图库详情数据源（不再读 PNG 元数据）：prompt/标签/模型/LORA 均经 DB 关联实时取。
+    key 为 gallery_image.name（图库相对路径，与详情接口 ?path= 一致）；查不到返回 None。
+    customIds 为自定义标签完整路径 -> id（str），详情展示/删除用 id 定位（id 优先于路径）。
+    """
+    key = (key or "").strip()
+    if not key:
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            row = conn.execute(
+                "SELECT id FROM {0} WHERE name = ?".format(GAL_IMG_TABLE), (key,)
+            ).fetchone()
+            gid = int(row["id"]) if row else None
+        finally:
+            conn.close()
+    if gid is None:
+        return None
+    records = gallery_load_records(ids=[gid])
+    if not records:
+        return None
+    rec = records[0]
+    # 自定义标签完整路径 -> id（gallery_load_records 未暴露该映射；custom_tag_id_index
+    # 的 key 是节点名即叶子名，故先取叶子再反查）
+    rec["customIds"] = {}
+    if rec.get("customTags"):
+        nidx = custom_tag_id_index()
+        for full in rec["customTags"]:
+            leaf = full.rsplit("/", 1)[-1] or full
+            cid = nidx.get(leaf) or nidx.get(full)
+            if cid:
+                rec["customIds"][full] = str(cid)
+    return rec
+
+
 def gallery_query_tag_gids(prompt_groups=None, custom_ids=None, mode="and"):
     """按标签 id 直查 gallery_tag，返回命中图库 id 集合（SQL 过滤，不走内存遍历）。
 
     prompt_groups -> list[list]，每个元素是一个词条及其子树展开后的所有 id（含自身）；
         按词条分组，保证 and 模式下"图须同时挂这些词条分支的标签"（逐组命中后交集，
         若平铺成一个 IN 列表会把组内并集误当命中）。
-    custom_ids -> 自定义标签 id 列表，每个 id 单独命中集合（叶子才是标签，无子树展开）。
+    custom_ids -> 自定义标签 id 列表，每个 id 连同其 custom_tag 子树后代一起命中
+        （父级分组下钻到叶子；图片 gallery_tag.custom_id 只挂叶子 id，选父级必须展开才有命中）。
     mode: and=同时满足所有标签（交集）；or=满足任一（并集）。
     无任何过滤条件时返回 None（调用方按"无需标签过滤"处理）。
     """
@@ -1274,9 +1309,27 @@ def gallery_query_tag_gids(prompt_groups=None, custom_ids=None, mode="and"):
                 ).fetchall()
                 single_sets.append({r["gallery_id"] for r in rows})
             for cid in customs:
+                # 子树展开：图片只挂叶子 custom_id，父级分组 id 必须下钻到后代一起命中，
+                # 否则选父级分组（如"角色"）筛选恒为空（与 prompt 侧 _prompt_subtree_ids 对齐）
+                _ensure_custom_tag_schema(conn)
+                try:
+                    root = int(cid)
+                except ValueError:
+                    continue
+                ids = [root]
+                frontier = [root]
+                while frontier:
+                    ph = ",".join("?" * len(frontier))
+                    kid_rows = conn.execute(
+                        "SELECT id FROM {0} WHERE parent_id IN ({1})".format(CUSTOM_TAG_TABLE, ph),
+                        frontier
+                    ).fetchall()
+                    frontier = [r["id"] for r in kid_rows if r["id"] not in ids]
+                    ids.extend(frontier)
+                ph = ",".join("?" * len(ids))
                 rows = conn.execute(
-                    "SELECT DISTINCT gallery_id FROM {0} WHERE custom_id = ?".format(GAL_TAG_TABLE),
-                    (cid,)
+                    "SELECT DISTINCT gallery_id FROM {0} WHERE custom_id IN ({1})".format(GAL_TAG_TABLE, ph),
+                    ids
                 ).fetchall()
                 single_sets.append({r["gallery_id"] for r in rows})
         finally:

@@ -1,9 +1,10 @@
 import { ref, reactive, nextTick } from 'vue';
-import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, ConfirmDialog, tagKey } from './galleryCommon.js';
+import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, tagKey } from './galleryCommon.js';
+import { DeleteDialog } from './deleteConfirm.js';
 
 export default {
   name: 'GalleryTopDown',
-  components: { TagTreePanel, OutNode, DetailTagNode, ConfirmDialog },
+  components: { TagTreePanel, OutNode, DetailTagNode, DeleteDialog },
   template: `
     <div class="page active gallery-page gallery-td-page">
     <div class="zhg-toolbar">
@@ -181,7 +182,7 @@ export default {
                   <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
                   <span class="zhg-tag hl-custom" :class="[tagThemeClass]"
                         :style="t.style || {}"
-                        :data-tip="'自定义标签，左键编辑词条，右键删除（遵循删除确认设置）'"
+                        :data-tip="'自定义标签，左键编辑词条，右键删除'"
                         v-for="t in customFlatTags" :key="'dtc' + tagKey(t)"
                         @click.stop="editDetailTag(t)" @contextmenu.prevent="askDeleteTag(t)">
                     {{ t.display }}
@@ -215,18 +216,8 @@ export default {
 
     <!-- 全屏查看：由公共模块 modules/common/zhule_fullviewer.js 命令式接管（非响应式） -->
 
-    <confirm-dialog :show="!!delTarget" title="确认删除图片" @confirm="confirmDelete" @cancel="cancelDelete">
-      <div class="zhg-del-msg">将删除该图片文件及其缩略图，此操作不可撤销。<br><b>{{ delTarget && delTarget.name }}</b></div>
-    </confirm-dialog>
-
-    <confirm-dialog :show="delBatchOpen" title="确认批量删除" @confirm="confirmBatchDelete" @cancel="cancelBatchDelete">
-      <div class="zhg-del-msg">是否删除选中的 <b>{{ selected.size }}</b> 张图片？<br>将删除图片文件及其缩略图，此操作不可撤销。</div>
-    </confirm-dialog>
-
-    <!-- 标签删除确认弹窗：简单询问是否移除当前标签，自定义标签只显叶子名 -->
-    <confirm-dialog :show="!!tagDeleteTarget" :title="'确认删除' + tagDeleteLabel" @confirm="confirmDeleteTag" @cancel="cancelDeleteTag">
-      <div class="zhg-del-msg">是否移除当前标签「{{ tagDeleteDisplay }}」？</div>
-    </confirm-dialog>
+    <!-- 全站唯一删除确认弹框：图片/批量/标签/词条共用，设置里开启「删除免确认」则不弹 -->
+    <delete-dialog :state="del.state" @confirm="del.confirm" @cancel="del.cancel"></delete-dialog>
 
     <div class="edit-overlay" v-if="renameOpen" @click.self="cancelRename">
       <div class="edit-dialog">
@@ -271,11 +262,6 @@ export default {
         </div>
       </div>
     </div>
-
-    <!-- 词条删除确认：与词库编辑弹窗删除一致 -->
-    <confirm-dialog :show="!!editWbDeleteTarget" title="确认删除词条" :busy="editWbDeleting" @confirm="confirmDeleteEditWb" @cancel="cancelDeleteEditWb">
-      <div class="zhg-del-msg">将删除词库词条「<b>{{ editWbDeleteTarget && editWbDeleteTarget.name }}</b>」及其提示词文件，此操作不可撤销。</div>
-    </confirm-dialog>
 
     <transition name="toast">
       <div v-if="toast" class="zhg-toast" :class="'toast-' + toastType" @click="toast = ''">

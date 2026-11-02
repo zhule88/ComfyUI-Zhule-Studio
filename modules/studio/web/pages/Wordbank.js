@@ -1,7 +1,9 @@
 import { reactive, computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
+import { useDeleteConfirm, DeleteDialog } from './deleteConfirm.js';
 
 export default {
   name: 'Wordbank',
+  components: { DeleteDialog },
   template: `
     <div class="page active">
       <div v-if="error" class="empty" style="padding:60px;text-align:center;color:#ff8fa8;">
@@ -184,7 +186,7 @@ export default {
                  }"
                  @pointerdown.stop="onTagPointerDown($event, idx)">
               <span>{{ item.name }}</span>
-              <span v-if="item._ph" class="ph-badge" title="大小类占位符：遍历/随机出词后填充该位置">♻</span>
+              <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
               <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
             </div>
           </div>
@@ -304,19 +306,8 @@ export default {
         </div>
       </div>
 
-      <!-- 删除词条确认框 -->
-      <div v-if="delConfirm" class="confirm-overlay" @click.self="delConfirm = null">
-        <div class="confirm-dialog">
-          <div class="confirm-title">确认删除</div>
-          <div class="confirm-msg">
-            是否确认删除当前提示词「{{ delConfirm.name }}」？删除后不再显示（数据仍保留在库中，可后续恢复）。
-          </div>
-          <div class="confirm-actions">
-            <button class="btn" @click="delConfirm = null">取消</button>
-            <button class="btn danger" @click="confirmDeleteWord">确认删除</button>
-          </div>
-        </div>
-      </div>
+      <!-- 全站唯一删除确认弹框：与图库删除共用（设置里开启「删除免确认」则不弹） -->
+      <delete-dialog :state="del.state" @confirm="del.confirm" @cancel="del.cancel"></delete-dialog>
 
       <!-- 全屏查看 -->
       <div v-if="viewer.open" class="viewer-overlay" @click.self="closeViewer">
@@ -449,8 +440,23 @@ export default {
     const getChipOrder = (tab, depth, parentPath) => {
       const t = chipOrder[tab];
       if (!t) return [];
+      // 旧路径键优先（存量存档）
       const exact = t[depth + '|' + parentPath];
       if (Array.isArray(exact)) return exact;
+      // 新格式：键为「层级|父节点id」（拖拽排序已按 id 记录），父 id = 路径反查
+      if (parentPath) {
+        const pid = chipIdFor(tab, parentPath.split('/').length - 2, parentPath);
+        if (pid) {
+          const byId = t[depth + '|' + pid];
+          if (Array.isArray(byId)) return byId;
+        }
+      } else {
+        const tid = tabIds.value[tab];
+        if (tid) {
+          const byId = t[depth + '|' + tid];
+          if (Array.isArray(byId)) return byId;
+        }
+      }
       // 兼容旧存档：整层全局顺序（无父路径）作为兜底
       const legacy = t[depth + '|'];
       if (Array.isArray(legacy)) return legacy;
@@ -464,7 +470,7 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
+        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
         randomPools: data.randomPools,
         randomMode: data.randomMode,
         traverseMode: data.traverseMode,
@@ -558,8 +564,9 @@ export default {
           state.selected.forEach(s => {
             if (!s) return;
             if (s._ph) {
-              // 占位符：直接还原（类名即占位名，随机池恢复后 sync 兜底补齐）
-              rebuilt.push({ _ph: true, _poolKey: s._poolKey || '', tab: s.tab || '', name: s.name || '' });
+              // 占位符：直接还原（类名即占位名，随机池恢复后 sync 兜底补齐）；
+              // 已抽取（_filled）的占位符带绑定词条信息，普通模式运行直接可用
+              rebuilt.push({ _ph: true, _poolKey: s._poolKey || '', tab: s.tab || '', name: s.name || '', _filled: !!s._filled, relPath: s.relPath || '', id: s.id || '', content: s.content || '', content_cn: s.content_cn || '' });
               return;
             }
             if (!s.tab || !s.relPath) return;
@@ -655,15 +662,7 @@ export default {
       const v = e && e.detail && e.detail.autoSelectParent;
       if (typeof v === 'boolean') pref.autoSelectParent = v;
     }
-    // 通用删除免确认（设置面板 zhule-pref-changed 广播完整 pref，detail.common.noDeleteConfirm）
-    const noDeleteConfirm = ref(readNoDeleteConfirm());
-    function readNoDeleteConfirm() {
-      try {
-        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
-        if (raw && raw.common && typeof raw.common.noDeleteConfirm === 'boolean') return raw.common.noDeleteConfirm;
-      } catch (e) { /* ignore */ }
-      return false;
-    }
+    // 通用删除免确认由 deleteConfirm.js 统一处理（onMounted 读取设置并监听广播）
     // 全局标签主题/圆角/颜色种子（与图库标签样式一致，作用于词库小分类 chip）
     const tagTheme = ref(readTagTheme());
     const tagRound = ref(readTagRound());
@@ -714,8 +713,6 @@ export default {
       return null;
     }
     function onGlobalPrefChanged(e) {
-      const c = e && e.detail && e.detail.common;
-      if (c && typeof c.noDeleteConfirm === 'boolean') noDeleteConfirm.value = c.noDeleteConfirm;
       const g = e && e.detail && e.detail.gallery;
       if (g) {
         if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
@@ -789,16 +786,6 @@ export default {
       return keys.map(k => k.split('/').map(dispKey).join('/')).join('/');
     });
 
-    // 父文件夹相对 tab 的路径（供后端创建词条），如 'A/B'
-    const addCardParentRel = () => {
-      const sel = getSelections();
-      let key = '';
-      for (let i = 0; i < maxDepth.value; i++) {
-        if (Array.isArray(sel[i]) && sel[i].length) key = sel[i][0];
-      }
-      return key ? key.split('/').slice(1).join('/') : '';
-    };
-
     const openAddChip = (depth) => {
       addChipDepth.value = depth;
       addChipName.value = '';
@@ -815,11 +802,13 @@ export default {
       addingChip.value = true;
       try {
         const parentKey = chipParentPath(addChipDepth.value);
-        const parent = parentKey ? parentKey.split('/').slice(1).join('/') : '';
+        const parentId = parentKey
+          ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
+          : (tabIds.value[data.activeTab] || '');
         const resp = await fetch('/zhule_studio/api/wordbank/chip', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab: data.activeTab, parent, name }),
+          body: JSON.stringify({ parentId, name }),
         });
         const json = await resp.json();
         if (!resp.ok) { showToast(json.error || '创建失败', 'error'); return; }
@@ -853,8 +842,15 @@ export default {
       if (!name) { showToast('请输入词条名', 'warn'); return; }
       addingCard.value = true;
       try {
-        const parent = addCardParentRel();
-        const body = { tab: data.activeTab, parent, name };
+        const sel = getSelections();
+        let parentKey = '';
+        for (let i = 0; i < maxDepth.value; i++) {
+          if (Array.isArray(sel[i]) && sel[i].length) parentKey = sel[i][0];
+        }
+        const parentId = parentKey
+          ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
+          : (tabIds.value[data.activeTab] || '');
+        const body = { parentId, name };
         if (addCardContent.value) body.content = addCardContent.value;
         if (!addCardIsTxt.value && addCardContentCn.value) body.content_cn = addCardContentCn.value;
         const resp = await fetch('/zhule_studio/api/wordbank/card', {
@@ -895,7 +891,7 @@ export default {
       editing.value = true;
       try {
         const body = {
-          path: editTarget.value.relPath,
+          id: editTarget.value.id,
           name: nm,
         };
         // 仅当输入框非空或原本就有内容时才写回，避免误清空
@@ -924,36 +920,40 @@ export default {
       }
     };
 
-    // ============ 删除词条 ============
-    const delConfirm = ref(null);
+    // ============ 删除词条（弹框/免确认统一由 deleteConfirm.js 处理） ============
+    const del = useDeleteConfirm();
     const deleting = ref(false);
 
     const askDeleteWord = (file) => {
-      if (noDeleteConfirm.value) { delConfirm.value = file; confirmDeleteWord(); return; }
-      delConfirm.value = file;
+      if (!file) return;
+      del.ask({
+        title: '确认删除',
+        message: '是否确认删除当前提示词？删除后不再显示（数据仍保留在库中，可后续恢复）。',
+        name: file.name || '',
+        run: () => deleteWordNow(file),
+      });
     };
 
-    const confirmDeleteWord = async () => {
-      if (!delConfirm.value || deleting.value) return;
+    const deleteWordNow = async (file) => {
+      if (!file || deleting.value) return;
       deleting.value = true;
       try {
         const resp = await fetch('/zhule_studio/api/wordbank/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: delConfirm.value.relPath }),
+          body: JSON.stringify({ id: file.id }),
         });
         const json = await resp.json();
         if (json.error) {
           showToast('删除失败：' + json.error, 'error');
         } else {
-          showToast('已删除：' + delConfirm.value.name, 'success');
+          showToast('已删除：' + file.name, 'success');
           // 若删除来源是编辑弹窗，同步关闭编辑面板
-          if (editTarget.value && editTarget.value.relPath === delConfirm.value.relPath) {
+          if (editTarget.value && editTarget.value.id === file.id) {
             editTarget.value = null;
             editing.value = false;
           }
         }
-        delConfirm.value = null;
         await load();
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
@@ -1065,7 +1065,7 @@ export default {
       if (!file || !f) return;
       uploadRefBusy.value = true;
       const fd = new FormData();
-      fd.append('path', file.relPath);
+      fd.append('id', file.id);
       fd.append('file', f);
       try {
         const resp = await fetch('/zhule_studio/api/wordbank/image-upload', {
@@ -1348,6 +1348,11 @@ export default {
     const previewText = computed(() => {
       if (data.randomMode || data.traverseMode) {
         const modeName = data.traverseMode ? '遍历' : '随机';
+        const filled = data.selected.filter(s => !s._ph || s._filled);
+        if (filled.length) {
+          const texts = filled.map(s => (pref.translate && s.content_cn && s.content_cn.trim()) ? s.content_cn : s.content);
+          return modeName + '抽取：' + texts.join(', ');
+        }
         if (data.randomPools.length) {
           const display = data.randomPools.map(p => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display));
           return modeName + '模式：' + display.length + ' 个池子 [' + display.join(' | ') + ']，每池抽 1 条'
@@ -1355,7 +1360,7 @@ export default {
         }
         return modeName + '模式已开，但随机池为空。右键 tab 或 chip 加入';
       }
-      const text = data.selected.filter(s => !s._ph).map(s => {
+      const text = data.selected.filter(s => !s._ph || s._filled).map(s => {
         if (pref.translate && s.content_cn && s.content_cn.trim()) return s.content_cn;
         return s.content;
       }).join(', ');
@@ -1376,6 +1381,25 @@ export default {
     // ============ 随机池（多项独立子池：每个右键选中的 tab / chip 各为一池，随机/遍历时各抽一组合；父子互不包含） ============
     const samePath = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
     const containsPath = (a, b) => a.length <= b.length && a.every((v, i) => v === b[i]);
+    // 从已加载卡片反查 chip 节点的 DB id：右键 chip = 当前筛选分支下 chipKeys[depth] 对应的节点，
+    // 取该节点在卡片 chipIds 链中同层的 id（同一 chip 下所有卡片该层 id 一致）。
+    const chipIdFor = (tab, depth, name) => {
+      const files = bankData.value[tab] || [];
+      const sel = data.selections[tab] || [];
+      const f = files.find(c => {
+        const keys = c.chipKeys || [];
+        if (keys[depth] !== name) return false;
+        for (let i = 0; i < depth; i++) {
+          const picks = sel[i];
+          if (!Array.isArray(picks) || !picks.length) continue;
+          if (!keys[i] || !picks.includes(keys[i])) return false;
+        }
+        return true;
+      });
+      if (!f) return '';
+      const ids = f.chipIds || [];
+      return ids[depth] || '';
+    };
 
     const chipParentPath = (depth) => {
       if (depth <= 0) return '';
@@ -1408,6 +1432,27 @@ export default {
       }
       return { conflict: false };
     };
+
+    // ===== 调试日志：console + 后端 log/wordbank_debug_*.log（排查随机池用） =====
+    let _logBuf = [];
+    const zhuleLog = (...args) => {
+      const ts = new Date().toLocaleTimeString('zh-Hans-CN', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
+      const line = '[Wordbank] ' + ts + ' ' + args.map(a => {
+        if (a instanceof Error) return a.stack || String(a);
+        if (typeof a === 'object') { try { return JSON.stringify(a); } catch (e) { return String(a); } }
+        return String(a);
+      }).join(' | ');
+      console.log(line);
+      _logBuf.push(line);
+      if (_logBuf.length >= 30) flushZhuleLog();
+    };
+    const flushZhuleLog = () => {
+      if (!_logBuf.length) return;
+      const lines = _logBuf.splice(0, _logBuf.length);
+      fetch('/zhule_studio/api/debug_log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', flushZhuleLog);
+    const selSummary = () => data.selected.map(s => (s._ph ? 'PH[' + s._poolKey + ']' : (s._poolKey ? 'R[' + s._poolKey + ']' + s.name : s.name)));
 
     const isTabInPool = (tab) => data.randomPools.some(it => it.kind === 'tab' && it.tab === tab);
     // 大类下有任意提示词被选中时高亮该 tab
@@ -1498,23 +1543,26 @@ const submitAddTab = async () => {
     };
     const togglePoolForTab = (tab) => {
       const idx = data.randomPools.findIndex(it => it.kind === 'tab' && it.tab === tab);
-      if (idx >= 0) { data.randomPools.splice(idx, 1); syncPlaceholders(); return; }
+      if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForTab: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
       const chk = hasPoolConflict(tab, []);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
       data.randomPools.push({ kind: 'tab', tab, path: [], display: tab });
+      zhuleLog('togglePoolForTab: 加入池', { kind: 'tab', tab }, 'selected=', selSummary());
       syncPlaceholders();
     };
     const togglePoolForChip = (depth, name) => {
       const path = chipPathFor(depth, name);
       const tab = data.activeTab;
+      const chipId = chipIdFor(tab, depth, name);
       const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && samePath(it.path, path));
-      if (idx >= 0) { data.randomPools.splice(idx, 1); syncPlaceholders(); return; }
+      if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForChip: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
       const chk = hasPoolConflict(tab, path);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'chip', tab, path, display: path.map(dispKey).join('/') });
+      data.randomPools.push({ kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') });
+      zhuleLog('togglePoolForChip: 加入池', { kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') }, 'selected=', selSummary());
       syncPlaceholders();
     };
-    const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); syncPlaceholders(); };
+    const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
 
     // ============ 占位符（右键 tab / chip 进池时同步出现在已选列表，类名即占位名；遍历/随机出词后填充该位置） ============
     const poolKeyFor = (item) => item.kind === 'tab' ? 'tab:' + item.tab : 'chip:' + item.tab + '|' + (item.path || []).join('/');
@@ -1524,35 +1572,60 @@ const submitAddTab = async () => {
       tab: item.tab,
       name: item.kind === 'tab' ? tabLabel(item.tab) : (item.display || (item.path || []).map(dispKey).join('/')),
     });
-    // 以随机池为基准同步占位符：进池缺则补、出池多则删，保持已选列表与池一一对应
+    // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:tab|逐层路径），用于「分类：抽中词条名」拼接
+    const placeholderBaseName = (s) => {
+      if (!s || !s._poolKey) return '';
+      const k = s._poolKey;
+      if (k.startsWith('tab:')) return tabLabel(k.slice(4));
+      const bar = k.indexOf('|');
+      if (bar < 0) return '';
+      return k.slice(bar + 1).split('/').map(dispKey).join('/');
+    };
+    // 以随机池为基准同步占位符与随机结果标签：
+    // 池在 → 占位符（黄色分类标签）恒保留；池移除 → 该池的占位符与结果标签一并删除；
+    // 旧版独立结果标签（带 _poolKey 的普通标签）不再保留，抽取结果统一绑定在占位符内部。
     const syncPlaceholders = () => {
       const keys = data.randomPools.map(poolKeyFor);
-      data.selected = data.selected.filter(s => !s._ph || keys.includes(s._poolKey));
+      data.selected = data.selected.filter(s => {
+        if (s._ph) return keys.includes(s._poolKey);
+        if (s._poolKey !== undefined && s._poolKey !== null) return false;
+        return true;
+      });
       for (const item of data.randomPools) {
         const k = poolKeyFor(item);
         if (!data.selected.some(s => s._ph && s._poolKey === k)) data.selected.push(placeholderFor(item));
       }
+      zhuleLog('syncPlaceholders', 'poolKeys=', keys, 'selected=', selSummary());
     };
-    // 把抽中的词条按池填入对应槽位（占位符或上一轮已填充的池词条，均带 _poolKey 标记）。
-    // 槽位位置 = 用户拖拽好的顺序；填充后的词条保留 _poolKey，下一轮继续按原位填充，
-    // 避免遍历组合 [...保留项, ...池条目] 把池词条挤到末尾。无任何槽位时整体替换为组合。
-    const fillPlaceholders = (picked) => {
-      const hasSlot = data.selected.some(s => s._ph || s._poolKey);
-      if (!hasSlot) { data.selected = picked.slice(); return; }
+    // 点🎲后：把抽中词条写入对应的黄色占位符内部（绑定关系，标签显示「分类：抽中词条名」）。
+    // 占位符恒保留；再点🎲原位更新；不新增独立结果标签。
+    const updateRandomResults = (picked) => {
       const map = {};
       for (const e of picked) {
         if (!e || e._poolKey === undefined || e._poolKey === null) continue;
         if (!map[e._poolKey]) map[e._poolKey] = e;
       }
-      const next = [];
+      const fillPh = (ph, e) => {
+        ph._filled = true;
+        ph.tab = e.tab; ph.relPath = e.relPath; ph.id = e.id || '';
+        ph.name = placeholderBaseName(ph) + '：' + e.name;
+        ph.content = e.content; ph.content_cn = e.content_cn;
+      };
+      // 1) 已存在的占位符原位填充/更新
       for (const s of data.selected) {
-        if (s._ph || s._poolKey) {
-          const e = map[s._poolKey];
-          if (e) next.push({ tab: e.tab, relPath: e.relPath, id: e.id || '', name: e.name, content: e.content, content_cn: e.content_cn, _poolKey: e._poolKey });
-          // 池词条缺失时该槽位丢弃，避免残留无内容标签
-        } else next.push(s);
+        if (!s._ph || !map[s._poolKey]) continue;
+        fillPh(s, map[s._poolKey]);
       }
-      data.selected = next;
+      // 2) 异常兜底：池在但占位符缺失时补建并填充（正常流程 syncPlaceholders 已保证占位符存在）
+      for (const k of Object.keys(map)) {
+        if (data.selected.some(s => s._ph && s._poolKey === k)) continue;
+        const item = data.randomPools.find(it => poolKeyFor(it) === k);
+        if (!item) continue;
+        const ph = placeholderFor(item);
+        data.selected.push(ph);
+        fillPh(ph, map[k]);
+      }
+      zhuleLog('updateRandomResults', 'picked=', picked.map(p => p.name + '@' + p._poolKey), 'selected=', selSummary());
     };
 
     const setCardMode = (m) => { pref.cardMode = m; };
@@ -1701,9 +1774,15 @@ const submitAddTab = async () => {
         // 移除占位符或已填充的池槽位词条时，同步移出对应随机池，保持池与槽位一一对应
         const k = s._poolKey;
         const pi = data.randomPools.findIndex(it => poolKeyFor(it) === k);
-        if (pi >= 0) data.randomPools.splice(pi, 1);
+        if (pi >= 0) {
+          const rm = data.randomPools[pi];
+          data.randomPools.splice(pi, 1);
+          zhuleLog('removeSelected: 移出池', rm, 'idx=', idx, 'selected=', selSummary());
+        }
       }
       data.selected.splice(idx, 1);
+      // 同步占位符，确保剩余池与占位符一一对应（补缺失/删多余）
+      syncPlaceholders();
     };
     const clearAll = () => { data.selected = []; };
     const toggleRandomMode = () => {
@@ -1729,20 +1808,28 @@ const submitAddTab = async () => {
       if (!files.length && tabs.value.includes(item.tab)) {
         // 懒加载下该分类尚未加载：异步补拉数据，返回 null 让调用方提示稍候
         load(false, item.tab);
+        zhuleLog('poolCandidates: 懒加载补拉', item.kind, 'tab=', item.tab, 'path=', item.path || []);
         return null;
       }
-      if (item.kind === 'tab') return files;
-      return files.filter(f => containsPath(item.path, f.chipKeys) || containsPath(item.path, f.chips));
+      if (item.kind === 'tab') { zhuleLog('poolCandidates: tab池候选', item.tab, 'count=', files.length); return files; }
+      // chip 池候选 = 按节点 DB id 递归收集：该 chip 下所有后代卡片（chipIds 祖先链含本 id 的叶子）即为候选，
+      // 与路径/前后缀匹配完全无关；词条改名、移动、换父级后 id 不变，候选恒稳定。
+      const id = item.chipId;
+      if (!id) { zhuleLog('poolCandidates: chip池缺chipId（旧存档未迁移，请重新右键加入随机池）', 'tab=', item.tab, 'path=', item.path || []); return []; }
+      const out = files.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(id));
+      zhuleLog('poolCandidates: chip池', 'tab=', item.tab, 'chipId=', id, 'count=', out.length, 'total=', files.length, 'sampleChipIds=', files.slice(0, 3).map(f => f.chipIds));
+      return out;
     };
 
     // 每个池子各抽一条，返回组合（随机模式用）
     const pickFromEachPool = () => {
-      if (!data.randomPools.length) return null;
+      if (!data.randomPools.length) { zhuleLog('pickFromEachPool: 随机池为空'); return null; }
       const picks = [];
       for (const item of data.randomPools) {
         const c = poolCandidates(item);
-        if (!c || !c.length) return null;
+        if (!c || !c.length) { zhuleLog('pickFromEachPool: 候选为空返回null', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
+        zhuleLog('pickFromEachPool: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, 'relPath=', file.relPath, '候选数=', c.length);
         picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, _poolKey: poolKeyFor(item) });
       }
       return picks;
@@ -1797,10 +1884,56 @@ const submitAddTab = async () => {
       return combos.map(combo => [...kept, ...combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey }))]);
     };
 
-    const singleRandom = () => {
+    // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
+    // 该 chip 节点的 id，补上 chipId 后候选匹配一律走 id 递归，路径逻辑彻底废弃。
+    const normalizePoolIds = () => {
+      for (const it of data.randomPools) {
+        if (it.kind !== 'chip' || it.chipId) continue;
+        const files = bankData.value[it.tab] || [];
+        if (!files.length) continue;
+        const keyPath = it.path || [];
+        if (!keyPath.length) continue;
+        const dispPath = keyPath.map(dispKey);
+        let hit = null;
+        let hitLen = 0;
+        for (const v of [{ arr: keyPath, prop: 'chipKeys' }, { arr: dispPath, prop: 'chips' }, ...(dispPath.length > 1 ? [{ arr: dispPath.slice(1), prop: 'chips' }] : [])]) {
+          if (hit || !v.arr.length) continue;
+          const f = files.find(c => v.arr.every((s, i) => (c[v.prop] || [])[i] === s));
+          if (f) { hit = f; hitLen = v.arr.length; }
+        }
+        if (!hit) continue;
+        const ids = hit.chipIds || [];
+        if (ids.length >= hitLen) it.chipId = ids[hitLen - 1];
+      }
+      syncPlaceholders();
+    };
+
+    // 随机池里所有 tab 的数据是否都已加载；没加载的先补齐（懒加载下未打开过的分类会被误判为空）
+    const ensurePoolData = async () => {
+      const missing = data.randomPools.filter(it => {
+        const files = bankData.value[it.tab] || [];
+        return !files.length && tabs.value.includes(it.tab);
+      });
+      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + p.tab + (p.chipId ? '/id:' + p.chipId : (p.path ? '/' + p.path.join('/') : ''))), 'missing=', missing.map(m => m.tab));
+      if (missing.length) {
+        // 并行补拉缺失的 tab，补齐后再抽
+        await Promise.all(missing.map(it => load(false, it.tab)));
+      }
+      // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
+      normalizePoolIds();
+      // 补拉完仍为空 = 该 tab 真的没有词条
+      const ready = data.randomPools.every(it => (bankData.value[it.tab] || []).length > 0);
+      zhuleLog('ensurePoolData: ready=', ready, '各池词条数=', data.randomPools.map(p => p.tab + ':' + (bankData.value[p.tab] || []).length));
+      return ready;
+    };
+
+    const singleRandom = async () => {
+      const ready = await ensurePoolData();
+      if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条），请检查随机池', 'warn');
       const picked = pickFromEachPool();
       if (!picked) return showToast('随机池为空或含空分类，右键 tab 或 chip 加入随机池', 'warn');
-      showToast('已抽取：' + picked.map(s => s.name || s.content).join(' / ') + '（占位符保持不变）', 'success', 3200);
+      updateRandomResults(picked);
+      showToast('已抽取：' + picked.map(s => s.name || s.content).join(' / ') + '，已填入黄色分类标签', 'success', 3200);
     };
 
     // ============ 池子模式逐条出图：驱动画布逐条运行，等 ack 再下一条 ============
@@ -1908,10 +2041,12 @@ const submitAddTab = async () => {
       };
     };
 
-    const runGenerate = () => {
+    const runGenerate = async () => {
       const count = pref.genCount;
       if (data.randomMode || data.traverseMode) {
         if (!data.randomPools.length) return showToast('随机池为空，右键 tab 或 chip 加入随机池', 'warn');
+        const ready = await ensurePoolData();
+        if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条），请检查随机池', 'warn');
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
         let combos;
@@ -1959,7 +2094,8 @@ const submitAddTab = async () => {
         runNextInQueue();
         return;
       }
-      const readyItems = data.selected.filter(s => !s._ph);
+      // 普通模式：占位符已填充（绑定抽中词条）时参与运行；未抽取的占位符跳过
+      const readyItems = data.selected.filter(s => !s._ph || s._filled);
       if (!readyItems.length) return showToast('还没选任何提示词', 'warn');
       if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
       if (!linkParams.bind) {
@@ -2042,9 +2178,12 @@ const submitAddTab = async () => {
           const ordered = [...line];
           const [moved] = ordered.splice(from, 1);
           ordered.splice(to, 0, moved);
-          // 按「层级+父路径」隔离记录显示名顺序（本地），写回文件夹由「排序保存」统一完成
+          // 按「层级+父节点id」隔离记录显示名顺序（本地），写回文件夹由「排序保存」统一完成
           const parentPath = chipParentPath(depth);
-          chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentPath]: ordered.map(dispKey) };
+          const parentId = parentPath
+            ? (chipIdFor(data.activeTab, parentPath.split('/').length - 2, parentPath) || parentPath)
+            : (tabIds.value[data.activeTab] || '');
+          chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentId]: ordered.map(dispKey) };
           showToast('分类顺序已调整，点击「排序保存」写回文件夹', 'info', 2200);
         }
       }
@@ -2054,67 +2193,93 @@ const submitAddTab = async () => {
     // ============ 手动「排序保存」：把当前完整数据顺序写回文件夹 ============
     const bankSaving = ref(false);
 
-    // 从当前完整数据重建「父路径 -> 直接子项原始名」的有序映射：
+    // 从当前完整数据重建「父节点 id -> 直接子节点 id」的有序映射：
     // 基底 = 后端层级深度优先顺序（卡片按 relPath 逐段排序），chipOrder（显示名）覆盖中间层顺序
     const buildBankOrder = () => {
       const order = {};
+      const nameById = {};
       const seen = new Set();
-      const pushChild = (parent, child) => {
-        const key = parent + '/' + child;
+      const pushChild = (parentId, childId) => {
+        const key = parentId + '/' + childId;
         if (seen.has(key)) return;
         seen.add(key);
-        if (!order[parent]) order[parent] = [];
-        order[parent].push(child);
+        if (!order[parentId]) order[parentId] = [];
+        order[parentId].push(childId);
       };
+      const tabIdOf = (tab) => tabIds.value[tab] || '';
       // 顶层 tab：当前展示顺序
-      tabs.value.forEach(t => pushChild('', t));
+      tabs.value.forEach(t => {
+        const tid = tabIdOf(t);
+        if (!tid) return;
+        pushChild('', tid);
+        nameById[tid] = t;
+      });
       tabs.value.forEach(tab => {
+        const tid = tabIdOf(tab);
+        if (!tid) return;
         const cards = bankData.value[tab] || [];
         cards.forEach(card => {
-          // chip 中间层：chipKeys 每级是完整相对路径（tab/层1/层2...），父=去掉最后一段
+          // chip 中间层：chipKeys 每级完整相对路径，chipIds 每级 DB id（不含 tab 根）
           const keys = Array.isArray(card.chipKeys) ? card.chipKeys : [];
-          keys.forEach(k => {
-            const idx = k.lastIndexOf('/');
-            if (idx > 0) pushChild(k.slice(0, idx), k.slice(idx + 1));
-            else pushChild(tab, k);
+          const ids = Array.isArray(card.chipIds) ? card.chipIds : [];
+          keys.forEach((k, i) => {
+            const pid = i === 0 ? tid : ids[i - 1];
+            const cid = ids[i];
+            if (!pid || !cid) return;
+            pushChild(String(pid), String(cid));
+            nameById[String(cid)] = dispKey(k);
           });
-          // 卡片层：relPath 最后一段（目录原始名或 txt 文件名），父=去掉最后一段
-          const rp = card.relPath || '';
-          const idx = rp.lastIndexOf('/');
-          if (idx >= 0) pushChild(rp.slice(0, idx), rp.slice(idx + 1));
+          // 卡片层：父 = 最后一级 chip id（无 chip 则 tab id）
+          const pid = ids.length ? String(ids[ids.length - 1]) : tid;
+          if (pid && card.id) {
+            pushChild(String(pid), String(card.id));
+            nameById[String(card.id)] = card.name || dispKey(card.relPath || '');
+          }
         });
       });
-      // 应用 chipOrder：对每个 tab 的每层，把对应父路径下的直接子项按显示名顺序重排
+      // 应用 chipOrder：对每个 tab 的每层，把对应父节点下的直接子项按显示名顺序重排
       tabs.value.forEach(tab => {
         const tOrder = chipOrder[tab] || {};
         Object.keys(tOrder).forEach(dStr => {
           const sep = dStr.indexOf('|');
           const d = parseInt(sep >= 0 ? dStr.slice(0, sep) : dStr, 10);
-          const parentPath = sep >= 0 ? dStr.slice(sep + 1) : '';
+          const parentKey = sep >= 0 ? dStr.slice(sep + 1) : '';
           const names = tOrder[dStr];
           if (!Array.isArray(names) || !names.length) return;
-          // 新格式：只重排指定父路径下的直接子项；旧格式（parentPath=''）整层全局应用
-          let parents;
-          if (sep >= 0 && parentPath) {
-            parents = order[parentPath] ? [parentPath] : [];
-          } else {
-            parents = Object.keys(order).filter(p => (p === tab || p.startsWith(tab + '/')) && p.split('/').length === d + 1);
+          // 新格式：parentKey 为父节点 id；旧格式：为完整路径（反查 id）
+          let parents = [];
+          if (parentKey) {
+            if (/^\d+$/.test(parentKey)) {
+              if (order[parentKey]) parents = [parentKey];
+            } else {
+              const byPath = new Map();
+              const cards = bankData.value[tab] || [];
+              cards.forEach(c => {
+                const keys = Array.isArray(c.chipKeys) ? c.chipKeys : [];
+                const ids = Array.isArray(c.chipIds) ? c.chipIds : [];
+                keys.forEach((k, i) => { if (ids[i]) byPath.set(k, String(ids[i])); });
+              });
+              const pid = byPath.get(parentKey);
+              if (pid && order[pid]) parents = [pid];
+            }
           }
+          if (!parents.length) return;
           parents.forEach(p => {
             const items = order[p];
             if (!items || items.length < 2) return;
             const byDisp = new Map();
-            items.forEach(raw => {
-              const disp = dispKey(raw);
+            items.forEach(cid => {
+              const disp = String(nameById[cid] != null ? nameById[cid] : cid);
               if (!byDisp.has(disp)) byDisp.set(disp, []);
-              byDisp.get(disp).push(raw);
+              byDisp.get(disp).push(cid);
             });
             const reordered = [];
             const used = new Set();
-            names.forEach(disp => {
-              (byDisp.get(disp) || []).forEach(raw => { if (!used.has(raw)) { reordered.push(raw); used.add(raw); } });
+            names.forEach(n => {
+              const disp = /^\d+$/.test(String(n)) ? String(n) : String(dispKey(n));
+              (byDisp.get(disp) || []).forEach(cid => { if (!used.has(cid)) { reordered.push(cid); used.add(cid); } });
             });
-            items.forEach(raw => { if (!used.has(raw)) { reordered.push(raw); used.add(raw); } });
+            items.forEach(cid => { if (!used.has(cid)) { reordered.push(cid); used.add(cid); } });
             order[p] = reordered;
           });
         });
@@ -2141,7 +2306,7 @@ const submitAddTab = async () => {
           return;
         }
         if (json.ok) {
-          showToast('排序已保存：重命名 ' + (json.renamed || 0) + ' 项', 'success', 3000);
+          showToast('排序已保存：更新 ' + (json.total || 0) + ' 项', 'success', 3000);
           await load(true);
         } else {
           showToast('排序保存失败：' + (json.message || '未知错误'), 'error', 4000);
@@ -2402,7 +2567,7 @@ const submitAddTab = async () => {
       loaded, tabLoading, error, tabs, data, pref, drag, load,
       editTarget, editName, editContent, editContentCn, editIsTxt, editing,
       openEdit, cancelEdit, submitEdit,
-      delConfirm, askDeleteWord, confirmDeleteWord,
+      del, askDeleteWord,
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,

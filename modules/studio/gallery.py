@@ -1030,6 +1030,10 @@ def _tag_hit(tag, rec_tags, anc, rel_map=None):
     if rel and rel_map:
         for rt in rec_tags:
             r = rel_map.get(rt)
+            # 自定义标签在 rec_tags 里存的是完整路径（'测试/喜欢'），提示词树 rel_map 查不到，
+            # 直接拿 rt 本身当路径比较——否则带 rel 的自定义标签（ltags 老路径）恒不命中
+            if r is None:
+                r = rt
             if r and (r == rel or r.startswith(rel + "/")):
                 return True
         return False
@@ -1223,6 +1227,19 @@ async def get_gallery(request):
         _, anc = get_tag_tree()
         use_tags = tags + ltags
         filtered = [r for r in records if _matches(r, use_tags, models, loras, q, anc, tag_mode)]
+        # 自定义标签 id 不被 legacy 路径吞掉：老状态混入任一无 id 标签（ltags 非空）即走进本分支，
+        # 此前 ctags 在此被完全忽略 → 自定义标签筛选整体失效。ctags 仍走 SQL 直查后按 mode 合并：
+        # and=与内存结果交集；or=把 ctags 命中但 tags/ltags 未命中的图补入（其余条件仍需满足）
+        if ctags:
+            cgids = db.gallery_query_tag_gids([], ctags, tag_mode)
+            if cgids is not None:
+                if tag_mode == "or":
+                    have = {r.get("id") for r in filtered}
+                    filtered += [r for r in records
+                                 if r.get("id") in cgids and r.get("id") not in have
+                                 and _matches(r, [], models, loras, q, anc, tag_mode)]
+                else:
+                    filtered = [r for r in filtered if r.get("id") in cgids]
     else:
         # 父级词条展开为子树 id（保持 anc 语义），再交给 SQL 直查 gallery_tag；
         # 每个词条一个分组，and 模式逐组命中后交集（图须同时挂这些词条分支的标签）
@@ -1348,86 +1365,45 @@ def _drop_detail_cache(rel=None):
 
 
 async def get_gallery_detail(request):
-    """单图详情：完整 PNG 元数据（workflow/prompt 只回存在标志与预览）。重复打开走内存缓存，避免反复读大图。"""
+    """单图详情：数据源为 DB（gallery_image + gallery_tag/gallery_lora 关联）。
+
+    词条/自定义标签/模型/LORA 名均经 id 关联实时取（改名自动跟随），prompt 直读 DB，
+    不再逐张打开 PNG 读 tEXt 元数据；打标/重命名等行级写库后本接口自动取到新值。
+    workflow 未落库，hasWF 恒 False（不展示 workflow 入口）；如需 workflow 原文，
+    仍可走 get_gallery_workflow 的 PNG 兜底读取（按钮跳转场景）。
+    """
     rel = (request.query.get("path") or "").strip()
-    full = _safe_full(rel)
-    if not full or not os.path.isfile(full):
+    if not rel:
         return web.json_response({"error": "文件不存在"}, status=404)
-    try:
-        st = os.stat(full)
-    except OSError:
+    rec = db.gallery_get_by_name(rel)
+    if rec is None:
         return web.json_response({"error": "文件不存在"}, status=404)
-    cache_key = (rel, st.st_mtime, st.st_size)
-    hit = _detail_cache.get(cache_key)
-    if hit is not None:
-        return web.json_response(hit)
-    texts = png_text.read_png_text(full)
-    wf = texts.get("workflow") or ""
-    pt = texts.get("prompt") or ""
-    # 两源标签按来源标记：prompt 类（词库词条）只读排在前；custom 类（自定义标签）可增删排在后
-    # 提示词标签在 PNG 内是词条 id，展示时经 id 还原名字（词条改名后标签跟着变）
-    refs = _parse_tag_refs(texts.get("zhule_prompt_tags"))
-    pids = [i for i, _n in refs if i]
-    # 只有名字、没有 id 的老数据：按名字反查（转不出 id 的就按名字展示）
-    legacy = [n for i, n in refs if n and not i]
-    # 词条被删、按 id 查不到时用 PNG 里自带的默认名兜底
-    pt_names = {i: n for i, n in refs if i and n}
-    # 自定义标签：展示层只需当前**叶子名**（id->name，层级/改名后跟着变），
-    # 与父类无关；取不到才用 PNG 里的默认名/路径末段兜底。完整路径只用于图库级筛选与写盘快照
-    nidx = _custom_tag_name_index()
-    custom = []  # (展示名, id 或空串（自由文本）)
-    for cid, pth, nm in _parse_custom_tag_refs(texts.get("zhule_custom_tags")):
-        if cid:
-            # 新格式：展示用当前叶子名，id 直用 PNG 内 cid（唯一标识，绝不按名反查）
-            _cur = nidx.get(str(cid)) or nm or (re.split(r"[/\\:\-]", pth or "")[-1] or pth)
-            _key = str(cid)
-        else:
-            # 数据库出现前的自由文本：与数据库标签无对应关系，原样展示、id 留空，
-            # 绝不反查名册（碰巧同名会错绑）
-            _cur = pth or nm or ""
-            _key = ""
-        if _cur:
-            custom.append((_cur, _key))
-    seen = set()
+    # 词条标签（prompt 类）在前、自定义标签（custom 类）在后；名字均取 DB 当前值
     tags = []
-    for eid in pids:
-        n = _tag_name(eid) or pt_names.get(str(eid)) or ""
-        if n and n not in seen:
-            # id 由 PNG 直接给出，无需按名字反查
-            tags.append({"id": eid, "name": n, "prompt": True,
-                         "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
-            seen.add(n)
-    # 存量 PNG 里存的仍是老词条名（ID 化只改了 DB 侧，PNG 未回写）：按名字展示，
-    # 与 _normalize 写入侧一样补做 name->id 反查，否则这批标签在详情里会整批消失
-    if legacy:
-        id_idx = _tag_id_index()
-        for n in legacy:
-            if n and n not in seen:
-                tags.append({"id": id_idx.get(n) or "", "name": n, "prompt": True,
-                             "custom": False, "cn": _tag_cn(n), "en": _tag_en(n)})
-                seen.add(n)
-    for n, key in custom:
-        # id 只来自 PNG 内 cid（新格式对象）；自由文本无 id 就留空，不反查名册
-        tid = key if (key and key.isdigit()) else ""
-        tags.append({"id": tid, "name": n, "prompt": False,
-                     "custom": True, "cn": _tag_cn(n), "en": _tag_en(n)})
-        seen.add(n)
+    for n in rec.get("tags") or []:
+        tags.append({"id": rec.get("tagIds", {}).get(n) or "", "name": n,
+                     "prompt": True, "custom": False,
+                     "cn": _tag_cn(n), "en": _tag_en(n)})
+    for full in rec.get("customTags") or []:
+        # 展示层只需叶子名（完整路径供删除/筛选兜底；有 id 时前端优先用 id）
+        leaf = (re.split(r"[/\\:\-]", full)[-1] or full).strip()
+        tags.append({"id": rec.get("customIds", {}).get(full) or "", "name": leaf,
+                     "prompt": False, "custom": True, "path": full,
+                     "cn": _tag_cn(leaf), "en": _tag_en(leaf)})
+    pt = rec.get("prompt") or ""
     data = {
         "path": rel,
-        "name": os.path.basename(full),
-        "mtime": int(st.st_mtime),
-        "size": st.st_size,
-        "model": _extract_zhule_model(texts),
-        "loras": _json_list(texts.get("zhule_loras"), "zhule_loras"),
+        "name": rec.get("name") or os.path.basename(rel.replace("/", os.sep).replace("\\", os.sep)),
+        "mtime": int(rec.get("mtime") or 0),
+        "size": int(rec.get("size") or 0),
+        "model": rec.get("model") or "",
+        "loras": rec.get("loras") or [],
         "tags": tags,
-        "hasWF": bool(wf),
-        "workflowSize": len(wf),
+        "hasWF": False,
+        "workflowSize": 0,
         "hasPrompt": bool(pt),
         "promptPreview": _extract_positive_prompt(pt) or pt[:MAX_WORKFLOW_PREVIEW],
     }
-    if len(_detail_cache) >= _DETAIL_CACHE_MAX:
-        _detail_cache.clear()
-    _detail_cache[cache_key] = data
     return web.json_response(data)
 
 

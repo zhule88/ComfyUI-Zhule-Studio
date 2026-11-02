@@ -15,6 +15,7 @@
 
 词库文本与 images.txt 均已不再落盘读写，词库目录仅作历史兼容保留。
 """
+import datetime
 import json
 import os
 import re
@@ -29,6 +30,9 @@ WEB_DIR = os.path.abspath(os.path.join(STUDIO_DIR, "web"))
 
 # 词库根：随代码走，位于 modules/studio/prompt/
 _WB_ROOT = os.path.join(STUDIO_DIR, "prompt")
+
+# 调试日志目录：ComfyUI-Zhule-Nodes/log
+LOG_DIR = os.path.abspath(os.path.join(STUDIO_DIR, "..", "..", "log"))
 
 
 def wb_root():
@@ -219,14 +223,16 @@ def _cards_from_tree(tree):
     tabs = []
     data = {}
 
-    def collect(node, parts, out):
+    def collect(node, parts, ids, out):
         """按原 _folder_card/_txt_card 公式还原卡片字段。
 
         parts = 从 Tab 根到当前节点父级的原始目录名列表（不含当前节点）。
-        chips/chipKeys 由 parts 位置直接推导，与磁盘扫描结果逐字段一致。
+        ids   = 与 parts 同序的节点 DB id 列表（不含当前节点）。
+        chips/chipKeys/chipIds 由 parts/ids 位置直接推导，与磁盘扫描结果逐字段一致。
         """
         raw = _node_raw_name(node)
         children = node.get("children") or []
+        nid = str(node.get("id") or "")
         if node.get("type") == "entry":
             rel = "/".join(parts + [raw]) if parts else raw
             if raw.lower().endswith(".txt"):
@@ -247,6 +253,7 @@ def _cards_from_tree(tree):
                     "relPath": rel,
                     "chips": [parse_folder(p)[1] for p in parts[1:end]],
                     "chipKeys": _chip_keys(parts, end=end),
+                    "chipIds": ids[1:end],
                     "content": node.get("en") or "",
                     "content_cn": "",
                     "images": _card_images(node),
@@ -264,6 +271,7 @@ def _cards_from_tree(tree):
                     "relPath": rel,
                     "chips": [parse_folder(p)[1] for p in parts[1:end]],
                     "chipKeys": _chip_keys(parts, end=end),
+                    "chipIds": ids[1:end],
                     "content": node.get("en") or "",
                     "content_cn": node.get("cn") or "",
                     "images": _card_images(node),
@@ -272,14 +280,14 @@ def _cards_from_tree(tree):
             # entry 带 children（含 prompt.txt 仍下钻，如 01_嘴部）：继续递归
             if children:
                 for child in children:
-                    collect(child, parts + [raw], out)
+                    collect(child, parts + [raw], ids + [nid], out)
             return
         for child in children:
-            collect(child, parts + [raw], out)
+            collect(child, parts + [raw], ids + [nid], out)
 
     for tab_node in tree:
         cards = []
-        collect(tab_node, [], cards)
+        collect(tab_node, [], [], cards)
         tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
         tabs.append(tab_disp)
         data[tab_disp] = cards
@@ -332,22 +340,20 @@ async def get_image(request):
 
 
 async def post_rename(request):
-    """编辑词条（DB 版）：改名 name / 内容 en（content）/ 中文 cn（content_cn）写 zhule.db。"""
+    """编辑词条（DB 版）：按 DB id 定位，改名 name / 内容 en（content）/ 中文 cn（content_cn）写 zhule.db。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-    rel_path = (body.get("path") or "").strip()
+    raw_id = (body.get("id") or "").strip()
     name = (body.get("name") or "").strip()
-    if not rel_path:
-        return web.json_response({"error": "缺少 path"}, status=400)
+    if not raw_id:
+        return web.json_response({"error": "缺少 id"}, status=400)
     if not name:
         return web.json_response({"error": "名字不能为空"}, status=400)
     if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
-    # 兼容旧散 txt 后缀（DB 中散 txt 已归一为 entry 节点，无 .txt 后缀）
-    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
-    node = db.node_by_raw_path(rel_path)
+    node = db.node_by_id(raw_id)
     if node is None or node.get("type") != "entry":
         return web.json_response({"error": "词条不存在"}, status=404)
     nid = int(node["id"])
@@ -367,19 +373,18 @@ async def post_rename(request):
     return web.json_response({"ok": True})
 
 async def post_wordbank_delete(request):
-    """删除词条（DB 版）：递归删除该节点及其子树（zhule.db）。禁止删除顶层 Tab。"""
+    """删除词条（DB 版）：按 DB id 递归删除该节点及其子树（zhule.db）。禁止删除顶层 Tab。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-    rel_path = (body.get("path") or "").strip()
-    if not rel_path:
-        return web.json_response({"error": "缺少 path"}, status=400)
-    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
-    node, _, is_root = db.resolve_path(rel_path)
+    raw_id = (body.get("id") or "").strip()
+    if not raw_id:
+        return web.json_response({"error": "缺少 id"}, status=400)
+    node = db.node_by_id(raw_id)
     if node is None:
         return web.json_response({"error": "词条不存在"}, status=404)
-    if is_root:
+    if node.get("type") == "category" and node.get("parent_id") is None:
         return web.json_response({"error": "不能删除 Tab 根目录"}, status=400)
     count = db.delete_subtree(int(node["id"]))
     return web.json_response({"ok": True, "deleted": count})
@@ -406,50 +411,46 @@ async def post_wordbank_tab_create(request):
     return web.json_response({"ok": True, "tab": name, "id": str(nid)})
 
 async def post_wordbank_chip_create(request):
-    """新建小类（DB 版）：body { tab, parent, name }，定位父节点后 INSERT category。"""
+    """新建小类（DB 版）：body { parentId, name }，在父分类下 INSERT category。"""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-    tab = (body.get("tab") or "").strip().strip("/")
-    parent = (body.get("parent") or "").strip().strip("/")
+    parent_id = (body.get("parentId") or "").strip()
     name = (body.get("name") or "").strip()
-    if not tab:
-        return web.json_response({"error": "缺少 tab"}, status=400)
+    if not parent_id:
+        return web.json_response({"error": "缺少 parentId"}, status=400)
     if not name:
         return web.json_response({"error": "分类名不能为空"}, status=400)
     if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
-    rel = "/".join([p for p in (tab + "/" + parent if parent else tab).split("/") if p])
-    node, _, _ = db.resolve_path(rel)
-    if node is None:
+    pnode = db.node_by_id(parent_id)
+    if pnode is None or pnode.get("type") != "category":
         return web.json_response({"error": "父分类不存在"}, status=404)
-    nid = int(node["id"])
-    dup = db.sibling_dup(nid, name)
+    pid = int(pnode["id"])
+    dup = db.sibling_dup(pid, name)
     if dup is not None:
         return web.json_response({"error": "分类已存在: " + dup}, status=400)
-    new_id, ok = db.insert_node(nid, "category", name)
+    new_id, ok = db.insert_node(pid, "category", name)
     if not ok:
         return web.json_response({"error": "创建失败"}, status=500)
     return web.json_response({"ok": True, "id": str(new_id)})
 
 async def post_wordbank_card_create(request):
-    """新建词条（DB 版）：body { tab, parent, name, content, content_cn }。
+    """新建词条（DB 版）：body { parentId, name, content, content_cn }。
 
-    兼容旧散 txt 语义：name 以 .txt 结尾时去掉后缀（词库归一化为 entry 节点），
-    散 txt 仍不支持中文（content_cn 非空则 400）。
+    name 以 .txt 结尾时去掉后缀（散 txt 语义），散 txt 仍不支持中文（content_cn 非空则 400）。
     """
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-    tab = (body.get("tab") or "").strip().strip("/")
-    parent = (body.get("parent") or "").strip().strip("/")
+    parent_id = (body.get("parentId") or "").strip()
     name = (body.get("name") or "").strip()
     content = body.get("content")
     content_cn = body.get("content_cn")
-    if not tab:
-        return web.json_response({"error": "缺少 tab"}, status=400)
+    if not parent_id:
+        return web.json_response({"error": "缺少 parentId"}, status=400)
     if not name:
         return web.json_response({"error": "名字不能为空"}, status=400)
     if INVALID_NAME.search(name) or name.startswith("."):
@@ -462,16 +463,15 @@ async def post_wordbank_card_create(request):
         if isinstance(content_cn, str) and content_cn.strip():
             return web.json_response({"error": "散 txt 卡片暂不支持中文提示词"}, status=400)
         name = stem
-    rel = "/".join([p for p in (tab + "/" + parent if parent else tab).split("/") if p])
-    node, _, _ = db.resolve_path(rel)
-    if node is None:
+    pnode = db.node_by_id(parent_id)
+    if pnode is None or pnode.get("type") != "category":
         return web.json_response({"error": "父分类不存在"}, status=404)
-    nid = int(node["id"])
-    dup = db.sibling_dup(nid, name)
+    pid = int(pnode["id"])
+    dup = db.sibling_dup(pid, name)
     if dup is not None:
         return web.json_response({"error": "词条已存在: " + dup}, status=400)
     new_id, ok = db.insert_node(
-        nid, "entry", name,
+        pid, "entry", name,
         en=(content if isinstance(content, str) else ""),
         cn=(content_cn if isinstance(content_cn, str) else ""),
     )
@@ -489,18 +489,17 @@ async def post_wordbank_image(request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "JSON 解析失败"}, status=400)
-    rel_path = (body.get("path") or "").strip()
+    raw_id = (body.get("id") or "").strip()
     image = (body.get("image") or "").strip()
     action = (body.get("action") or "delete").strip()
-    if not rel_path or not image:
-        return web.json_response({"error": "缺少 path 或 image"}, status=400)
+    if not raw_id or not image:
+        return web.json_response({"error": "缺少 id 或 image"}, status=400)
     if action != "delete":
         return web.json_response({"error": "images.txt 已移除，仅支持 action=delete"}, status=400)
     prefix = REF_SUBDIR + "/"
     if not image.startswith(prefix):
         return web.json_response({"error": "图库反查图不可删除，仅可删除词条上传的参考图"}, status=400)
-    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
-    node, _, _ = db.resolve_path(rel_path)
+    node = db.node_by_id(raw_id)
     if node is None:
         return web.json_response({"error": "词条不存在"}, status=404)
     # 路径形如 zhule_reference/<词条id>/<文件>：校验 id 归属，防跨词条删除
@@ -526,20 +525,19 @@ async def post_wordbank_image_upload(request):
         reader = await request.multipart()
     except Exception:
         return web.json_response({"error": "multipart 解析失败"}, status=400)
-    rel_path = None
+    raw_id = None
     file_field = None
     while True:
         part = await reader.next()
         if part is None:
             break
-        if part.name == "path":
-            rel_path = (await part.read()).decode("utf-8", "ignore").strip()
+        if part.name == "id":
+            raw_id = (await part.read()).decode("utf-8", "ignore").strip()
         elif part.name == "file":
             file_field = part
-    if not rel_path or file_field is None:
-        return web.json_response({"error": "缺少 path 或 file"}, status=400)
-    rel_path = rel_path[:-4] if rel_path.lower().endswith(".txt") else rel_path
-    node, _, _ = db.resolve_path(rel_path)
+    if not raw_id or file_field is None:
+        return web.json_response({"error": "缺少 id 或 file"}, status=400)
+    node = db.node_by_id(raw_id)
     if node is None:
         return web.json_response({"error": "词条不存在"}, status=404)
     filename = os.path.basename(file_field.filename or "")
@@ -575,9 +573,9 @@ async def post_wordbank_image_upload(request):
 
 
 async def post_wordbank_sort_save(request):
-    """排序保存（DB 版）：按 order 顺序给各层节点写连续 sort_order，不再重命名目录。
+    """排序保存（DB 版）：按 order 顺序给各层节点写连续 sort_order。
 
-    body: { order: { 父相对路径(""=根): [子项原始名...], ... } }
+    body: { order: { 父节点 id(""=根): [子节点 id...], ... } }
     """
     try:
         body = await request.json()
@@ -599,17 +597,16 @@ async def post_wordbank_sort_save(request):
             if not isinstance(r, str):
                 continue
             r = r.strip()
-            if not r or "/" in r or "\\" in r or r.startswith(".") \
-                    or r in (MAIN_FILE, CN_FILE, IMAGES_FILE):
+            if not r:
                 continue
             if r not in clean:
                 clean.append(r)
         if parent:
-            node, _, _ = db.resolve_path(parent)
-            if node is None:
+            pnode = db.node_by_id(parent)
+            if pnode is None:
                 errors.append(f"层级「{parent}」不存在")
                 continue
-            n = db.reorder_layer(int(node["id"]), clean)
+            n = db.reorder_layer(int(pnode["id"]), clean)
         else:
             n = db.reorder_top(clean)
         total += n
@@ -619,7 +616,7 @@ async def post_wordbank_sort_save(request):
         _gal._tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})
     except Exception:
         pass
-    return web.json_response({"ok": True, "layers": layers, "renamed": total,
+    return web.json_response({"ok": True, "layers": layers, "total": total, "renamed": total,
                               "errors": errors})
 
 async def post_wordbank_clean_cn(request):
@@ -654,4 +651,22 @@ async def get_static(request):
     if ctype:
         return web.FileResponse(full, headers={"Content-Type": ctype})
     return web.FileResponse(full)
+
+
+async def post_debug_log(request):
+    """前端随机池调试日志：追加写 log/wordbank_debug_YYYYMMDD.log，异常不抛（日志失败不干扰主流程）。"""
+    try:
+        body = await request.json()
+        lines = body.get("lines") or []
+        if not lines:
+            return web.json_response({"ok": True})
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = os.path.join(LOG_DIR, "wordbank_debug_" + datetime.datetime.now().strftime("%Y%m%d") + ".log")
+        stamp = datetime.datetime.now().strftime("%H:%M:%S")
+        with open(path, "a", encoding="utf-8") as f:
+            for line in lines:
+                f.write(stamp + " " + line + "\n")
+        return web.json_response({"ok": True})
+    except Exception:
+        return web.json_response({"ok": False})
 

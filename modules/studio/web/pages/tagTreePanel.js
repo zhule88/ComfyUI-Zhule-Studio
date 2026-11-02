@@ -188,7 +188,9 @@ export default {
       if (!name) return;
       const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
       const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-      const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+      // 双形态兼容：selected 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导，
+      // 否则外部过滤区条点击移除自定义标签时 key 失配（c:5→p:5），删不掉
+      const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
       const k = tagKey({ name, rel, id, kind });
       const t = k ? props.selected.find((x) => tagKey(x) === k) : null;
       if (t) emit('remove', t);
@@ -203,6 +205,18 @@ export default {
       const c = props.colorOf(name);
       return c ? { '--tag-bg': c } : null;
     }
+    // 外部过滤区条可见项：与 galleryCommon.visibleTags 同规则——未隐藏 + 排除 inner + 只展示最深选中链
+    // （祖先存在可见后代时被取代：选"角色"显示角色，编辑面板再放入"璃月"后只显示璃月）。
+    // inner（套娃内点击产生）项不占条：它只是启用状态，反馈体现在展开容器内的高亮上，不能提升为大标签。
+    function isAncestorOf(a, b) {
+      if ((a.kind || (a.isCustom ? 'custom' : '')) !== (b.kind || (b.isCustom ? 'custom' : ''))) return false;
+      const ar = String(a.rel || ''), br = String(b.rel || '');
+      return !!ar && !!br && br !== ar && br.startsWith(ar + '/');
+    }
+    const visibleSelected = computed(() => {
+      const list = (props.selected || []).filter((t) => t && !t.hidden && !t.inner);
+      return list.filter((t) => !list.some((u) => u !== t && isAncestorOf(t, u)));
+    });
 
     // 展示树分区：提示词标签（词库，非自定义，保留原有树形）+ 自定义标签（保留层级树：父级为可展开分组容器，叶子才是标签）。
     // 当前图片有标签时按完整路径（'测试/喜欢'）重建挂载树；否则直接用全量自定义树（后端已按 parent_id 组织层级）。
@@ -245,7 +259,7 @@ export default {
 
     return {
       tree, wbTree, csTree, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close, selTagStyle,
-      wbPct, zoneStyle, startSplitDrag,
+      visibleSelected, wbPct, zoneStyle, startSplitDrag,
     };
   },
   template: `
@@ -257,10 +271,10 @@ export default {
         <button class="zhg-ttp-close" data-tip="关闭" @click="close">✕</button>
       </div>
       <div class="zhg-ttp-body" v-if="!loading && !err">
-        <div class="zhg-ttp-selected" v-if="selected.length">
+        <div class="zhg-ttp-selected" v-if="visibleSelected.length">
           <span class="zhg-ttp-sel-label">外部过滤区：</span>
           <span class="zhg-sel-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
-                v-for="t in selected" :key="tagKey(t)" @click="removeFilter(t)">
+                v-for="t in visibleSelected" :key="tagKey(t)" @click="removeFilter(t)">
             {{ leafName(t.name) }}<span class="zhg-sel-tag-x">✕</span>
           </span>
           <a class="zhg-ttp-reset" @click="clearAll">清空</a>

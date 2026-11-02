@@ -632,5 +632,8 @@ createApp(App).use(router).mount('#app');
     if (e.target instanceof Element && e.target.closest('[data-tip]')) hideTip();
   }, true);
   document.addEventListener('scroll', hideTip, true);
+  // 右键/按下即收起气泡：右键删除标签后光标停在同一位置，若不收起会留下旧提示文字残影
+  document.addEventListener('mousedown', hideTip, true);
+  document.addEventListener('contextmenu', hideTip, true);
   document.body.classList.add('zh-js-tip');
 })();

@@ -11,8 +11,10 @@ import { ref, reactive, computed, nextTick, watch, onMounted, onBeforeUnmount } 
 import { useRoute, useRouter } from 'vue-router';
 import TagTreePanel from './tagTreePanel.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
+// 全站统一删除确认（图片/批量/标签/词条共用同一弹框与设置判断）
+import { useDeleteConfirm } from './deleteConfirm.js';
 
-export { TagTreePanel, OutNode, DetailTagNode, ConfirmDialog };
+export { TagTreePanel, OutNode, DetailTagNode };
 
 // 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无分隔符时原样返回）。
 // 分隔符支持 / \ - : 四种（/ 与 \ 转义、- 转义保证字面匹配）。
@@ -186,31 +188,6 @@ const DetailTagNode = {
       <div class="zhg-dtag-kids" v-if="expanded" :style="{ marginLeft: (depth + 1) * 12 + 'px' }">
         <detail-tag-node v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" :theme-cls="themeCls"
                          @edit="emit('edit', $event)" @delete="emit('delete', $event)"></detail-tag-node>
-      </div>
-    </div>
-  `,
-};
-
-// 通用删除确认弹框：图片 / 批量 / 标签 / 词条等删除操作共用。
-// 是否弹出由各 ask* 入口按 pref.common.noDeleteConfirm 判断，组件只负责展示与确认/取消。
-const ConfirmDialog = {
-  name: 'ConfirmDialog',
-  props: {
-    show: { type: Boolean, default: false },
-    title: { type: String, default: '' },
-    busy: { type: Boolean, default: false },
-    confirmText: { type: String, default: '确认删除' },
-  },
-  emits: ['confirm', 'cancel'],
-  template: `
-    <div class="zhg-del-mask" v-if="show" @click.self="$emit('cancel')">
-      <div class="zhg-del-box">
-        <div class="zhg-del-title">{{ title }}</div>
-        <slot></slot>
-        <div class="zhg-del-actions">
-          <button class="btn zhg-mini" @click="$emit('cancel')">取消</button>
-          <button class="zhg-del-btn-danger" :disabled="busy" @click="$emit('confirm')">{{ busy ? '删除中…' : confirmText }}</button>
-        </div>
       </div>
     </div>
   `,
@@ -465,6 +442,20 @@ export function useGalleryCommon(opts = {}) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }
+  // 条目被移除/隐藏时同步清掉其 inner 后代（套娃内点击产生的自动启用项）：
+  // 父条目没了之后，inner 后代在顶层不可见、也没有任何入口能关掉它，留着只会静默参与过滤。
+  // 判定同 tagAncestorOf：同域 + rel 严格前缀；无 rel 的老状态不参与层级，不动。
+  function pruneInnerDescendants(entry) {
+    const er = String((entry && entry.rel) || '');
+    if (!er) return;
+    const ek = entry.kind || '';
+    filters.tags = filters.tags.filter((t) => {
+      if (!t.inner) return true;
+      if ((t.kind || '') !== ek) return true;
+      const tr = String(t.rel || '');
+      return !(tr && tr !== er && tr.startsWith(er + '/'));
+    });
+  }
   function addTagFilter(item) {
     // 编辑面板左键点击 emit 的是完整 node 对象（tagTreePanel setFilter emit('add', node)），
     // 这里统一提取 name 字符串：避免把整个 node 对象当 name 存入外部过滤区，
@@ -474,7 +465,10 @@ export function useGalleryCommon(opts = {}) {
     const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
     // 携带 id/kind：词条 id（prompt）或自定义标签 id（custom），点击后后端按 id 直查 gallery_tag
     const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
+    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
+    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
+    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
     // 放到外部过滤区（编辑面板左键点击触发）：按唯一键（id 优先，无 id 回退 name|rel）判定；
     // 同名但 id 不同（如 '测试/喜欢' 与顶层 '喜欢'）视为不同标签，互不覆盖
     const k = tagKey({ name, rel, id, kind });
@@ -486,7 +480,9 @@ export function useGalleryCommon(opts = {}) {
         filters.tags[i].rel = rel;
         if (id) { filters.tags[i].id = id; filters.tags[i].kind = kind; }
       } else {
+        const removed = filters.tags[i];
         filters.tags.splice(i, 1);
+        pruneInnerDescendants(removed);
       }
     } else {
       filters.tags.push({ name, rel, id, kind, active: false, hidden: false });
@@ -503,7 +499,10 @@ export function useGalleryCommon(opts = {}) {
     if (!name) return;
     const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
     const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
+    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
+    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
+    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
     const k = tagKey({ name, rel, id, kind });
     const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
     if (!t) {
@@ -531,16 +530,31 @@ export function useGalleryCommon(opts = {}) {
     if (!name) return;
     const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
     const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    const kind = (typeof item !== 'string' && item && item.isCustom) ? 'custom' : 'prompt';
+    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
+    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
+    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
+    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
     const k = tagKey({ name, rel, id, kind });
     const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
-    if (t) { t.hidden = true; t.active = false; }
+    if (t) { t.hidden = true; t.active = false; pruneInnerDescendants(t); }
     else filters.tags.push({ name, rel, id, kind, active: false, hidden: true, inner: true });
     applyFilter();
     saveTagPref();
   }
-  // 外部过滤区可见标签（未隐藏且非套娃内产生的 inner 项）——隐藏 = 完全移除（等价 v-if=false）
-  const visibleTags = computed(() => filters.tags.filter((t) => !t.hidden && !t.inner));
+  // 祖先判定（同域 + rel 路径前缀）：kind/isCustom 双兼容，无 rel 的老状态不参与层级判定
+  function tagAncestorOf(a, b) {
+    if ((a.kind || (a.isCustom ? 'custom' : '')) !== (b.kind || (b.isCustom ? 'custom' : ''))) return false;
+    const ar = String(a.rel || ''), br = String(b.rel || '');
+    return !!ar && !!br && br !== ar && br.startsWith(ar + '/');
+  }
+  // 外部过滤区可见标签（顶层大标签）：只展示「显式放置」的条目——inner（套娃内点击产生的启用项）
+  // 永远不占顶层位，只在展开容器里高亮反馈；否则在筛选区启用"璃月"会把大标签从"角色"顶成"璃月"且回不去。
+  // 显式条目之间仍按最深选中链取代：选"角色"显示角色；编辑面板再放入"璃月"后只显示璃月；删掉璃月角色自动回归。
+  // 隐藏 = 完全移除（等价 v-if=false）
+  const visibleTags = computed(() => {
+    const list = filters.tags.filter((t) => !t.hidden && !t.inner);
+    return list.filter((t) => !list.some((u) => u !== t && tagAncestorOf(t, u)));
+  });
   // 树内递归渲染判断隐藏态：隐藏 = 完全移除，渲染时按此过滤（等价 v-if=false），隐藏大标签时整棵子树随之消失
   function isTagHidden(name) {
     const k = tagKey(typeof name === 'object' && name ? name : { name });
@@ -586,15 +600,16 @@ export function useGalleryCommon(opts = {}) {
       }
     } catch (e) { /* 静默失败，右键展开无子标签可显示 */ }
   }
-  // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 rel|name 找回 id/kind，让过滤走 SQL
+  // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 rel|name 找回 id/kind，让过滤走 SQL；
+  // 有 id 但 kind 缺失的更老状态同样按树元信息补域，否则自定义 id 会带 p: 前缀查错域（筛选失效/高亮失配）
   function backfillTagIds() {
     for (const t of filters.tags) {
-      if (t.id) continue;
       const meta = tagKidMeta.value[t.rel || t.name];
-      if (meta && meta.id) {
-        t.id = meta.id;
-        t.kind = meta.isCustom ? 'custom' : 'prompt';
-      }
+      if (!meta) continue;
+      if (!t.id && meta.id) t.id = meta.id;
+      // kind 一律以树元信息为准：旧版本状态可能缺 kind 或存错域（custom id 带 prompt 域），
+      // 域错则 tagKey 前缀错——高亮匹配不上、buildQuery 把自定义 id 发去提示词域查空
+      if (t.id) t.kind = meta.isCustom ? 'custom' : 'prompt';
     }
   }
   function treeKids(item) {
@@ -639,8 +654,8 @@ export function useGalleryCommon(opts = {}) {
   const toast = ref('');
   const toastType = ref('info');
   const toastIcon = { info: '\u2139\ufe0f', success: '\u2705', error: '\u274c', warn: '\u26a0\ufe0f' };
-  const delTarget = ref(null);
-  const delBatchOpen = ref(false);
+  // 统一删除确认：图片 / 批量 / 标签 / 词条四种删除共用同一个弹框实例
+  const del = useDeleteConfirm();
   // 重命名模型/LoRA：居中弹框（非浏览器 prompt）
   const renameOpen = ref(false);
   const renameKind = ref('model');
@@ -1005,15 +1020,16 @@ export function useGalleryCommon(opts = {}) {
     }
   }
   function askDelete(it) {
-    // 通用删除免确认开启：单图删除跳过确认弹窗直接执行
-    if (pref.common && pref.common.noDeleteConfirm) { delTarget.value = it; confirmDelete(); return; }
-    delTarget.value = it;
+    // 统一删除模块：免确认直接删，否则弹确认框（设置由 deleteConfirm 统一读取）
+    del.ask({
+      title: '确认删除图片',
+      message: '将删除该图片文件及其缩略图，此操作不可撤销。',
+      name: (it && (it.name || it.key)) || '',
+      run: () => deleteImageNow(it),
+    });
   }
-  function cancelDelete() { delTarget.value = null; }
-  async function confirmDelete() {
-    const item = delTarget.value;
+  async function deleteImageNow(item) {
     if (!item) return;
-    delTarget.value = null;
     try {
       const p = item.path || item.key;
       const d = await jfetch(API.del, {
@@ -1091,41 +1107,30 @@ export function useGalleryCommon(opts = {}) {
     if (!d) return;
     annotate({ remove_custom: [name] });
   }
-  // ============ 标签删除（详情 tag ✕：确认弹窗 → 按类型写回 PNG 元数据/图库索引） ============
-  // 两源：提示词标签走 remove_prompt；自定义标签走 remove_custom
-  // （后端读 PNG 对应键过滤写回，详情缓存失效由 post_gallery_annotate 统一 drop）。
-  const tagDeleteTarget = ref(null);
+  // ============ 标签删除（详情自定义标签右键） ============
+  // 统一删除模块负责弹框/免确认；这里只描述“删哪个标签、删的具体动作”。
   function askDeleteTag(t) {
     if (!t || !t.name) return;
-    tagDeleteTarget.value = t;
-    // 通用删除免确认开启：标签删除跳过确认弹窗直接执行
-    if (pref.common && pref.common.noDeleteConfirm) { confirmDeleteTag(); return; }
+    del.ask({
+      title: t.prompt ? '确认删除提示词标签' : '确认删除自定义标签',
+      message: '是否移除当前图片上的该标签？',
+      // 弹框展示名：自定义标签只显示叶子名（'测试/喜欢' 只显示 '喜欢'）
+      name: t.display || leafName(t.name),
+      run: () => deleteDetailTag(t),
+    });
   }
-  function cancelDeleteTag() { tagDeleteTarget.value = null; }
-  const tagDeleteLabel = computed(() => {
-    const t = tagDeleteTarget.value;
-    if (!t) return '';
-    return t.prompt ? '提示词标签' : '自定义标签';
-  });
-  // 删除弹窗展示名：自定义标签只显示叶子名（'测试/喜欢' 只显示 '喜欢'）。
-  // 测试 仅是创建时的位置/分组路径，图片实际只关联叶子标签；筛选时叶子才归属父级。
-  const tagDeleteDisplay = computed(() => {
-    const t = tagDeleteTarget.value;
-    if (!t) return '';
-    return t.display || leafName(t.name);
-  });
-  async function confirmDeleteTag() {
-    const t = tagDeleteTarget.value;
-    if (!t) return;
-    tagDeleteTarget.value = null;
+  // 真正执行删除：只改这一张图的 PNG 元数据（提示词标签走 remove_prompt，自定义标签走 remove_custom）。
+  async function deleteDetailTag(t) {
+    if (!t || !t.name) return;
     if (t.prompt) {
       await annotate({ remove_prompt: [t.name] });
-    } else {
-      // 自定义标签删除走 id（唯一标识）：详情 tags 的 id 即 PNG 内 cid；
-      // 无 id 的老自由文本与 DB 无对应，不删（不回退叶子名）
-      if (t.id == null || t.id === '') return;
-      await annotate({ remove_custom: [String(t.id)] });
+      return;
     }
+    // 自定义标签删除：优先 id（唯一标识）；无 id 的存量/自由文本标签退回完整路径，
+    // 再退回叶子名（后端 remove_custom 兼容 id/路径/叶子名三种匹配，不查数据库）。
+    const key = (t.id != null && t.id !== '') ? String(t.id) : (t.path || t.name);
+    if (!key) return;
+    await annotate({ remove_custom: [key] });
   }
   // ============ 词库词条编辑（左键点击详情 tag 呼出，逻辑与词库 Wordbank.js 完全一致） ============
   // tag 与词库词条对应方式：图库 tag.name = 词库卡片显示名（后端 parse_folder 后的 name），
@@ -1136,9 +1141,7 @@ export function useGalleryCommon(opts = {}) {
   const editWbContent = ref('');
   const editWbContentCn = ref('');
   const editWbEditing = ref(false);
-  // 编辑弹窗删除（与词库一致）：askDeleteEditWb 受通用开关 noDeleteConfirm 控制，
-  // 开启直接删，否则弹确认框（editWbDeleteTarget）；删除成功后关闭编辑面板并刷新。
-  const editWbDeleteTarget = ref(null);
+  // 编辑弹窗删除（与词库一致）：弹框/免确认统一由 deleteConfirm 处理
   const editWbDeleting = ref(false);
   // 散 txt 卡片（rawName 以 .txt 结尾）：后端不支持中文提示词（与词库 editIsTxt 语义一致）
   const editWbIsTxt = computed(() => {
@@ -1195,26 +1198,27 @@ export function useGalleryCommon(opts = {}) {
     editWbTarget.value = null;
     editWbEditing.value = false;
   }
-  // 编辑弹窗删除入口：与词库 askDeleteWord 一致，受通用免确认开关控制
+  // 编辑弹窗删除入口：与词库 askDeleteWord 一致，统一走 deleteConfirm
   function askDeleteEditWb() {
-    if (!editWbTarget.value) return;
-    if (pref.common && pref.common.noDeleteConfirm) { editWbDeleteTarget.value = editWbTarget.value; confirmDeleteEditWb(); return; }
-    editWbDeleteTarget.value = editWbTarget.value;
+    const t = editWbTarget.value;
+    if (!t) return;
+    del.ask({
+      title: '确认删除词条',
+      message: '将删除词库词条及其提示词文件，此操作不可撤销。',
+      name: t.name || '',
+      run: () => deleteWordEntryNow(t),
+    });
   }
-  function cancelDeleteEditWb() { editWbDeleteTarget.value = null; }
-  // 确认删除：与词库 confirmDeleteWord 一致，成功后关闭编辑面板、刷新词库映射并重拉详情
-  async function confirmDeleteEditWb() {
-    const t = editWbDeleteTarget.value;
+  async function deleteWordEntryNow(t) {
     if (!t || editWbDeleting.value) return;
     editWbDeleting.value = true;
     try {
       const resp = await fetch('/zhule_studio/api/wordbank/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: t.relPath }),
+        body: JSON.stringify({ id: t.id }),
       });
       const json = await resp.json();
-      editWbDeleteTarget.value = null;
       if (json.error) {
         showToast('删除失败：' + json.error, 'error');
       } else {
@@ -1240,7 +1244,7 @@ export function useGalleryCommon(opts = {}) {
     editWbEditing.value = true;
     try {
       const body = {
-        path: editWbTarget.value.relPath,
+        id: editWbTarget.value.id,
         name: nm,
       };
       // 仅当输入框非空或原本就有内容时才写回，避免误清空
@@ -1299,17 +1303,31 @@ export function useGalleryCommon(opts = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      // 删除后本地移除必须按「id / 完整路径 / 叶子名」三态匹配：
+      // 此前只比 x.name，而自定义标签传的是 id（或路径）→ 详情 chip 不消失，看起来像没删掉
       const gone = ('remove_prompt' in payload || 'remove_custom' in payload)
         ? new Set((payload.remove_prompt || []).concat(payload.remove_custom || [])) : null;
       if ('tags' in payload) d.tags = mergeDetailTags(payload.tags);
-      if (gone) d.tags = (d.tags || []).filter((x) => x && !gone.has(x.name));
-      // 同步卡片状态
-      const item = items.value.find((x) => x.key === d.path);
-      if (item) {
-        if ('tags' in payload) item.tags = payload.tags;
-        if (gone && item.tags) {
-          item.tags = item.tags.filter((x) => !gone.has(typeof x === 'string' ? x : (x && x.name)));
+      if (gone) {
+        const isGone = (x) => {
+          if (typeof x === 'string') return gone.has(x) || gone.has(leafName(x));
+          if (!x) return false;
+          return [x.id, x.path, x.name].some((v) => v != null && v !== '' && gone.has(String(v)));
+        };
+        d.tags = (d.tags || []).filter((x) => !isGone(x));
+        // 不再整块重拉详情：重拉会替换 detail 对象、把标签行销毁重建（视觉上「闪一下」），
+        // 且若服务端详情缓存尚未失效还会把刚删的标签带回来，表现为「要右键第二次才删掉」。
+        // 本地三态移除已与后端 same-key 匹配，直接同步卡片即可。
+        const item = items.value.find((x) => x.key === d.path);
+        if (item) {
+          item.tags = (d.tags || []).filter((t) => t && t.prompt).map((t) => t.name);
+          item.customTags = (d.tags || []).filter((t) => t && t.custom).map((t) => t.path || t.name);
         }
+      }
+      // 新增标签（tags 全量重写）：卡片标签同步为写入值
+      if ('tags' in payload) {
+        const item = items.value.find((x) => x.key === d.path);
+        if (item) item.tags = payload.tags;
       }
       await loadMeta();
     } catch (e) {
@@ -1428,7 +1446,12 @@ export function useGalleryCommon(opts = {}) {
   function removeTag(item) {
     const k = tagKey(typeof item === 'object' && item ? item : { name: item });
     const i = k ? filters.tags.findIndex((t) => tagKey(t) === k) : -1;
-    if (i >= 0) filters.tags.splice(i, 1);
+    if (i >= 0) {
+      const removed = filters.tags[i];
+      filters.tags.splice(i, 1);
+      // 同步清掉其 inner 后代：父条目移除后它们顶层不可见、无入口关闭，只能静默参与过滤
+      pruneInnerDescendants(removed);
+    }
     applyFilter();
     saveTagPref();
   }
@@ -1495,15 +1518,17 @@ export function useGalleryCommon(opts = {}) {
   // 批量操作
   function askBatchDelete() {
     if (!selected.size) { showToast('请先框选或 Ctrl+点击 选中要删除的图片', 'warn'); return; }
-    // 通用删除免确认开启：批量删除跳过确认弹窗直接执行
-    if (pref.common && pref.common.noDeleteConfirm) { confirmBatchDelete(); return; }
-    delBatchOpen.value = true;
+    const n = selected.size;
+    del.ask({
+      title: '确认批量删除',
+      message: `是否删除选中的 ${n} 张图片？将删除图片文件及其缩略图，此操作不可撤销。`,
+      run: deleteBatchNow,
+    });
   }
-  function cancelBatchDelete() { delBatchOpen.value = false; }
-  async function confirmBatchDelete() {
+  async function deleteBatchNow() {
+    // 快照确认时的选中项：弹框期间列表/选中不会变，保持与原逻辑一致
     const keys = [...selected];
     if (!keys.length) return;
-    delBatchOpen.value = false;
     const paths = [];
     for (const k of keys) {
       const item = items.value.find((x) => x.key === k);
@@ -1597,7 +1622,7 @@ export function useGalleryCommon(opts = {}) {
   return {
     pref, filters, meta, items, total, page, pageSize, totalPages,
     loading, loadingMore, allLoaded, dirty, tagPanelOpen, detail,
-    quickTag, toast, toastType, toastIcon, delTarget, mainEl, gridEl,
+    quickTag, toast, toastType, toastIcon, del, mainEl, gridEl,
     leafName, cardTags,
     tagKey,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
@@ -1615,14 +1640,14 @@ export function useGalleryCommon(opts = {}) {
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
     openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf,
-    askDelete, cancelDelete, confirmDelete, toggleSel,
+    askDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,
-    tagDeleteTarget, askDeleteTag, cancelDeleteTag, confirmDeleteTag, tagDeleteLabel, tagDeleteDisplay,
+    askDeleteTag,
     useWorkflow,
     editWbTarget, editWbName, editWbContent, editWbContentCn, editWbIsTxt, editWbEditing,
-    editDetailTag, cancelEditWb, submitEditWb, askDeleteEditWb, cancelDeleteEditWb, confirmDeleteEditWb, editWbDeleteTarget, editWbDeleting,
+    editDetailTag, cancelEditWb, submitEditWb, askDeleteEditWb, editWbDeleting,
     selected, selCount, isSel, onPointerDown, onCardClick,
-    delBatchOpen, askBatchDelete, cancelBatchDelete, confirmBatchDelete, batchLink,
+    askBatchDelete, batchLink,
   };
 }
