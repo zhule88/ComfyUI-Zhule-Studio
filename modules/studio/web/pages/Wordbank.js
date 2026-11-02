@@ -1380,7 +1380,6 @@ export default {
 
     // ============ 随机池（多项独立子池：每个右键选中的 tab / chip 各为一池，随机/遍历时各抽一组合；父子互不包含） ============
     const samePath = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-    const containsPath = (a, b) => a.length <= b.length && a.every((v, i) => v === b[i]);
     // 从已加载卡片反查 chip 节点的 DB id：右键 chip = 当前筛选分支下 chipKeys[depth] 对应的节点，
     // 取该节点在卡片 chipIds 链中同层的 id（同一 chip 下所有卡片该层 id 一致）。
     const chipIdFor = (tab, depth, name) => {
@@ -1417,17 +1416,37 @@ export default {
       path.push(name);
       return path;
     };
-    const hasPoolConflict = (tab, path) => {
+    // 由 chipId 反查该节点所在卡片链：chipIds 为不含 tab 根的祖先 id 链，chips 为同构的无编号显示名链
+    const chipIdChain = (tab, id) => {
+      if (!id) return [];
+      const files = bankData.value[tab] || [];
+      const f = files.find(c => (c.chipIds || []).includes(id));
+      if (!f) return [];
+      const idx = (f.chipIds || []).indexOf(id);
+      return idx >= 0 ? (f.chipIds || []).slice(0, idx + 1) : [];
+    };
+    const chipDisplayFor = (tab, id) => {
+      if (!id) return '';
+      const files = bankData.value[tab] || [];
+      const f = files.find(c => (c.chipIds || []).includes(id));
+      if (!f) return '';
+      const idx = (f.chipIds || []).indexOf(id);
+      return ((f.chips || [])[idx] || '') || '';
+    };
+    // 随机池父子冲突按 DB id 链判断（路径逻辑已废弃）：同链上谁浅谁包含谁，提示一律用无编号显示名
+    const hasPoolConflict = (tab, chipId) => {
       const items = data.randomPools.filter(it => it.tab === tab);
+      const myChain = chipIdChain(tab, chipId);
       for (const it of items) {
         if (it.kind === 'tab') {
-          if (path.length === 0) return { conflict: false };
+          if (myChain.length === 0) return { conflict: false };
           return { conflict: true, msg: `「${tabLabel(tab)}」(全部) 已进池，不能再加入其下的分类` };
         }
         if (it.kind === 'chip') {
-          if (path.length === 0) return { conflict: true, msg: `「${it.display}」已进池，不能再加入整个「${tab}」` };
-          if (containsPath(it.path, path)) return { conflict: true, msg: `「${it.display}」已进池，它包含「${path[path.length - 1]}」，父子不能同时进池` };
-          if (containsPath(path, it.path)) return { conflict: true, msg: `「${path[path.length - 1]}」包含已进池的「${it.display}」，父子不能同时进池` };
+          const theirName = chipDisplayFor(tab, it.chipId) || it.display || '';
+          if (myChain.length === 0) return { conflict: true, msg: `「${theirName}」已进池，不能再加入整个「${tabLabel(tab)}」` };
+          if (myChain.includes(it.chipId)) return { conflict: true, msg: `「${theirName}」已进池，它包含「${chipDisplayFor(tab, chipId)}」，父子不能同时进池` };
+          if (chipIdChain(tab, it.chipId).includes(chipId)) return { conflict: true, msg: `「${chipDisplayFor(tab, chipId)}」包含已进池的「${theirName}」，父子不能同时进池` };
         }
       }
       return { conflict: false };
@@ -1463,8 +1482,9 @@ export default {
       return data.selected.some(s => rels.has(s.relPath));
     };
     const isChipInPool = (depth, name) => {
-      const path = chipPathFor(depth, name);
-      return data.randomPools.some(it => it.kind === 'chip' && it.tab === data.activeTab && samePath(it.path, path));
+      const tab = data.activeTab;
+      const chipId = chipIdFor(tab, depth, name);
+      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, chipPathFor(depth, name))));
     };
 
     // ============ 交互 ============
@@ -1544,7 +1564,7 @@ const submitAddTab = async () => {
     const togglePoolForTab = (tab) => {
       const idx = data.randomPools.findIndex(it => it.kind === 'tab' && it.tab === tab);
       if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForTab: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
-      const chk = hasPoolConflict(tab, []);
+      const chk = hasPoolConflict(tab, '');
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
       data.randomPools.push({ kind: 'tab', tab, path: [], display: tab });
       zhuleLog('togglePoolForTab: 加入池', { kind: 'tab', tab }, 'selected=', selSummary());
@@ -1554,9 +1574,9 @@ const submitAddTab = async () => {
       const path = chipPathFor(depth, name);
       const tab = data.activeTab;
       const chipId = chipIdFor(tab, depth, name);
-      const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && samePath(it.path, path));
+      const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, path)));
       if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForChip: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
-      const chk = hasPoolConflict(tab, path);
+      const chk = hasPoolConflict(tab, chipId);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
       data.randomPools.push({ kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') });
       zhuleLog('togglePoolForChip: 加入池', { kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') }, 'selected=', selSummary());
@@ -2013,7 +2033,7 @@ const submitAddTab = async () => {
         type: 'zhule:run',
         bindId: linkParams.bind,
         seq: ++runSeq,
-        items: items.map(s => ({ name: s.name, content: s.content })),
+        items: items.map(s => ({ id: s.id || '', name: s.name, content: s.content })),
         count: 1,
       });
       let done = false;

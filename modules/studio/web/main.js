@@ -32,8 +32,8 @@ const DEFAULT_PREF = {
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
 // 标签颜色分区（方案E复杂模式）：四个区域独立配置
 const TAG_COLOR_AREAS = [
-  { key: 'detail', label: '详情区' },
-  { key: 'filter', label: '筛选区' },
+  { key: 'detail', label: '图片详情' },
+  { key: 'filter', label: '筛选区域' },
   { key: 'edit', label: '编辑面板' },
   { key: 'wordbank', label: '词库分类' },
 ];
@@ -303,7 +303,7 @@ const App = {
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
-      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomHexColor, randomGlobalColor, randomAreaColor,
+      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
