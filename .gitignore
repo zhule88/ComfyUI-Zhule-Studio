@@ -14,3 +14,6 @@ modules/studio/state/
 modules/studio/gallery/
 # 改动历史记录（本地留存，不上传）
 history/
+
+# 本地数据库（含本地数据，新用户首次运行自动建空库，不提交）
+modules/studio/zhule.db
