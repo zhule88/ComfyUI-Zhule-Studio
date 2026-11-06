@@ -27,10 +27,12 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 import re
 import threading
 import time
 import shutil
+from collections import OrderedDict
 
 import folder_paths
 from aiohttp import web
@@ -1175,43 +1177,32 @@ def _matches(rec, tags, models, loras, q, anc=None, tag_mode="and"):
 
 # ==================== HTTP handlers ====================
 
-async def get_gallery(request):
-    """列表：?page=&pageSize=&sort=&q=&tags=&ctags=&ltags=&models=&loras=
+def _gallery_filtered(query):
+    """按查询参数筛选图库（不解析 page/pageSize），返回已排序的记录列表（未分页）。
 
-    tags=词条 id（逗号分隔，纯数字）；ctags=自定义标签 id（逗号分隔）；
-    两者均按 id 直查 gallery_tag 表过滤，命中后仅加载候选图 id 的记录，
-    不再全量加载图库后在 Python 里逐条遍历匹配。
-    ltags=旧 name|rel 兼容路径（老 localStorage 状态 / URL 直达无 id 时兜底）。
+    与 /gallery 列表共用同一筛选语义：tags/ctags 优先按 id 走 SQL 直查，
+    ltags/无 id 老状态回退内存逐条匹配；排序规则与列表一致。
     """
-    _t0 = time.perf_counter()
-    try:
-        page = max(1, int(request.query.get("page", 1)))
-    except ValueError:
-        page = 1
-    try:
-        page_size = min(200, max(1, int(request.query.get("pageSize", 60))))
-    except ValueError:
-        page_size = 60
-    sort = request.query.get("sort", "time_desc")
-    q = (request.query.get("q") or "").strip()
+    sort = query.get("sort", "time_desc")
+    q = (query.get("q") or "").strip()
     tags = []
-    for t in _split_csv(request.query.get("tags")):
+    for t in _split_csv(query.get("tags")):
         if "|" in t:
             n, _, r = t.partition("|")
             tags.append((n, r))
         else:
             tags.append(t)
-    ctags = _split_csv(request.query.get("ctags"))
+    ctags = _split_csv(query.get("ctags"))
     ltags = []
-    for t in _split_csv(request.query.get("ltags")):
+    for t in _split_csv(query.get("ltags")):
         if "|" in t:
             n, _, r = t.partition("|")
             ltags.append((n, r))
         else:
             ltags.append(t)
-    models = _split_csv(request.query.get("models"))
-    loras = _split_csv(request.query.get("loras"))
-    tag_mode = (request.query.get("mode") or "and").strip().lower()
+    models = _split_csv(query.get("models"))
+    loras = _split_csv(query.get("loras"))
+    tag_mode = (query.get("mode") or "and").strip().lower()
     if tag_mode not in ("and", "or"):
         tag_mode = "and"
 
@@ -1255,7 +1246,6 @@ async def get_gallery(request):
             records = []
         else:
             records = db.gallery_load_records(gids) or []
-        _t_idx = time.perf_counter() - _t0
         _, anc = get_tag_tree()
         # 标签已由 SQL 过滤，此处只处理 q / models / loras
         filtered = [r for r in records if _matches(r, [], models, loras, q, anc, tag_mode)]
@@ -1278,7 +1268,26 @@ async def get_gallery(request):
         filtered.sort(key=keyf, reverse=(sort == "dir_desc"))
     else:
         filtered.sort(key=lambda r: r["mtime"], reverse=True)
+    return filtered
 
+
+async def get_gallery(request):
+    """列表：?page=&pageSize=&sort=&q=&tags=&ctags=&ltags=&models=&loras=
+
+    tags=词条 id（逗号分隔，纯数字）；ctags=自定义标签 id（逗号分隔）；
+    两者均按 id 直查 gallery_tag 表过滤，命中后仅加载候选图 id 的记录，
+    不再全量加载图库后在 Python 里逐条遍历匹配。
+    ltags=旧 name|rel 兼容路径（老 localStorage 状态 / URL 直达无 id 时兜底）。
+    """
+    try:
+        page = max(1, int(request.query.get("page", 1)))
+    except ValueError:
+        page = 1
+    try:
+        page_size = min(200, max(1, int(request.query.get("pageSize", 60))))
+    except ValueError:
+        page_size = 60
+    filtered = _gallery_filtered(request.query)
     total = len(filtered)
     start = (page - 1) * page_size
     items = filtered[start:start + page_size]
@@ -1287,6 +1296,68 @@ async def get_gallery(request):
         "items": items, "builtAt": _index_built_at,
         "building": _index_building,
     })
+
+
+# 命中池 id 列表 LRU 缓存：key=筛选参数（不含 page/pageSize）+ 索引版本，
+# 索引变更（builtAt/building 变化）后自动失效；上限 100 条防膨胀。
+_gallery_ids_cache = OrderedDict()
+_GALLERY_IDS_CACHE_MAX = 100
+
+
+def _gallery_ids_key(query):
+    parts = []
+    for k in ("sort", "q", "tags", "ctags", "ltags", "models", "loras", "mode"):
+        v = query.get(k)
+        if v:
+            parts.append(f"{k}={v}")
+    return "|".join(parts) + "|built=" + str(_index_built_at) + "|bld=" + str(_index_building)
+
+
+def _gallery_ids(query):
+    """按当前筛选条件返回全部命中记录的 key（有序）列表，带 LRU 缓存。"""
+    key = _gallery_ids_key(query)
+    hit = _gallery_ids_cache.get(key)
+    if hit is not None:
+        _gallery_ids_cache.move_to_end(key)
+        return hit
+    filtered = _gallery_filtered(query)
+    ids = [r["key"] for r in filtered]
+    _gallery_ids_cache[key] = ids
+    if len(_gallery_ids_cache) > _GALLERY_IDS_CACHE_MAX:
+        _gallery_ids_cache.popitem(last=False)
+    return ids
+
+
+async def get_gallery_ids(request):
+    """命中池 id 列表：与 /gallery 相同筛选参数（忽略 page/pageSize），返回全部命中 key 数组。
+
+    供图库详情弹层在图片两侧做上一张/下一张/骰子随机导航：随机与翻页都只
+    在“当前筛选条件的完整命中池”内进行（如过滤胡桃后命中 7430 张，则在 7430 张里随机）。
+    """
+    ids = _gallery_ids(request.query)
+    return web.json_response({"total": len(ids), "ids": ids})
+
+
+async def get_gallery_random(request):
+    """随机拼页：与 /gallery 相同筛选参数（忽略 page），从当前筛选命中池中随机抽取
+    pageSize 张图，按随机顺序返回 items（total 为命中池总数）。
+
+    供筛选区「🎲」按钮使用：不是跳到随机页码，而是从命中池随机抽图凑成一页展示。
+    """
+    try:
+        page_size = min(200, max(1, int(request.query.get("pageSize", 60))))
+    except ValueError:
+        page_size = 60
+    ids = _gallery_ids(request.query)
+    total = len(ids)
+    n = min(page_size, total)
+    if n <= 0:
+        return web.json_response({"total": 0, "pageSize": 0, "items": []})
+    picked = random.sample(ids, n)
+    items = db.gallery_load_records_by_keys(picked)
+    return web.json_response({"total": total, "pageSize": n, "items": items})
+
+
 
 
 async def get_gallery_meta(request):
@@ -1447,6 +1518,43 @@ async def post_gallery_rescan(request):
     return web.json_response({"ok": True, "building": started})
 
 
+def delete_gallery_image(rel, with_records=True):
+    """删除图库单张图：原图 + 缩略图（with_records 时一并清内存索引行、DB 记录、详情缓存）。
+
+    rel 为图库根（zhule_img）下的相对路径，即索引 key。文件已不存在时仍会清理残留
+    记录（幂等），保证「本地文件」与「DB 数据」两边一致。返回 (ok, error)。
+    图库删除接口与词库参考图删除（zhule_img/ 前缀）共用本函数，避免两套删除逻辑。
+    """
+    global _index, _index_rev
+    rel = (rel or "").strip().replace("\\", "/")
+    if not rel:
+        return False, "路径不能为空"
+    full = _safe_full(rel)
+    if not full:
+        return False, "路径越界或非法"
+    if os.path.isfile(full):
+        # 先按当前 mtime 计算缩略图路径并尽力清理
+        try:
+            st = os.stat(full)
+            thumb = _thumb_path(rel, int(st.st_mtime))
+            if os.path.isfile(thumb):
+                os.remove(thumb)
+        except OSError:
+            pass
+        try:
+            os.remove(full)
+        except OSError as e:
+            return False, f"删除失败: {e}"
+    if with_records:
+        # 更新内存索引 + 行级删除（只删这一行，不做全表替换）
+        if _index is not None:
+            _index = [r for r in _index if r.get("key") != rel]
+        _index_rev += 1
+        db.gallery_delete_records([rel])
+        _drop_detail_cache(rel)
+    return True, None
+
+
 async def post_gallery_delete(request):
     """body: { path } 删除图片原图与对应缩略图，并刷新索引缓存。"""
     try:
@@ -1460,28 +1568,9 @@ async def post_gallery_delete(request):
     if not full or not os.path.isfile(full):
         return web.json_response({"error": "图片不存在"}, status=404)
 
-    # 先按当前 mtime 计算缩略图路径并尽力清理
-    try:
-        st = os.stat(full)
-        thumb = _thumb_path(rel, int(st.st_mtime))
-        if os.path.isfile(thumb):
-            os.remove(thumb)
-    except OSError:
-        pass
-
-    try:
-        os.remove(full)
-    except OSError as e:
-        return web.json_response({"error": f"删除失败: {e}"}, status=500)
-
-    # 更新内存索引 + 行级删除（只删这一行，不做全表替换）
-    global _index, _index_rev
-    if _index is not None:
-        _index = [r for r in _index if r.get("key") != rel]
-        _index_rev += 1
-    db.gallery_delete_records([rel])
-
-    _drop_detail_cache(rel)
+    ok, err = delete_gallery_image(rel)
+    if not ok:
+        return web.json_response({"error": err}, status=500)
     return web.json_response({"ok": True, "path": rel})
 
 
@@ -1520,19 +1609,12 @@ async def _post_gallery_batch_delete_impl(request):
             if not full or not os.path.isfile(full):
                 failed.append({"path": rel, "error": "图片不存在"})
                 continue
-            # 先按当前 mtime 计算缩略图路径并尽力清理
-            try:
-                st = os.stat(full)
-                thumb = _thumb_path(rel, int(st.st_mtime))
-                if os.path.isfile(thumb):
-                    os.remove(thumb)
-            except OSError:
-                pass
-            try:
-                os.remove(full)
+            # with_records=False：内存索引与 DB 记录在循环结束后一次性处理，避免逐条重建列表
+            ok, err = delete_gallery_image(rel, with_records=False)
+            if ok:
                 deleted.append(rel)
-            except OSError as e:
-                failed.append({"path": rel, "error": f"删除失败: {e}"})
+            else:
+                failed.append({"path": rel, "error": err})
         except Exception as e:
             failed.append({"path": rel, "error": f"删除异常: {e}"})
 
@@ -1756,6 +1838,66 @@ async def post_gallery_annotate(request):
 
 
 _rename_state = {"done": False, "updated": 0, "renamed_file": False, "error": None}
+
+
+async def post_gallery_custom_tag(request):
+    """自定义标签增删改（图库编辑面板的标签层级里就地维护）。
+
+    body:
+      {op:"create", parent_id?: int|None, name: str}  在父级下新建（顶层 parent_id 省略）
+      {op:"rename", id: int, name: str}               重命名（同级去重）
+      {op:"delete", id: int}                          删除该标签及其全部子级
+    返回 {ok, id?, err?}；删除额外返回 removed（删掉的节点数）/ unlinked（解除关联的图片数）。
+    """
+    global _index
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    op = (body.get("op") or "").strip().lower()
+    if op == "create":
+        cid, err, existed = db.custom_tag_create(body.get("parent_id"), body.get("name"))
+        if err and not cid:
+            return web.json_response({"error": err}, status=400)
+        return web.json_response({"ok": True, "id": cid, "existed": existed, "err": err})
+    if op == "rename":
+        err = db.custom_tag_rename(body.get("id"), body.get("name"))
+        if err:
+            return web.json_response({"error": err}, status=400)
+        # 改名后图片展示名经 id 实时反查自动跟随，只需让详情缓存与列表内存索引失效
+        _drop_detail_cache(None)
+        _index = None
+        return web.json_response({"ok": True})
+    if op == "delete":
+        ids, rels = db.custom_tag_delete(body.get("id"))
+        if not ids:
+            return web.json_response({"error": "标签不存在"}, status=404)
+        idset = {str(x) for x in ids}
+        # PNG 里的 zhule_custom_tags 快照同步清理：否则重扫/打标会把已删标签写回
+        for rel in rels:
+            full = _safe_full(rel)
+            if not full or not os.path.isfile(full):
+                continue
+            try:
+                texts = png_text.read_png_text(full)
+                cur = _json_list(texts.get("zhule_custom_tags"), "zhule_custom_tags")
+                kept = []
+                for x in cur:
+                    if isinstance(x, dict) and str(x.get("id") or "") in idset:
+                        continue
+                    kept.append(x)
+                if len(kept) != len(cur):
+                    png_text.write_png_text(full, {
+                        "zhule_custom_tags": json.dumps(kept, ensure_ascii=False)
+                    })
+            except Exception as e:
+                print(f"[ZhuleGallery] 清理图片标签快照失败 {rel}: {e}")
+            _drop_detail_cache(rel)
+        _index = None
+        return web.json_response({
+            "ok": True, "removed": len(ids), "unlinked": len(rels)
+        })
+    return web.json_response({"error": "未知操作"}, status=400)
 
 
 def _model_library_dir(kind):

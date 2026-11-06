@@ -51,6 +51,8 @@ export const API = {
   list: '/zhule_studio/api/gallery',
   meta: '/zhule_studio/api/gallery/meta',
   detail: '/zhule_studio/api/gallery/detail',
+  ids: '/zhule_studio/api/gallery/ids',
+  random: '/zhule_studio/api/gallery/random',
   workflow: '/zhule_studio/api/gallery/workflow',
   thumb: '/zhule_studio/api/gallery/thumb',
   annotate: '/zhule_studio/api/gallery/annotate',
@@ -353,6 +355,26 @@ export function useGalleryCommon(opts = {}) {
   const total = ref(0);
   const page = ref(1);
   const pageSize = ref(PAGE_SIZE);
+  // 页码双击编辑：直接输入目标页码回车/失焦跳转（页码栏语义不变）
+  const pageEditing = ref(false);
+  const pageEditVal = ref('');
+  function beginPageEdit() {
+    pageEditing.value = true;
+    pageEditVal.value = String(page.value);
+    nextTick(() => {
+      const el = document.querySelector('.zhg-pg-input');
+      if (el) { el.focus(); el.select(); }
+    });
+  }
+  function commitPageEdit() {
+    if (!pageEditing.value) return;
+    pageEditing.value = false;
+    const n = parseInt(pageEditVal.value, 10);
+    if (!Number.isNaN(n)) goPage(n);
+  }
+  function cancelPageEdit() {
+    pageEditing.value = false;
+  }
   const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
   // 每行卡片数（2~10，步进1），localStorage 持久化；gridStyle 覆盖 .zhg-grid 的 auto-fill 自适应列
   const gridCols = ref(loadGridColsPref());
@@ -388,6 +410,28 @@ export function useGalleryCommon(opts = {}) {
       if (d.builtAt && d.builtAt) dirty.value = false;
     } catch (e) {
       showToast('加载失败', 'error');
+    } finally {
+      loading.value = false;
+    }
+  }
+  // 随机拼页：骰子是单次使用的——从当前筛选命中池随机抽出一页数量的图片覆盖当前页展示，
+  // 不改页码/总数/分页状态，不进任何"随机模式"；翻页按钮仍按原页码正常走
+  async function randomPage() {
+    if (loading.value) return;
+    await ensureHitIds();
+    if (!hitIds.value.length) { showToast('当前筛选下没有图片，无法随机拼页', 'warn'); return; }
+    loading.value = true;
+    try {
+      const q = buildQuery(true);
+      const d = await jfetch(API.random + '?' + q.toString());
+      if (!d.items || !d.items.length) { showToast('随机拼页失败', 'warn'); return; }
+      items.value = d.items;
+      // 保持 total/page 不变（页码栏仍显示原「第 x / N 页」）
+      // allLoaded 置 true 仅用于禁止触底追加，避免普通列表下一页混进随机结果
+      allLoaded.value = true;
+      if (d.builtAt && d.builtAt) dirty.value = false;
+    } catch (e) {
+      showToast('随机拼页失败', 'error');
     } finally {
       loading.value = false;
     }
@@ -644,9 +688,11 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
   }
   const detail = ref(null);
-  // 全屏查看器：由公共模块 zhule_fullviewer.js 命令式接管（非响应式）
-  let fullViewer = null;
-  let createFullViewerFn = null;
+  // 详情弹层导航：命中池（当前筛选条件下的全部图）key 列表，用于图片两侧的上一张/下一张/骰子随机
+  const hitIds = ref([]);
+  const hitTotal = ref(0);
+  const hitIdsKey = ref('');
+  const detailPos = ref(0); // 当前图在命中池中的位置（1 起），未知为 0
   const quickTag = ref('');
   const tagInputing = ref(false);
   const tagInputEl = ref(null);
@@ -945,21 +991,67 @@ export function useGalleryCommon(opts = {}) {
   function toggleSel(key) {
     if (selected.has(key)) selected.delete(key); else selected.add(key);
   }
-  async function zoomView(url) {
+  // ============ 全屏查看器（公共模块，命令式，非响应式） ============
+  // 与词库 Wordbank.js 共用 zhule_fullviewer.js：actions 配置差异（词库=提示词/参考图，
+  // 图库=命中池上一张/下一张/随机/删除）。导航状态统一走下方 hitIds/detailNav，天然一套逻辑。
+  let fullViewer = null;
+  let createFullViewerFn = null;
+  let zoomCtxItem = null; // 全屏当前上下文：detail 或列表项（卡片🔍打开时 detail 可能为空）
+
+  // 全屏打开时若详情已在导航，同步刷新全屏图片与标题
+  function refreshFullViewer() {
+    const d = detail.value;
+    if (!fullViewer || !fullViewer.isOpen) return;
+    if (d && d.path) fullViewer.open(imgUrl(d.path, d.mtime), d.name);
+    else if (zoomCtxItem) fullViewer.open(imgUrl(zoomCtxItem.key || zoomCtxItem.path, zoomCtxItem.mtime), zoomCtxItem.name);
+  }
+  // 全屏上一张/下一张：与详情弹层共用 detailNav（当前筛选命中池），并同步全屏画面
+  async function fullNav(dir) {
+    if (!detail.value && zoomCtxItem) await openDetailByPath(zoomCtxItem.key || zoomCtxItem.path);
+    await detailNav(dir);
+    refreshFullViewer();
+  }
+  // 全屏随机：与详情弹层共用 detailNavRandom
+  async function fullRandom() {
+    if (!detail.value && zoomCtxItem) await openDetailByPath(zoomCtxItem.key || zoomCtxItem.path);
+    await detailNavRandom();
+    refreshFullViewer();
+  }
+  // 全屏删除：走统一删除确认（设置里开启免确认则不弹），删除文件+缩略图+库内记录
+  function fullDelete() {
+    const t = detail.value || zoomCtxItem;
+    if (t) askDelete(t);
+  }
+  async function zoomView(src, item) {
+    zoomCtxItem = item || detail.value || null;
     if (!createFullViewerFn) {
       const mod = await import('/zhule_modules/common/zhule_fullviewer.js');
       createFullViewerFn = mod.createFullViewer;
       fullViewer = createFullViewerFn({
-        tip: '滚轮缩放 · 左键拖拽 · 双击复位 · 点击或 ✕ 退出',
+        tip: '',
+        actions: [
+          { label: '‹', tip: '上一张（当前命中池）', size: 'lg', onClick: () => fullNav(-1) },
+          { label: '🎲', tip: '随机一张（当前命中池）', dice: true, onClick: fullRandom },
+          { label: '›', tip: '下一张（当前命中池）', size: 'lg', onClick: () => fullNav(1) },
+          { sep: true },
+          { label: '🗑', tip: '删除当前图片及其库内关联数据', onClick: fullDelete },
+        ],
       });
     }
-    if (fullViewer) fullViewer.open(url);
+    const ctx = item || detail.value || null;
+    if (fullViewer) fullViewer.open(src, ctx ? ctx.name : '');
   }
   let _detailReqSeq = 0;
+  let _hitIdsPromise = null;
   async function openDetail(item) {
+    // 顺手预载命中池 ids（不阻塞详情打开），位置与导航后续即用
+    ensureHitIds();
+    await openDetailByPath(item.key);
+  }
+  async function openDetailByPath(path) {
     const seq = ++_detailReqSeq;
     try {
-      const d = await jfetch(API.detail + '?path=' + encodeURIComponent(item.key));
+      const d = await jfetch(API.detail + '?path=' + encodeURIComponent(path));
       if (seq !== _detailReqSeq) {
         return; // 已有更新的点击，丢弃过期响应
       }
@@ -967,9 +1059,57 @@ export function useGalleryCommon(opts = {}) {
       quickTag.value = '';
       tagInputing.value = false;
       refreshTagColors();
+      updateDetailPos();
     } catch (e) {
       showToast('详情加载失败', 'error');
     }
+  }
+  function updateDetailPos() {
+    const d = detail.value;
+    if (!d || !d.path) { detailPos.value = 0; return; }
+    const i = hitIds.value.indexOf(d.path);
+    detailPos.value = i >= 0 ? i + 1 : 0;
+  }
+  async function ensureHitIds() {
+    const key = buildQuery(true).toString();
+    if (hitIdsKey.value === key && hitIds.value.length) return;
+    if (_hitIdsPromise) return _hitIdsPromise;
+    _hitIdsPromise = (async () => {
+      hitIdsKey.value = key;
+      hitIds.value = [];
+      hitTotal.value = 0;
+      try {
+        const d = await jfetch(API.ids + '?' + key);
+        hitIds.value = d.ids || [];
+        hitTotal.value = d.total || 0;
+        updateDetailPos();
+      } catch (e) {
+        hitIds.value = [];
+        hitTotal.value = 0;
+      } finally {
+        _hitIdsPromise = null;
+      }
+    })();
+    return _hitIdsPromise;
+  }
+  async function detailNav(delta) {
+    await ensureHitIds();
+    const arr = hitIds.value;
+    if (!arr.length) { showToast('命中池为空', 'warning'); return; }
+    const cur = detail.value ? detail.value.path : null;
+    let idx = cur ? arr.indexOf(cur) : -1;
+    if (idx < 0) idx = delta > 0 ? 0 : arr.length - 1;
+    else idx += delta;
+    if (idx < 0) { showToast('已是第一张', 'info'); return; }
+    if (idx >= arr.length) { showToast('已是最后一张', 'info'); return; }
+    await openDetailByPath(arr[idx]);
+  }
+  async function detailNavRandom() {
+    await ensureHitIds();
+    const arr = hitIds.value;
+    if (!arr.length) { showToast('命中池为空', 'warning'); return; }
+    const idx = Math.floor(Math.random() * arr.length);
+    await openDetailByPath(arr[idx]);
   }
   function closeDetail() { detail.value = null; }
   function copyPrompt() {
@@ -1023,7 +1163,7 @@ export function useGalleryCommon(opts = {}) {
     // 统一删除模块：免确认直接删，否则弹确认框（设置由 deleteConfirm 统一读取）
     del.ask({
       title: '确认删除图片',
-      message: '将删除该图片文件及其缩略图，此操作不可撤销。',
+      message: '将删除该图片文件、缩略图及其库内关联数据，此操作不可撤销。',
       name: (it && (it.name || it.key)) || '',
       run: () => deleteImageNow(it),
     });
@@ -1044,6 +1184,28 @@ export function useGalleryCommon(opts = {}) {
       showToast('已删除：' + item.name, 'success');
       await loadMeta();
       if (!items.value.length && hasFilter.value) applyFilter();
+
+      // 详情/全屏联动：删除的是当前详情图时，从命中池移除并跳到下一张（无则关闭）
+      const dp = detail.value && (detail.value.path || detail.value.key);
+      if (dp && dp === p) {
+        const hi = hitIds.value.indexOf(p);
+        if (hi >= 0) {
+          hitIds.value.splice(hi, 1);
+          hitTotal.value = Math.max(0, hitTotal.value - 1);
+          updateDetailPos();
+        }
+        if (hitIds.value.length) {
+          const nextPath = hitIds.value[Math.min(hi >= 0 ? hi : 0, hitIds.value.length - 1)];
+          await openDetailByPath(nextPath);
+          refreshFullViewer();
+        } else {
+          closeDetail();
+          if (fullViewer && fullViewer.isOpen) fullViewer.close();
+        }
+      } else if (fullViewer && fullViewer.isOpen && zoomCtxItem && (zoomCtxItem.path || zoomCtxItem.key) === p) {
+        // 从列表卡片🔍全屏删除了当前展示图：关闭全屏
+        fullViewer.close();
+      }
     } catch (e) {
       showToast('删除失败：' + (e.message || ''), 'error');
     }
@@ -1204,7 +1366,8 @@ export function useGalleryCommon(opts = {}) {
     if (!t) return;
     del.ask({
       title: '确认删除词条',
-      message: '将删除词库词条及其提示词文件，此操作不可撤销。',
+      message: '将删除词库词条及其提示词文件，此操作不可撤销。'
+        + '该词条已上传的参考图会一并归档到 zhule_reference/_trash。',
       name: t.name || '',
       run: () => deleteWordEntryNow(t),
     });
@@ -1222,7 +1385,9 @@ export function useGalleryCommon(opts = {}) {
       if (json.error) {
         showToast('删除失败：' + json.error, 'error');
       } else {
-        showToast('已删除：' + t.name, 'success');
+        showToast('已删除：' + t.name
+          + (json.refDirsPurged ? '（参考图已归档 ' + json.refDirsPurged + ' 个目录）' : ''),
+          'success');
         editWbTarget.value = null;
         editWbEditing.value = false;
         await ensureWordBankMap(true);
@@ -1433,6 +1598,16 @@ export function useGalleryCommon(opts = {}) {
       showToast('重建失败', 'error');
     }
   }
+  // 自定义标签增删改后（标签层级面板内联维护）：树已由面板自行刷新，
+  // 这里把图库侧受影响的数据重新拉一遍——筛选元数据、当前页列表、已打开的详情。
+  async function refreshAfterTagEdit() {
+    try {
+      await loadMeta();
+      await applyFilter();
+      refreshTagColors();
+      if (detail.value) await refreshDetail();
+    } catch (e) { /* 单次刷新失败不影响面板操作结果 */ }
+  }
   function toggleModel(name) {
     const i = filters.models.indexOf(name);
     if (i >= 0) filters.models.splice(i, 1); else filters.models.push(name);
@@ -1521,7 +1696,7 @@ export function useGalleryCommon(opts = {}) {
     const n = selected.size;
     del.ask({
       title: '确认批量删除',
-      message: `是否删除选中的 ${n} 张图片？将删除图片文件及其缩略图，此操作不可撤销。`,
+      message: `是否删除选中的 ${n} 张图片？将删除图片文件、缩略图及其库内关联数据，此操作不可撤销。`,
       run: deleteBatchNow,
     });
   }
@@ -1601,14 +1776,13 @@ export function useGalleryCommon(opts = {}) {
     }
     const qm = String(route.query.mode || 'and').toLowerCase();
     if (qm === 'or') filters.tagMode = 'or';
-    ensureTagTree();
-    if (pendingTagId) {
-      ensureTagTree().then(() => {
+    ensureTagTree().then(() => {
+      if (pendingTagId) {
         const nm = tagIdNameMap.value[pendingTagId];
         const t = filters.tags.find((x) => x.id === pendingTagId);
         if (nm && t) t.name = nm;
-      });
-    }
+      }
+    });
     // 首次进入立即加载列表与元数据；不做自动探活/自动刷新，需要最新数据时手动刷新页面
     loadMeta();
     applyFilter();
@@ -1629,8 +1803,11 @@ export function useGalleryCommon(opts = {}) {
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,
+    randomPage,
+    pageEditing, pageEditVal, beginPageEdit, commitPageEdit, cancelPageEdit,
     onSearchKeyup, onTagKeyup, toggleModel, toggleLora,
     openRename, cancelRename, confirmRename, rescan, quickCreateTag,
+    refreshAfterTagEdit,
     fileRenaming, fileRenameVal, fileRenameInput, renamingFile,
     fileDisplayName, beginFileRename, cancelFileRename, commitFileRename,
     renameOpen, renameKind, renameOld, renameNew, renaming, renameInput,
@@ -1640,6 +1817,7 @@ export function useGalleryCommon(opts = {}) {
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
     openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf,
+    hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

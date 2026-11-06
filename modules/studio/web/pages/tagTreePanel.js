@@ -1,7 +1,8 @@
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, nextTick } from 'vue';
 
 const API = {
   tagtree: '/zhule_studio/api/gallery/tagtree',
+  customTag: '/zhule_studio/api/gallery/custom-tag',
 };
 
 // 显示工具：完整路径只取叶子段（'测试/喜欢' → '喜欢'；词条名无分隔符时原样返回）。
@@ -52,10 +53,20 @@ function buildPathTree(tags) {
   }
   return roots;
 }
+// 树节点总数（含子级），用于区域标题后的计数徽章
+function countNodes(ns) {
+  let n = 0;
+  for (const x of ns || []) {
+    n += 1;
+    if (x.children && x.children.length) n += countNodes(x.children);
+  }
+  return n;
+}
 
 // 递归节点：chip 样式与外部 zhg-sel-tag 一致；尺寸随自身子树深度放大（叶子=基准，子树越深越大）；
 // 左键 = 放置到外部过滤区（待生效）；右键 = 包裹式展开/收起子标签，Ctrl+右键 = 逐级优先收起。
 // 若节点祖先已在外部过滤区（selected 含其上级路径），左键不再新增顶层，改为启用/停用筛选（由父级 setFilter 拦截）。
+// manage=true（仅自定义标签区）时，chip 右侧出现 ⋯ 按钮，点开该标签的管理菜单（新建子级/重命名/删除）。
 const TagNode = {
   name: 'TagNode',
   props: {
@@ -64,8 +75,10 @@ const TagNode = {
     themeCls: { type: String, default: '' },
     // 标签颜色函数（输入完整标签名 → 颜色字符串，同图库详情区散列配色）
     colorOf: { type: Function, default: null },
+    // 是否显示管理按钮（自定义标签区专用）
+    manage: { type: Boolean, default: false },
   },
-  emits: ['add', 'remove', 'toggle'],
+  emits: ['add', 'remove', 'toggle', 'menu'],
   setup(props, { emit }) {
     const expanded = ref(false);
     const hasKids = () => props.node.children && props.node.children.length;
@@ -89,7 +102,14 @@ const TagNode = {
       }
       return style;
     };
+    // 管理按钮只在有真实 id 时出现：currentTags 路径重建出的中间分组没有 id，无法定位到库里的行
+    const canManage = computed(() => props.manage && props.node.id != null && props.node.id !== '');
     function onLeft() { emit('add', props.node); }
+    function onMore(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      emit('menu', { node: props.node, x: e.clientX, y: e.clientY });
+    }
     function onCtx(e) {
       e.preventDefault();
       if (e.ctrlKey) {
@@ -106,19 +126,22 @@ const TagNode = {
       if (hasKids()) expanded.value = true;
       e.stopPropagation();
     }
-    return { expanded, hasKids, chipStyle, leafName, onLeft, onCtx };
+    return { expanded, hasKids, chipStyle, leafName, onLeft, onCtx, onMore, canManage };
   },
   template: `
   <div class="zhg-ttp-wrap" :class="{ open: expanded }">
-    <span class="zhg-ttp-chip" v-if="!expanded" :class="[themeCls, { leaf: !hasKids() }]" :style="chipStyle()"
+    <span class="zhg-ttp-chip" v-if="!expanded" :class="[themeCls, { leaf: !hasKids(), mgr: canManage }]" :style="chipStyle()"
           :data-tip="hasKids() ? '左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起' : '左键：放到外部过滤区'"
           @click="onLeft" @contextmenu.prevent="onCtx">
       {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="node.count != null">{{ node.count }}</span>
       <span class="zhg-ttp-arrow" v-if="hasKids()">▸</span>
+      <i class="zhg-ttp-more" v-if="canManage" data-tip="管理这个标签" @click.stop="onMore">⋯</i>
     </span>
     <div class="zhg-ttp-open" v-else :style="chipStyle()" @contextmenu.prevent="onCtx">
       <tag-node v-for="c in node.children" :key="c.rel" :node="c" :depth="depth + 1" :theme-cls="themeCls" :color-of="colorOf"
-                @add="$emit('add', $event)" @remove="$emit('remove', $event)" @toggle="$emit('toggle', $event)"></tag-node>
+                :manage="manage"
+                @add="$emit('add', $event)" @remove="$emit('remove', $event)" @toggle="$emit('toggle', $event)"
+                @menu="$emit('menu', $event)"></tag-node>
     </div>
   </div>
   `,
@@ -138,15 +161,23 @@ export default {
     // 标签颜色函数（与详情区同套散列配色，用于外部过滤区条与面板 chip 随机色）
     colorOf: { type: Function, default: null },
   },
-  emits: ['close', 'add', 'remove', 'clear', 'toggle'],
+  emits: ['close', 'add', 'remove', 'clear', 'toggle', 'refresh'],
   setup(props, { emit }) {
     const tree = ref([]);
     const loading = ref(false);
     const err = ref('');
+    const toast = ref('');
+    let toastTimer = 0;
+
+    function flash(msg) {
+      toast.value = msg;
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.value = ''; }, 2400);
+    }
 
     async function loadTree(force = false) {
       if (tree.value.length && !force) return;
-      loading.value = true;
+      loading.value = !tree.value.length;
       err.value = '';
       try {
         const r = await fetch(API.tagtree, { headers: { 'Cache-Control': 'no-cache' } });
@@ -165,7 +196,7 @@ export default {
     }
     watch(
       () => props.show,
-      (v) => { if (v) open(); }
+      (v) => { if (v) open(); else { closeMenu(); dlg.value.open = false; } }
     );
 
     // 左键：放置到外部过滤区（待生效），父组件决定新增/恢复/移除。
@@ -227,6 +258,113 @@ export default {
         ? buildPathTree(props.currentTags.filter((t) => t && t.custom))
         : all.filter((n) => n.isCustom);
     });
+    const wbCount = computed(() => countNodes(wbTree.value));
+    const csCount = computed(() => countNodes(csTree.value));
+
+    // ---------------- 自定义标签增删改 ----------------
+    const menu = ref({ open: false, x: 0, y: 0, node: null, confirm: false, busy: false });
+    const dlg = ref({ open: false, mode: 'create', parentId: null, parentName: '', targetId: null, value: '', err: '', busy: false });
+    const dlgInput = ref(null);
+
+    function onDocDown() { closeMenu(); }
+    function openMenu(payload) {
+      const node = payload && payload.node;
+      if (!node) return;
+      const w = 176, h = 150;
+      const x = Math.max(8, Math.min(payload.x, window.innerWidth - w - 8));
+      const y = Math.max(8, Math.min(payload.y, window.innerHeight - h - 8));
+      menu.value = { open: true, x, y, node, confirm: false, busy: false };
+      document.addEventListener('mousedown', onDocDown);
+    }
+    function closeMenu() {
+      if (menu.value.open) menu.value = { open: false, x: 0, y: 0, node: null, confirm: false, busy: false };
+      document.removeEventListener('mousedown', onDocDown);
+    }
+    function startCreate(parentNode) {
+      closeMenu();
+      dlg.value = {
+        open: true, mode: 'create',
+        parentId: parentNode && parentNode.id != null ? parentNode.id : null,
+        parentName: parentNode ? leafName(parentNode.name) : '',
+        targetId: null, value: '', err: '', busy: false,
+      };
+      focusDlg();
+    }
+    function startRename(node) {
+      closeMenu();
+      if (!node || node.id == null) return;
+      dlg.value = {
+        open: true, mode: 'rename', parentId: null, parentName: '',
+        targetId: node.id, value: leafName(node.name), err: '', busy: false,
+      };
+      focusDlg();
+    }
+    function focusDlg() {
+      nextTick(() => {
+        const el = dlgInput.value;
+        if (el) { el.focus(); el.select(); }
+      });
+    }
+    function closeDlg() {
+      if (dlg.value.busy) return;
+      dlg.value.open = false;
+    }
+
+    async function postCustomTag(payload) {
+      const r = await fetch(API.customTag, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      let d = {};
+      try { d = await r.json(); } catch (e) { d = {}; }
+      if (!r.ok || d.error) throw new Error(d.error || ('请求失败（' + r.status + '）'));
+      return d;
+    }
+
+    async function submitDlg() {
+      const name = String(dlg.value.value || '').trim();
+      if (!name) { dlg.value.err = '名称不能为空'; return; }
+      if (TAG_PATH_SEPS.test(name)) { dlg.value.err = '名称不能包含 / \\ : - 等层级分隔符'; return; }
+      dlg.value.busy = true;
+      dlg.value.err = '';
+      try {
+        const d = dlg.value.mode === 'create'
+          ? await postCustomTag({ op: 'create', parent_id: dlg.value.parentId, name })
+          : await postCustomTag({ op: 'rename', id: dlg.value.targetId, name });
+        dlg.value.open = false;
+        await loadTree(true);
+        emit('refresh');
+        flash(dlg.value.mode === 'create'
+          ? (d && d.existed ? '同名标签已存在，已复用' : '已新建「' + name + '」')
+          : '已重命名为「' + name + '」');
+      } catch (e) {
+        dlg.value.err = e.message || '操作失败';
+      } finally {
+        dlg.value.busy = false;
+      }
+    }
+
+    async function doDelete() {
+      const node = menu.value.node;
+      if (!node || node.id == null) return;
+      menu.value.busy = true;
+      try {
+        const d = await postCustomTag({ op: 'delete', id: node.id });
+        // 该标签若已放入外部过滤区，一并移除，避免残留一个查不到数据的筛选项
+        emit('remove', { name: node.rel || node.name, rel: node.rel || '', id: node.id, isCustom: true, kind: 'custom' });
+        closeMenu();
+        await loadTree(true);
+        emit('refresh');
+        const n = (d && d.removed) || 1;
+        const u = (d && d.unlinked) || 0;
+        flash('已删除「' + leafName(node.name) + '」' + (n > 1 ? '及其 ' + (n - 1) + ' 个子标签' : '') + (u ? '，已解除 ' + u + ' 张图的关联' : ''));
+      } catch (e) {
+        menu.value.busy = false;
+        closeMenu();
+        flash('删除失败：' + (e.message || e));
+      }
+    }
 
     // 上下分区：提示词标签在上、自定义标签在下，中间分隔线可拖拽调整区域大小（百分比持久化）
     const wbPct = ref(55);
@@ -258,8 +396,9 @@ export default {
     }
 
     return {
-      tree, wbTree, csTree, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close, selTagStyle,
-      visibleSelected, wbPct, zoneStyle, startSplitDrag,
+      tree, wbTree, csTree, wbCount, csCount, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close,
+      selTagStyle, visibleSelected, wbPct, zoneStyle, startSplitDrag,
+      toast, menu, dlg, dlgInput, openMenu, closeMenu, startCreate, startRename, closeDlg, submitDlg, doDelete,
     };
   },
   template: `
@@ -268,12 +407,14 @@ export default {
       <div class="zhg-ttp-head">
         <span class="zhg-ttp-title">标签层级</span>
         <span class="zhg-ttp-hint">左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起</span>
+        <span class="zhg-ttp-flash" v-if="toast">{{ toast }}</span>
         <button class="zhg-ttp-close" data-tip="关闭" @click="close">✕</button>
       </div>
       <div class="zhg-ttp-body" v-if="!loading && !err">
         <div class="zhg-ttp-selected" v-if="visibleSelected.length">
           <span class="zhg-ttp-sel-label">外部过滤区：</span>
-          <span class="zhg-sel-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
+          <span class="zhg-sel-tag zhg-out-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
+                :style="selTagStyle(t.name)"
                 v-for="t in visibleSelected" :key="tagKey(t)" @click="removeFilter(t)">
             {{ leafName(t.name) }}<span class="zhg-sel-tag-x">✕</span>
           </span>
@@ -281,7 +422,10 @@ export default {
         </div>
         <div class="zhg-ttp-split">
           <div class="zhg-ttp-zone zhg-ttp-zone-wb" :style="zoneStyle('wb')">
-            <div class="zhg-ttp-zone-title">提示词标签</div>
+            <div class="zhg-ttp-zone-head">
+              <span class="zhg-ttp-zone-title">提示词标签</span>
+              <span class="zhg-ttp-zone-badge">{{ wbCount }}</span>
+            </div>
             <div class="zhg-ttp-tree">
               <tag-node v-for="n in wbTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf"
                         @add="setFilter($event)" @remove="removeFilter($event)" @toggle="setFilter($event)"></tag-node>
@@ -289,16 +433,59 @@ export default {
           </div>
           <div class="zhg-ttp-divider" title="拖拽调整区域大小" @mousedown.prevent="startSplitDrag"></div>
           <div class="zhg-ttp-zone zhg-ttp-zone-cs" :style="zoneStyle('cs')">
-            <div class="zhg-ttp-zone-title">自定义标签</div>
+            <div class="zhg-ttp-zone-head">
+              <span class="zhg-ttp-zone-title">自定义标签</span>
+              <span class="zhg-ttp-zone-badge">{{ csCount }}</span>
+              <span class="zhg-ttp-zone-gap"></span>
+              <a class="zhg-ttp-add" data-tip="新建一个顶层自定义标签" @click="startCreate(null)">＋ 新建</a>
+            </div>
             <div class="zhg-ttp-tree">
-              <tag-node v-for="n in csTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf"
-                        @add="setFilter($event)" @remove="removeFilter($event)" @toggle="setFilter($event)"></tag-node>
+              <tag-node v-for="n in csTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf" :manage="true"
+                        @add="setFilter($event)" @remove="removeFilter($event)" @toggle="setFilter($event)"
+                        @menu="openMenu"></tag-node>
+            </div>
+            <div class="zhg-ttp-empty" v-if="!csTree.length">
+              还没有自定义标签，点右上「＋ 新建」加一个，比如「喜欢」。
             </div>
           </div>
         </div>
       </div>
       <div class="zhg-ttp-loading" v-else-if="loading">加载中…</div>
       <div class="zhg-ttp-err" v-else>{{ err }}</div>
+
+      <div class="zhg-ttp-menu" v-if="menu.open" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @mousedown.stop @contextmenu.prevent>
+        <template v-if="!menu.confirm">
+          <div class="zhg-ttp-menu-head">{{ leafName(menu.node && menu.node.name) }}</div>
+          <div class="zhg-ttp-menu-item" @click="startCreate(menu.node)">＋ 新建子标签</div>
+          <div class="zhg-ttp-menu-item" @click="startRename(menu.node)">✎ 重命名</div>
+          <div class="zhg-ttp-menu-item danger" @click="menu.confirm = true">🗑 删除</div>
+        </template>
+        <div class="zhg-ttp-menu-confirm" v-else>
+          <div class="zhg-ttp-menu-warn">
+            删除「{{ leafName(menu.node && menu.node.name) }}」及其全部子标签？
+            图片上挂着的该标签会一并解除。
+          </div>
+          <div class="zhg-ttp-menu-btns">
+            <button class="zhg-ttp-btn danger" :disabled="menu.busy" @click="doDelete">{{ menu.busy ? '删除中…' : '确认删除' }}</button>
+            <button class="zhg-ttp-btn" @click="menu.confirm = false">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="zhg-ttp-dlg-mask" v-if="dlg.open" @mousedown.self="closeDlg">
+        <div class="zhg-ttp-dlg">
+          <div class="zhg-ttp-dlg-title">
+            {{ dlg.mode === 'create' ? (dlg.parentName ? '在「' + dlg.parentName + '」下新建标签' : '新建自定义标签') : '重命名标签' }}
+          </div>
+          <input class="zhg-ttp-dlg-input" ref="dlgInput" v-model="dlg.value" maxlength="40"
+                 placeholder="标签名，例如 喜欢" @keydown.enter="submitDlg" @keydown.esc="closeDlg">
+          <div class="zhg-ttp-dlg-err" v-if="dlg.err">{{ dlg.err }}</div>
+          <div class="zhg-ttp-dlg-btns">
+            <button class="zhg-ttp-btn primary" :disabled="dlg.busy" @click="submitDlg">{{ dlg.busy ? '保存中…' : '确定' }}</button>
+            <button class="zhg-ttp-btn" @click="closeDlg">取消</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   `,

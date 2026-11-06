@@ -9,9 +9,9 @@
   {name, number, rawName, relPath, chips, chipKeys, content, content_cn, images, mtime}
   - relPath：词条在词库树中的原始路径（含编号前缀）
   - mtime：取自 DB updated_at（按时间排序用）
-  - images：参考图路径数组（相对 output/zhule_studio/），按优先级：
-      1. 词条上传图  zhule_reference/<词条id>/<文件>（卡片详情页上传）
-      2. 图库反查图  zhule_img/<文件>（按词条名匹配图库 tag，只读，不可删）
+  - images：参考图路径数组（相对 output/zhule_studio/），两个来源合并展示：
+      1. 词条上传图  zhule_reference/<词条id>/<文件>（卡片详情页上传，排在前）
+      2. 图库反查图  zhule_img/<文件>（按词条名匹配图库 tag，接在后面；删除即删图库原图本体）
 
 词库文本与 images.txt 均已不再落盘读写，词库目录仅作历史兼容保留。
 """
@@ -19,6 +19,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 
 from aiohttp import web
 
@@ -135,27 +136,54 @@ def _ref_dir(entry_id):
     return os.path.join(IMAGE_ROOT, STUDIO_SUBDIR, REF_SUBDIR, str(entry_id))
 
 
+def _purge_ref_dir(entry_id):
+    """清理词条参考图目录 zhule_reference/<词条id>/，返回是否发生清理。
+
+    为保留可回滚能力，目录整体移动到 zhule_reference/_trash/<词条id>-<时间戳>/，
+    而非物理删除；只处理 REF 根目录下的一级子目录，防止越界。
+    """
+    root = os.path.abspath(os.path.join(IMAGE_ROOT, STUDIO_SUBDIR, REF_SUBDIR))
+    target = os.path.abspath(_ref_dir(entry_id))
+    if os.path.dirname(target) != root or not os.path.isdir(target):
+        return False
+    trash = os.path.join(root, "_trash")
+    try:
+        os.makedirs(trash, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = os.path.join(trash, str(entry_id) + "-" + stamp)
+        seq = 1
+        while os.path.exists(dest):
+            dest = os.path.join(trash, str(entry_id) + "-" + stamp + "-" + str(seq))
+            seq += 1
+        shutil.move(target, dest)
+        return True
+    except (OSError, shutil.Error):
+        return False
+
+
 def _card_images(node):
-    """词条卡片参考图数据源（按优先级），返回相对 output/zhule_studio/ 的路径数组。
+    """词条卡片参考图数据源，返回相对 output/zhule_studio/ 的路径数组。
 
+    两个来源合并展示（上传图在前，图库反查图接后，去重）：
     1. 词条上传图：zhule_reference/<词条id>/<文件>（卡片详情页上传，可删）；
-    2. 图库反查图：zhule_img/<文件>（按词条名匹配图库 tag，数据源为内存 index，只读）。
+    2. 图库反查图：zhule_img/<文件>（按词条名匹配图库 tag，数据源为内存 index）。
 
+    「上传图优先」= 排序在前，不再整体屏蔽图库反查图。
     images.txt 与「词库目录内 / 父目录立绘图」机制均已停用，不再读取与生成。
     """
+    out = []
     nid = node.get("id")
     if nid:
         imgs = _list_images(_ref_dir(nid))
-        if imgs:
-            return [REF_SUBDIR + "/" + str(nid) + "/" + f for f in imgs]
+        out = [REF_SUBDIR + "/" + str(nid) + "/" + f for f in imgs]
 
     name = node.get("name") or ""
     if name:
         from .gallery import get_tag_ref_index  # 延迟导入避免循环依赖
-        refs = get_tag_ref_index().get(name)
-        if refs:
-            return refs
-    return []
+        for rel in (get_tag_ref_index().get(name) or []):
+            if rel not in out:
+                out.append(rel)
+    return out
 
 
 def _node_raw_name(node):
@@ -386,8 +414,12 @@ async def post_wordbank_delete(request):
         return web.json_response({"error": "词条不存在"}, status=404)
     if node.get("type") == "category" and node.get("parent_id") is None:
         return web.json_response({"error": "不能删除 Tab 根目录"}, status=400)
+    ids = db.subtree_ids(int(node["id"]))
     count = db.delete_subtree(int(node["id"]))
-    return web.json_response({"ok": True, "deleted": count})
+    if not count:
+        return web.json_response({"error": "删除失败"}, status=500)
+    purged = sum(1 for i in ids if _purge_ref_dir(i))
+    return web.json_response({"ok": True, "deleted": count, "refDirsPurged": purged})
 
 async def post_wordbank_tab_create(request):
     """新建 Tab 大类（DB 版）：INSERT 顶层 category 节点，sort_order 取同层 max+1。"""
@@ -480,10 +512,13 @@ async def post_wordbank_card_create(request):
     return web.json_response({"ok": True, "id": str(new_id)})
 
 async def post_wordbank_image(request):
-    """删除词条参考图：物理删除 output/zhule_studio/zhule_reference/<词条id>/ 下的图片。
+    """删除词条参考图：物理删除本地文件并同步对应数据。
 
-    仅支持 action=delete；images.txt 机制已移除，unref 不再支持。
-    图库反查图（zhule_img/ 前缀）来源于图库本体，不允许在此删除。
+    两张来源分别处理（action 仅支持 delete，images.txt 机制已移除）：
+    1. zhule_reference/<词条id>/<文件>：词条上传图，删该词条目录下的文件；
+    2. zhule_img/<文件>：图库反查图，删除图库原图本体——原图 + 缩略图 +
+       gallery_image 行（gallery_tag 按外键级联）+ 内存索引，等同图库里的删除。
+       该图被所有按 tag 引用它的词条同步失去（同一张图全局删除，不是只解除本词条引用）。
     """
     try:
         body = await request.json()
@@ -496,14 +531,24 @@ async def post_wordbank_image(request):
         return web.json_response({"error": "缺少 id 或 image"}, status=400)
     if action != "delete":
         return web.json_response({"error": "images.txt 已移除，仅支持 action=delete"}, status=400)
-    prefix = REF_SUBDIR + "/"
-    if not image.startswith(prefix):
-        return web.json_response({"error": "图库反查图不可删除，仅可删除词条上传的参考图"}, status=400)
+    ref_prefix = REF_SUBDIR + "/"
+    gal_prefix = "zhule_img/"
+    if not (image.startswith(ref_prefix) or image.startswith(gal_prefix)):
+        return web.json_response({"error": "不支持的参考图路径"}, status=400)
     node = db.node_by_id(raw_id)
     if node is None:
         return web.json_response({"error": "词条不存在"}, status=404)
+
+    # 图库反查图：走图库单图删除（文件 + 缩略图 + DB 行 + 内存索引），失败原因原样回传
+    if image.startswith(gal_prefix):
+        from .gallery import delete_gallery_image  # 延迟导入避免循环依赖
+        ok, err = delete_gallery_image(image[len(gal_prefix):])
+        if not ok:
+            return web.json_response({"error": err}, status=500)
+        return web.json_response({"ok": True, "images": _card_images(node)})
+
     # 路径形如 zhule_reference/<词条id>/<文件>：校验 id 归属，防跨词条删除
-    parts = image[len(prefix):].split("/")
+    parts = image[len(ref_prefix):].split("/")
     if len(parts) < 2 or parts[0] != str(node["id"]):
         return web.json_response({"error": "图片不属于该词条"}, status=403)
     folder = _ref_dir(node["id"])

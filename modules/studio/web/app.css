@@ -61,9 +61,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .btn.active { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
 .btn.danger { background: var(--red-dim); color: #ffb3b3; border-color: #7a2626; }
 .btn.danger:hover { background: #7a2626; color: #fff; }
-.mode-switch { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.mode { border-radius: 0; border: none; padding: 7px 12px; font-size: 12px; }
-.mode.active { background: var(--primary-dim); color: #fff; }
 .col-ctrl { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .col-ctrl label { color: var(--text-3); font-size: 12px; }
 .col-btn { width: 24px; height: 24px; padding: 0; font-size: 15px;
@@ -174,11 +171,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card-add:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-dim); }
 .card.selected { background: var(--card-sel); border-color: var(--primary); }
 .card.zhule-source { opacity: 0.35; }
-.card.file { padding: 10px 12px 8px; gap: 6px; min-height: 76px; -webkit-touch-callout: none; }
-.card.file .card-title { font-weight: 600; color: var(--text); font-size: 13px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
-.card.file .card-body { color: var(--text-2); font-size: 12px; line-height: 1.45;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card.image { padding: 0; }
 .card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
   background: #0b0e13; overflow: hidden; }
@@ -200,7 +192,13 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   transition: all 0.12s; display: flex; align-items: center; justify-content: center;
   opacity: 0; }
 .card-thumb-wrap .thumb-zoom:hover { background: var(--primary); color: #fff; }
-.card-thumb-wrap:hover .thumb-enter, .card-thumb-wrap:hover .thumb-zoom { opacity: 1; }
+.card-thumb-wrap .thumb-del { position: absolute; top: 70px; right: 6px; width: 26px; height: 26px;
+  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: 13px;
+  cursor: pointer; border: 1px solid rgba(255,255,255,0.15); z-index: 5;
+  transition: all 0.12s; display: flex; align-items: center; justify-content: center;
+  opacity: 0; }
+.card-thumb-wrap .thumb-del:hover { background: rgba(214,69,69,0.9); color: #fff; }
+.card-thumb-wrap:hover .thumb-enter, .card-thumb-wrap:hover .thumb-zoom, .card-thumb-wrap:hover .thumb-del { opacity: 1; }
 .thumb-nav { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 14px;
   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 4;
@@ -223,11 +221,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   font-size: 12px; color: var(--text); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.file-name-row {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 4px;
-}
-.file-name-row .card-title { flex: 1; min-width: 0; }
 .card-edit {
   width: 22px; height: 22px; border-radius: 4px;
   background: transparent; color: var(--text-3);
@@ -256,14 +249,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; transition: all 0.12s; padding: 0; }
 .card-del-btn:hover { background: rgba(229, 72, 77, 0.18); color: #ff6b6b; border-color: #e5484d; }
-.card.file .file-zoom {
-  width: 22px; height: 22px; border-radius: 4px;
-  background: transparent; color: var(--text-3);
-  border: 1px solid transparent; cursor: pointer;
-  font-size: 12px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; transition: all 0.12s; padding: 0; }
-.card.file .file-zoom:hover { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
 
 .empty { grid-column: 1 / -1; text-align: center; color: var(--text-3); padding: 40px; font-size: 13px; }
 
@@ -534,6 +519,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-pg-btn:disabled { opacity: 0.35; cursor: default; }
 .zhg-pg-val { min-width: 34px; text-align: center; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
 .zhg-pg-info { font-size: 12px; color: var(--text-2); }
+.zhg-pg-info { cursor: text; }
+.zhg-pg-input {
+  width: 64px; height: 22px; box-sizing: border-box; font-size: 12px; text-align: center;
+  color: var(--text); background: var(--bg-1); border: 1px solid var(--primary); border-radius: 4px;
+  font-variant-numeric: tabular-nums; outline: none; padding: 0 4px;
+}
 .zhg-dirty { color: var(--green); font-size: 12px; white-space: nowrap; }
 
 /* ===== 上下布局版：工具栏分段控件美化（不影响左右布局 Gallery.js） ===== */
@@ -767,6 +758,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-trash-btn:not(:disabled):hover { background: var(--red-dim); border-color: var(--red); color: #ff6b6b; }
 .zhg-trash-btn.on { background: var(--red-dim); border-color: var(--red); color: #ff6b6b; }
 .zhg-trash-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 随机拼页：骰子按钮，点亮态用主色高亮 */
+.zhg-dice-btn { transition: all 0.12s; }
+.zhg-dice-btn:not(:disabled):hover { background: var(--primary-dim); border-color: var(--primary); color: #fff; }
+.zhg-dice-btn.on { background: var(--primary-dim); border-color: var(--primary); color: #fff; }
 .zhg-sel-count { display: inline-flex; align-items: center; gap: 5px; color: var(--accent);
   font-size: 12px; white-space: nowrap; }
 .zhg-sel-count b { color: #fff; }
@@ -812,6 +807,29 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-modal-img { flex: 1; min-height: 0; object-fit: contain; width: 100%;
   padding: 10px; }
 .zhg-modal-actions { flex-shrink: 0; padding: 10px 14px; border-top: 1px solid var(--border-2); }
+.zhg-modal-imgwrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.zhg-modal-nav { position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 10px; }
+.zhg-nav-btn { pointer-events: auto; position: relative; width: 48px; height: 48px; padding: 0; border: none;
+  border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: background .15s; }
+/* 触发热区扩大：图标周围一圈（含 10px 外延）均可点击 */
+.zhg-nav-btn::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+.zhg-nav-btn:hover { background: rgba(0,0,0,0.78); }
+.zhg-nav-prev, .zhg-nav-next { position: static; flex-shrink: 0; }
+.zhg-nav-mid { pointer-events: auto; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 18px;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); }
+.zhg-nav-dice { position: static; width: 30px; height: 30px; font-size: 16px; }
+.zhg-nav-del { position: static; width: 30px; height: 30px; font-size: 16px; }
+.zhg-nav-del:hover { background: rgba(214, 69, 69, 0.9); }
+.zhg-nav-count { color: #cfd7e3; font-size: 12px; white-space: nowrap; }
+/* 详情弹层图片区右上角红叉：删除当前图片及其库内关联数据 */
+.zhg-modal-del { position: absolute; top: 10px; right: 10px; z-index: 3; width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 50%;
+  background: rgba(214, 69, 69, 0.9); color: #fff; font-size: 15px; line-height: 1; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: background .12s; }
+.zhg-modal-del:hover { background: #ff5b5b; }
 .zhg-modal-actions .btn { width: 100%; font-size: 13px; }
 .zhg-modal-right { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px 20px;
   display: flex; flex-direction: column; gap: 10px; }
@@ -1127,20 +1145,23 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   display: flex; align-items: center; justify-content: center;
 }
 .zhg-ttp {
-  background: var(--bg-2);
+  position: relative;
+  background:
+    radial-gradient(120% 80% at 100% 0%, rgba(79, 143, 247, 0.10), transparent 60%),
+    linear-gradient(180deg, var(--card) 0%, var(--bg-2) 46%);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   display: flex; flex-direction: column;
-  width: min(760px, 92vw);
-  height: min(620px, 84vh);
+  width: min(820px, 94vw);
+  height: min(660px, 86vh);
   overflow: hidden;
 }
 .zhg-ttp-head {
   display: flex; align-items: center; gap: 10px;
-  padding: 12px 16px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--border-2);
-  background: var(--card);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent);
   flex-shrink: 0;
 }
 .zhg-ttp-title { font-size: 14px; font-weight: 800; color: var(--text); }
@@ -1166,15 +1187,20 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-crumb.root { color: var(--text-2); }
 .zhg-ttp-reset { font-size: 11px; color: var(--text-3); cursor: pointer; }
 .zhg-ttp-reset:hover { color: var(--primary); }
-.zhg-ttp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 10px 16px 16px; }
+.zhg-ttp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 12px 16px 14px; gap: 10px; }
 .zhg-ttp-selected {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
-  padding: 6px 10px; margin-bottom: 10px;
-  border: 1px dashed var(--border-2); border-radius: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 7px 10px; flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(79, 143, 247, 0.07), rgba(79, 143, 247, 0.02));
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, transparent); border-radius: 10px;
 }
-.zhg-ttp-sel-label { font-size: 12px; color: var(--text-3); }
+.zhg-ttp-sel-label { font-size: 12px; font-weight: 700; color: var(--text-3); }
 /* 新版：chip 样式与外部标签一致；尺寸随深度在 TagNode 内通过内联 style 放大 */
-.zhg-ttp-tree { display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start; }
+.zhg-ttp-tree {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding: 2px; align-content: flex-start;
+}
 .zhg-ttp-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; }
 .zhg-ttp-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1182,6 +1208,13 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   font-size: 12px; cursor: pointer; user-select: none;
   transition: all 0.12s;
 }
+/* chip 右侧管理按钮（仅自定义标签区出现）：平时淡出，悬停整颗 chip 时显现 */
+.zhg-ttp-more {
+  font-style: normal; line-height: 1; padding: 0 2px; margin-left: 1px;
+  border-radius: 4px; opacity: 0.45; cursor: pointer; transition: all 0.12s;
+}
+.zhg-ttp-chip:hover .zhg-ttp-more { opacity: 0.95; }
+.zhg-ttp-more:hover { opacity: 1; background: rgba(0, 0, 0, 0.24); }
 /* 颜色一律由主题类（zhg-tag-theme-* + --tag-bg）统一接管，不再区分自定义/提示词/叶子 */
 .zhg-ttp-count { font-size: 0.82em; color: var(--text-3); }
 .zhg-ttp-arrow { font-size: 0.9em; color: var(--text-3); }
@@ -1199,23 +1232,127 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-err { padding: 20px; text-align: center; color: var(--red); }
 /* 编辑面板上下分区：提示词标签在上、自定义标签在下，中间分隔线可拖拽调整区域大小 */
 .zhg-ttp-split { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
-.zhg-ttp-zone { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.zhg-ttp-zone {
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  position: relative;
+  padding: 10px 12px 10px;
+  border: 1px solid var(--border-2); border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01));
+}
+/* 每个分区顶部一道渐变高光，替代原来"光秃秃标题 + 一堆 chip"的白板观感 */
+.zhg-ttp-zone::before {
+  content: ''; position: absolute; left: 14px; right: 14px; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 62%, transparent), transparent);
+  pointer-events: none;
+}
 .zhg-ttp-zone-wb { flex: 0 0 55%; }
 .zhg-ttp-zone-cs { flex: 1 1 0; }
+.zhg-ttp-zone-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 2px 8px; flex-shrink: 0;
+}
 .zhg-ttp-zone-title {
-  flex-shrink: 0; font-size: 12px; font-weight: 800; color: var(--text-2);
-  padding: 4px 2px 6px; border-bottom: 1px solid var(--border-2); margin-bottom: 8px;
+  position: relative; padding-left: 9px;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.3px; color: var(--text-2);
+}
+.zhg-ttp-zone-title::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 12px; border-radius: 2px; background: var(--primary);
+}
+.zhg-ttp-zone-badge {
+  min-width: 18px; padding: 0 5px; height: 16px; line-height: 16px;
+  font-size: 10px; font-weight: 700; text-align: center;
+  color: var(--text-3); background: rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+}
+.zhg-ttp-zone-gap { flex: 1; }
+.zhg-ttp-add {
+  padding: 2px 9px; font-size: 11px; font-weight: 700;
+  color: var(--text-2); cursor: pointer; user-select: none;
+  border: 1px solid var(--border-2); border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  transition: all 0.12s;
+}
+.zhg-ttp-add:hover { color: #fff; background: var(--primary-dim); border-color: var(--primary); }
+.zhg-ttp-empty {
+  margin-top: 4px; padding: 14px 12px;
+  font-size: 12px; line-height: 1.7; color: var(--text-3); text-align: center;
+  border: 1px dashed var(--border-2); border-radius: 10px;
 }
 .zhg-ttp-divider {
   flex: 0 0 9px; cursor: row-resize; position: relative;
-  background: var(--card); border-top: 1px solid var(--border-2); border-bottom: 1px solid var(--border-2);
+  background: transparent;
 }
 .zhg-ttp-divider::before {
   content: '⋯'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   font-size: 11px; color: var(--text-3); letter-spacing: 2px; pointer-events: none;
+  transition: color 0.12s;
 }
-.zhg-ttp-divider:hover { background: var(--primary-dim); }
-.zhg-ttp-divider:hover::before { color: #fff; }
+.zhg-ttp-divider:hover::before { color: var(--primary); }
+/* 头部即时反馈（新建/重命名/删除结果） */
+.zhg-ttp-flash {
+  flex-shrink: 0; max-width: 260px;
+  font-size: 11px; color: #6fcf7f;
+  padding: 2px 8px; border-radius: 8px;
+  background: rgba(92, 184, 92, 0.12);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ===== 标签管理浮层菜单（chip 上 ⋯ 打开） ===== */
+.zhg-ttp-menu {
+  position: fixed; z-index: 460; min-width: 168px; padding: 5px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.6);
+}
+.zhg-ttp-menu-head {
+  max-width: 200px; padding: 4px 8px 6px; margin-bottom: 4px;
+  font-size: 11px; color: var(--text-3);
+  border-bottom: 1px solid var(--border-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.zhg-ttp-menu-item {
+  padding: 6px 9px; font-size: 12px; color: var(--text); border-radius: 6px;
+  cursor: pointer; white-space: nowrap; transition: all 0.1s;
+}
+.zhg-ttp-menu-item:hover { color: #fff; background: var(--primary-dim); }
+.zhg-ttp-menu-item.danger { color: #e07070; }
+.zhg-ttp-menu-item.danger:hover { color: #ff9a9a; background: rgba(224, 80, 80, 0.16); }
+.zhg-ttp-menu-confirm { padding: 4px; }
+.zhg-ttp-menu-warn { font-size: 12px; line-height: 1.65; color: var(--text-2); }
+.zhg-ttp-menu-btns { display: flex; gap: 6px; margin-top: 10px; }
+
+/* ===== 通用小按钮 + 名称输入弹窗 ===== */
+.zhg-ttp-btn {
+  padding: 5px 12px; font-size: 12px; color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-2); border-radius: 8px;
+  cursor: pointer; transition: all 0.12s;
+}
+.zhg-ttp-btn:hover { color: #fff; border-color: var(--border); }
+.zhg-ttp-btn:disabled { opacity: 0.6; cursor: default; }
+.zhg-ttp-btn.primary { color: #fff; background: var(--primary); border-color: var(--primary); }
+.zhg-ttp-btn.primary:hover { filter: brightness(1.1); }
+.zhg-ttp-btn.danger { color: #fff; background: #c9463f; border-color: #c9463f; }
+.zhg-ttp-btn.danger:hover { filter: brightness(1.1); }
+.zhg-ttp-dlg-mask {
+  position: fixed; inset: 0; z-index: 470;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.zhg-ttp-dlg {
+  width: min(380px, 90vw); padding: 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+}
+.zhg-ttp-dlg-title { font-size: 13px; font-weight: 800; color: var(--text); margin-bottom: 12px; }
+.zhg-ttp-dlg-input {
+  width: 100%; box-sizing: border-box;
+  padding: 8px 10px; font-size: 13px; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 8px;
+  outline: none;
+}
+.zhg-ttp-dlg-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-dim); }
+.zhg-ttp-dlg-err { margin-top: 8px; font-size: 11px; color: var(--red); }
+.zhg-ttp-dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 /* 详情页自定义标签层级树（DetailTagNode）：父'测试'下挂子'喜欢'，非扁平路径 */
 .zhg-dtag-wrap { display: block; }

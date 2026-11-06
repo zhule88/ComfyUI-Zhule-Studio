@@ -15,10 +15,6 @@ export default {
           <button class="btn" :class="{active: pref.translate}" @click="toggleTranslate">
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
-          <div class="mode-switch">
-            <button class="btn mode" :class="{active: pref.cardMode==='image'}" @click="setCardMode('image')">🖼 图片</button>
-            <button class="btn mode" :class="{active: pref.cardMode==='file'}" @click="setCardMode('file')">📄 文件</button>
-          </div>
           <button class="btn" @click="singleRandom" data-tip="从每个随机池各抽一条">🎲</button>
           <button class="btn" :class="{active: data.randomMode}" @click="toggleRandomMode" data-tip="随机模式：每个池子各抽一条，逐条出图">🔄</button>
           <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：以当前参考图最多的提示词为基准，设置0把不足的补到基准数，设置N补到（基准+N）；集中填充倒满一桶再下一桶，直到全部达标">⏩</button>
@@ -87,55 +83,42 @@ export default {
                  @click="openAddCard">＋</div>
             <div v-if="!filteredFiles.length && !canAddCard" class="empty">没有匹配的提示词</div>
             <div v-for="file in visibleFiles" :key="file.relPath"
-                 class="card" :data-rel="file.relPath"
+                 class="card image" :data-rel="file.relPath"
                  :class="{
-                   image: pref.cardMode === 'image',
-                   file: pref.cardMode === 'file',
                    selected: isFileSelected(file),
                    'zhule-source': drag.active && drag.sourceType === 'card' && drag.sourceRelPath === file.relPath,
                    'drop-target': drag.hoverCardRelPath === file.relPath
                  }"
                  @pointerdown="onCardPointerDown($event, file)">
-              <template v-if="pref.cardMode === 'image'">
-                <div class="card-thumb-wrap">
-                  <img v-if="file.images && file.images.length"
-                       class="card-thumb" draggable="false" loading="lazy" decoding="async"
-                       :src="imageUrl(file.images[getImgIdx(file)])"
-                       :alt="file.name">
-                  <div v-else class="card-thumb"
-                       style="display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a2332 0%,#2a3040 100%)">
-                    <img class="card-thumb-img" draggable="false" loading="lazy" decoding="async"
-                         :src="defaultImageUrl"
-                         alt="">
-                  </div>
-                  <div class="thumb-count" v-if="file.images && file.images.length">
-                    {{ getImgIdx(file) + 1 }}/{{ file.images.length }}
-                  </div>
-                  <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
-                  <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
-                  <div class="thumb-nav" @pointerdown.stop v-if="file.images && file.images.length > 1">
-                    <button @click.stop="prevImage(file)">‹</button>
-                    <button class="dice" @click.stop="randomImage(file)">🎲</button>
-                    <button @click.stop="nextImage(file)">›</button>
-                  </div>
+              <div class="card-thumb-wrap">
+                <img v-if="file.images && file.images.length"
+                     class="card-thumb" draggable="false" loading="lazy" decoding="async"
+                     :src="imageUrl(file.images[getImgIdx(file)])"
+                     :alt="file.name">
+                <div v-else class="card-thumb"
+                     style="display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a2332 0%,#2a3040 100%)">
+                  <img class="card-thumb-img" draggable="false" loading="lazy" decoding="async"
+                       :src="defaultImageUrl"
+                       alt="">
                 </div>
-                <div class="card-name-row">
-                  <span class="card-name">{{ file.name }}</span>
-                  <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
-                  <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
-                  <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+                <div class="thumb-count" v-if="file.images && file.images.length">
+                  {{ getImgIdx(file) + 1 }}/{{ file.images.length }}
                 </div>
-              </template>
-              <template v-else>
-                <div class="file-name-row">
-                  <div class="card-title">{{ file.name }}</div>
-                  <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
-                  <button class="card-edit file-zoom" data-tip="放大预览" @pointerdown.stop @click.stop="zoomCardImage(file)">🔍</button>
-                  <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
-                  <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+                <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
+                <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
+                <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="file.images && file.images.length">🗑</div>
+                <div class="thumb-nav" @pointerdown.stop v-if="file.images && file.images.length > 1">
+                  <button @click.stop="prevImage(file)">‹</button>
+                  <button class="dice" @click.stop="randomImage(file)">🎲</button>
+                  <button @click.stop="nextImage(file)">›</button>
                 </div>
-                <div class="card-body">{{ displayContent(file) }}</div>
-              </template>
+              </div>
+              <div class="card-name-row">
+                <span class="card-name">{{ file.name }}</span>
+                <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
+                <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
+                <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+              </div>
             </div>
           </div>
           <div v-if="pageCount > 1" class="pager"
@@ -281,8 +264,8 @@ export default {
         </div>
       </div>
 
-      <!-- 编辑弹窗 -->
-      <div v-if="editTarget" class="edit-overlay" @click.self="cancelEdit">
+      <!-- 编辑弹窗（不响应外部点击关闭，只能点「取消」关闭，避免拖选复制文字时误关） -->
+      <div v-if="editTarget" class="edit-overlay">
         <div class="edit-dialog">
           <div class="title">编辑：{{ editTarget.name }}</div>
           <div class="field">
@@ -314,6 +297,7 @@ export default {
         <div class="viewer-dialog">
           <div class="viewer-head">
             <span class="viewer-title">{{ viewer.file.name }}</span>
+            <button class="btn icon-btn danger" data-tip="删除词条" @click="askDeleteWord(viewer.file)">🗑</button>
             <button class="btn icon-btn" @click="closeViewer" data-tip="关闭">✕</button>
           </div>
           <div v-if="viewer.file.images && viewer.file.images.length" class="viewer-media">
@@ -408,11 +392,10 @@ export default {
     // 连带偏好失效；这里让 pref 走自己的 key，与整包存档互不牵连。
     const PREF_KEY = 'zhule_wordbank_pref_v1';
     function loadPref() {
-      const p = { cardMode: 'image', columns: 4, translate: false, genCount: 1, autoSelectParent: true };
+      const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true };
       try {
         const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
         if (raw && typeof raw === 'object') {
-          if (raw.cardMode === 'image' || raw.cardMode === 'file') p.cardMode = raw.cardMode;
           if (typeof raw.columns === 'number' && raw.columns >= 1 && raw.columns <= 20) p.columns = raw.columns;
           if (typeof raw.translate === 'boolean') p.translate = raw.translate;
           if (typeof raw.genCount === 'number' && raw.genCount >= 0 && raw.genCount <= 99) p.genCount = raw.genCount;
@@ -500,7 +483,6 @@ export default {
         try { prefKeyFresh = localStorage.getItem(PREF_KEY) != null; } catch (e) { prefKeyFresh = false; }
         const srcPref = (prefKeyFresh || !(state.pref && typeof state.pref === 'object')) ? freshPref : state.pref;
         if (srcPref && typeof srcPref === 'object') {
-          if (srcPref.cardMode === 'image' || srcPref.cardMode === 'file') pref.cardMode = srcPref.cardMode;
           if (typeof srcPref.columns === 'number' && srcPref.columns >= 1 && srcPref.columns <= 20) pref.columns = srcPref.columns;
           if (typeof srcPref.translate === 'boolean') pref.translate = srcPref.translate;
           if (typeof srcPref.genCount === 'number' && srcPref.genCount >= 0 && srcPref.genCount <= 99) pref.genCount = srcPref.genCount;
@@ -928,7 +910,8 @@ export default {
       if (!file) return;
       del.ask({
         title: '确认删除',
-        message: '是否确认删除当前提示词？删除后不再显示（数据仍保留在库中，可后续恢复）。',
+        message: '是否确认删除当前提示词？删除后不再显示（数据仍保留在库中，可后续恢复）。'
+          + '该词条已上传的参考图会一并归档到 zhule_reference/_trash，可在需要时找回。',
         name: file.name || '',
         run: () => deleteWordNow(file),
       });
@@ -947,11 +930,18 @@ export default {
         if (json.error) {
           showToast('删除失败：' + json.error, 'error');
         } else {
-          showToast('已删除：' + file.name, 'success');
+          showToast('已删除：' + file.name
+            + (json.refDirsPurged ? '（参考图已归档 ' + json.refDirsPurged + ' 个目录）' : ''),
+            'success');
           // 若删除来源是编辑弹窗，同步关闭编辑面板
           if (editTarget.value && editTarget.value.id === file.id) {
             editTarget.value = null;
             editing.value = false;
+          }
+          // 若删除来源是详情弹层，同步关闭详情
+          if (viewer.open && viewer.file && viewer.file.id === file.id) {
+            viewer.open = false;
+            viewer.file = null;
           }
         }
         await load();
@@ -959,6 +949,54 @@ export default {
         showToast('请求失败：' + e.message, 'error');
       } finally {
         deleting.value = false;
+      }
+    };
+
+    // ============ 删除参考图（当前展示的那一张：物理删除 + 词条 images 同步） ============
+    const delRefBusy = ref(false);
+    const askDeleteRef = (file) => {
+      if (!file || !file.images || !file.images.length) return;
+      const img = file.images[getImgIdx(file)] || '';
+      // 图库反查图（zhule_img/）删的是图库原图本体，所有引用该图的词条都会失去它，文案须说明影响
+      const isGalleryRef = img.startsWith('zhule_img/');
+      del.ask({
+        title: '确认删除',
+        message: isGalleryRef
+          ? '该图来自图库反查（zhule_img）。确认后将物理删除图库原图、缩略图与对应数据库记录，所有引用这张图的词条都会失去它，且不可恢复。'
+          : '是否确认删除当前参考图？删除后不可恢复。',
+        name: img.split('/').pop() || '',
+        run: () => deleteRefNow(file),
+      });
+    };
+    const deleteRefNow = async (file) => {
+      if (!file || delRefBusy.value) return;
+      delRefBusy.value = true;
+      try {
+        const idx = getImgIdx(file);
+        const image = file.images[idx];
+        if (!image) return;
+        const resp = await fetch('/zhule_studio/api/wordbank/image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: file.id, image, action: 'delete' }),
+        });
+        const json = await resp.json();
+        if (json.error) {
+          showToast('删除失败：' + json.error, 'error');
+          return;
+        }
+        file.images = json.images || [];
+        const n = file.images.length;
+        setImgIdx(file, n ? Math.min(idx, n - 1) : 0);
+        // 若删除发生在详情弹层，同步修正弹层索引
+        if (viewer.open && viewer.file && viewer.file.id === file.id) {
+          if (viewer.idx >= n) viewer.idx = n ? n - 1 : 0;
+        }
+        showToast('已删除参考图', 'success');
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        delRefBusy.value = false;
       }
     };
 
@@ -1590,7 +1628,7 @@ const submitAddTab = async () => {
       _ph: true,
       _poolKey: poolKeyFor(item),
       tab: item.tab,
-      name: item.kind === 'tab' ? tabLabel(item.tab) : (item.display || (item.path || []).map(dispKey).join('/')),
+      name: item.kind === 'tab' ? tabLabel(item.tab) : dispKey(item.display || (item.path || []).map(dispKey).join('/') || ''),
     });
     // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:tab|逐层路径），用于「分类：抽中词条名」拼接
     const placeholderBaseName = (s) => {
@@ -1599,7 +1637,8 @@ const submitAddTab = async () => {
       if (k.startsWith('tab:')) return tabLabel(k.slice(4));
       const bar = k.indexOf('|');
       if (bar < 0) return '';
-      return k.slice(bar + 1).split('/').map(dispKey).join('/');
+      const parts = k.slice(bar + 1).split('/');
+      return dispKey(parts[parts.length - 1]);
     };
     // 以随机池为基准同步占位符与随机结果标签：
     // 池在 → 占位符（黄色分类标签）恒保留；池移除 → 该池的占位符与结果标签一并删除；
@@ -1648,7 +1687,6 @@ const submitAddTab = async () => {
       zhuleLog('updateRandomResults', 'picked=', picked.map(p => p.name + '@' + p._poolKey), 'selected=', selSummary());
     };
 
-    const setCardMode = (m) => { pref.cardMode = m; };
     const toggleTranslate = () => { pref.translate = !pref.translate; };
     const changeColumns = (d) => {
       const v = pref.columns + d;
@@ -1804,7 +1842,14 @@ const submitAddTab = async () => {
       // 同步占位符，确保剩余池与占位符一一对应（补缺失/删多余）
       syncPlaceholders();
     };
-    const clearAll = () => { data.selected = []; };
+    // 「清空」= 一键复位：已选提示词清空 + 随机池清空（否则上方 tab/chip 仍留着 in-pool 选中样式）
+    // + 运行次数归零（次数输入框同步回 0，pref 走 watch 自动落 localStorage）
+    const clearAll = () => {
+      data.selected = [];
+      data.randomPools.splice(0, data.randomPools.length);
+      pref.genCount = 0;
+      zhuleLog('clearAll', '已清空已选 + 随机池，次数归零');
+    };
     const toggleRandomMode = () => {
       data.randomMode = !data.randomMode;
       if (data.randomMode) data.traverseMode = false;
@@ -1865,26 +1910,35 @@ const submitAddTab = async () => {
     };
     const wordImageCount = (file) => (file && Array.isArray(file.images) ? file.images.length : 0);
 
-    // 手动选中项里「不属于任何随机池候选」的条目（如已选角色）：构建遍历组合时作为前缀保留，
-    // 避免遍历动作等其它池时被组合完全覆盖丢失。返回 null 表示有池数据尚未加载。
-    const selectedKeepItems = () => {
-      if (!data.selected.length) return [];
-      if (!data.randomPools.length) return data.selected.slice();
-      const poolRels = new Set();
-      for (const item of data.randomPools) {
-        const c = poolCandidates(item);
-        if (!c) return null;
-        for (const f of c) poolRels.add(f.relPath);
+    // 按「标签栏 data.selected 的原顺序」组装一条完整提示词：
+    // 占位符（_ph）是随机池的槽位，用本次该池抽中的词条原位替换；手选条目（如角色「宵宫」）原位保留。
+    // 顺序完全由用户在标签栏拖好的次序决定，随机项可夹在任意位置，不再一律拼成前缀/后缀。
+    // 池条目统一补 _pool:true，供遍历模式的达标判定复用。
+    const arrangeBySelection = (picked) => {
+      const byKey = new Map();
+      for (const e of picked) {
+        if (!e || e._poolKey === undefined || e._poolKey === null) continue;
+        if (!byKey.has(e._poolKey)) byKey.set(e._poolKey, e);
       }
-      return data.selected.filter(s => !s._ph && !poolRels.has(s.relPath));
+      const out = [];
+      const used = new Set();
+      for (const s of data.selected) {
+        if (s._ph) {
+          const e = byKey.get(s._poolKey);
+          if (e) { out.push({ ...e, _pool: true }); used.add(s._poolKey); }
+          continue;
+        }
+        out.push(s);
+      }
+      // 兜底：抽中了但标签栏没有对应占位符（旧存档 / 池刚加入尚未同步）的条目追加到末尾，避免丢失
+      for (const [k, e] of byKey) if (!used.has(k)) out.push({ ...e, _pool: true });
+      return out;
     };
 
     // 遍历模式组合列表：各池候选按名称排序，组合按「第一个池子变化最慢、最后一个最快」依次排列；
-    // 组合前自动拼接保留项（selectedKeepItems），池条目带 _pool 标记供目标数量判定
+    // 组合只含池条目（_pool 标记供目标数量判定），手选项的顺序由 arrangeBySelection 按标签栏还原
     const buildTraverseCombos = () => {
       if (!data.randomPools.length) return null;
-      const kept = selectedKeepItems();
-      if (kept === null) return null;
       const lists = [];
       for (const item of data.randomPools) {
         const c = poolCandidates(item);
@@ -1901,7 +1955,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => [...kept, ...combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey }))]);
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey })));
     };
 
     // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
@@ -2008,7 +2062,7 @@ const submitAddTab = async () => {
           if (built && !built.tooMany) {
             const pending = filterTraversePending(built, traverseTarget);
             if (pending.length) {
-              runQueue = pending;
+              runQueue = pending.map(combo => arrangeBySelection(combo));
               runTotal += pending.length;
               runBusy = true;
               runNextInQueue();
@@ -2072,11 +2126,13 @@ const submitAddTab = async () => {
         let combos;
         if (data.randomMode) {
           combos = [];
+          // 手选项（如已选角色「宵宫」）不丢，且顺序按标签栏 data.selected 原样保留：
+          // 占位符原位替换为本次抽中的池词条，因此随机项可以夹在手选项中间
           const rndCount = count || 1;
           for (let i = 0; i < rndCount; i++) {
             const picked = pickFromEachPool();
             if (!picked) return showToast('随机池含空分类或数据未加载，请检查随机池', 'warn');
-            combos.push(picked);
+            combos.push(arrangeBySelection(picked));
           }
         } else {
           const built = buildTraverseCombos();
@@ -2106,7 +2162,7 @@ const submitAddTab = async () => {
             resetTraverseTarget();
             return showToast('遍历池提示词参考图均已达到目标数量 ' + traverseTarget + '，无需补跑', 'success', 3000);
           }
-          combos = pending;
+          combos = pending.map(combo => arrangeBySelection(combo));
         }
         runQueue = combos;
         runTotal = combos.length;
@@ -2143,7 +2199,7 @@ const submitAddTab = async () => {
         if (!m || m.type !== 'zhule:ack' || m.bindId !== linkParams.bind) return;
         done = true;
         clearTimeout(timer);
-        if (m.ok) showToast('开始执行 ' + count + ' 次', 'success', 3000);
+        if (m.ok) showToast('开始执行 ' + Math.max(1, count) + ' 次', 'success', 3000);
         else showToast('运行失败：' + (m.error || '未知错误'), 'error', 4000);
       };
     };
@@ -2343,7 +2399,7 @@ const submitAddTab = async () => {
 
     const onCardPointerDown = (e, file) => {
       if (e.button !== 0) return;
-      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.file-zoom') || e.target.closest('.card-edit') || e.target.closest('.card-del-btn')) return;
+      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-edit') || e.target.closest('.card-del-btn')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
@@ -2587,7 +2643,7 @@ const submitAddTab = async () => {
       loaded, tabLoading, error, tabs, data, pref, drag, load,
       editTarget, editName, editContent, editContentCn, editIsTxt, editing,
       openEdit, cancelEdit, submitEdit,
-      del, askDeleteWord,
+      del, askDeleteWord, askDeleteRef,
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,
@@ -2605,7 +2661,7 @@ const submitAddTab = async () => {
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
       addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard,
-      setCardMode, toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
+      toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
       removeSelected, clearAll, toggleRandomMode, toggleTraverseMode, singleRandom, runGenerate,

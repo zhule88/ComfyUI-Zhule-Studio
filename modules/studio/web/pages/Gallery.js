@@ -18,6 +18,7 @@ export default {
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               data-tip="将选中的图片快捷导出到 zhule_link 文件夹：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库在同一磁盘分区），每次导出自动新建独立子文件夹" @click="batchLink">🔗</button>
       <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
+      <button class="btn zhg-dice-btn" data-tip="随机拼页：从当前筛选命中的图片中随机抽出一页覆盖当前页，页码不变" @click="randomPage">🎲</button>
       <span class="zhg-sel-count" v-if="selected.size">已选 <b>{{ selected.size }}</b>
         <a class="zhg-sel-clear" @click="selected.clear()">清除</a></span>
       <span class="zhg-total">命中 <b>{{ total }}</b> / 共 <b>{{ meta.total }}</b> 张</span>
@@ -33,14 +34,15 @@ export default {
       </span>
       <span class="zhg-pager" v-if="total > pageSize">
         <button class="zhg-pg-btn" @click="goPage(page - 1)" :disabled="page <= 1" data-tip="上一页">◀</button>
-        <span class="zhg-pg-info">第 {{ page }} / {{ totalPages }} 页</span>
+        <span class="zhg-pg-info" v-if="!pageEditing" :data-tip="'双击页码可直接输入跳转'" @dblclick="beginPageEdit">第 {{ page }} / {{ totalPages }} 页</span>
+        <input v-else class="zhg-pg-input" v-model="pageEditVal" @keyup.enter="commitPageEdit" @keyup.esc="cancelPageEdit" @blur="commitPageEdit" @click.stop />
         <button class="zhg-pg-btn" @click="goPage(page + 1)" :disabled="page >= totalPages" data-tip="下一页">▶</button>
       </span>
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
 
     <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="editColorOf"
-                    @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter" @toggle="toggleTagActive"></tag-tree-panel>
+                    @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter" @toggle="toggleTagActive" @refresh="refreshAfterTagEdit"></tag-tree-panel>
 
     <div class="zhg-layout">
       <aside class="zhg-side" :class="{ 'zhg-side-lock': side.h > 0 }" :style="sideStyle" v-show="filtersOpen">
@@ -104,7 +106,7 @@ export default {
               <img class="zhg-thumb" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
               <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}" @click.stop="toggleSel(it.key)">{{ isSel(it.key) ? '✓' : '▢' }}</button>
               <button class="zhg-del-btn" @click.stop="askDelete(it)">✕</button>
-              <button class="zhg-zoom-btn" @click.stop="zoomView(imgUrl(it.key, it.mtime))">🔍</button>
+              <button class="zhg-zoom-btn" @click.stop="zoomView(imgUrl(it.key, it.mtime), it)">🔍</button>
             </div>
             <div class="zhg-card-info">
               <div class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</div>
@@ -133,7 +135,18 @@ export default {
         </div>
         <div class="zhg-modal-body">
           <div class="zhg-modal-left">
-            <img class="zhg-modal-img" :src="imgUrl(detail.path, detail.mtime)" :alt="detail.name" @click="zoomView(imgUrl(detail.path, detail.mtime))">
+            <div class="zhg-modal-imgwrap">
+              <img class="zhg-modal-img" :src="imgUrl(detail.path, detail.mtime)" :alt="detail.name" @click="zoomView(imgUrl(detail.path, detail.mtime))">
+              <div class="zhg-modal-nav" v-if="detail">
+                <button class="zhg-nav-btn zhg-nav-prev" @click.stop="detailNav(-1)" data-tip="上一张：在当前命中池内向前翻">‹</button>
+                <div class="zhg-nav-mid">
+                  <button class="zhg-nav-btn zhg-nav-dice" @click.stop="detailNavRandom" :data-tip="'骰子：从当前命中池随机一张（共 ' + hitTotal + ' 张）'">🎲</button>
+                  <span class="zhg-nav-count" v-if="hitTotal">{{ detailPos > 0 ? detailPos : '—' }} / {{ hitTotal }}</span>
+                  <button class="zhg-nav-btn zhg-nav-del" data-tip="删除当前图片及其库内关联数据" @click.stop="askDelete(detail)">🗑</button>
+                </div>
+                <button class="zhg-nav-btn zhg-nav-next" @click.stop="detailNav(1)" data-tip="下一张：在当前命中池内向后翻">›</button>
+              </div>
+            </div>
             <div class="zhg-modal-actions">
               <button class="btn primary" :disabled="!detail.hasWF" @click="useWorkflow(detail)" :data-tip="detail.hasWF ? '跳转 ComfyUI 并导入该图工作流' : '该图片没有保存 workflow 元数据'">
                 ⚡ 在 ComfyUI 中使用工作流

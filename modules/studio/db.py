@@ -157,6 +157,36 @@ def node_by_raw_path(raw_path):
     return node
 
 
+def node_by_id(node_id):
+    """按 DB id 查询未删除节点。返回 dict {id, parent_id, type, name, en, cn, sortOrder, updatedAt}，不存在返回 None。"""
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            r = conn.execute(
+                "SELECT id, parent_id, type, name, en, cn, sort_order, updated_at "
+                "FROM {0} WHERE id=? AND isdel=0".format(TABLE),
+                (node_id,),
+            ).fetchone()
+            if r is None:
+                return None
+            return {
+                "id": str(r["id"]),
+                "parent_id": r["parent_id"],
+                "type": r["type"],
+                "name": r["name"] or "",
+                "en": r["en"] or "",
+                "cn": r["cn"] or "",
+                "sortOrder": r["sort_order"],
+                "updatedAt": r["updated_at"] or 0,
+            }
+        finally:
+            conn.close()
+
+
 def get_parent_id(node_id):
     with _lock:
         conn = connect()
@@ -255,6 +285,42 @@ def update_node(node_id, name=None, en=None, cn=None):
             conn.close()
 
 
+def _subtree_ids(conn, node_id):
+    """BFS 收集节点自身及全部未删除子孙的 DB id（调用方负责持有连接与事务）。"""
+    ids = [node_id]
+    cur = [node_id]
+    while True:
+        ph = ",".join("?" * len(cur))
+        rows = conn.execute(
+            "SELECT id FROM {0} WHERE parent_id IN ({1}) AND isdel=0".format(TABLE, ph), cur
+        ).fetchall()
+        nxt = [r["id"] for r in rows]
+        if not nxt:
+            break
+        ids.extend(nxt)
+        cur = nxt
+    return ids
+
+
+def subtree_ids(node_id):
+    """返回节点自身及全部未删除子孙的 DB id 列表（只读）。
+
+    供删除前收集附属资源之用（例如清理 zhule_reference/<词条id>/ 参考图目录）。
+    """
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return []
+    with _lock:
+        conn = connect()
+        try:
+            return _subtree_ids(conn, node_id)
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+
 def delete_subtree(node_id):
     """软删除节点及全部子孙（BFS 收集后代后统一 UPDATE isdel=1，不真删）。
 
@@ -264,18 +330,7 @@ def delete_subtree(node_id):
     with _lock:
         conn = connect()
         try:
-            ids = [node_id]
-            cur = [node_id]
-            while True:
-                ph = ",".join("?" * len(cur))
-                rows = conn.execute(
-                    "SELECT id FROM {0} WHERE parent_id IN ({1}) AND isdel=0".format(TABLE, ph), cur
-                ).fetchall()
-                nxt = [r["id"] for r in rows]
-                if not nxt:
-                    break
-                ids.extend(nxt)
-                cur = nxt
+            ids = _subtree_ids(conn, node_id)
             ph = ",".join("?" * len(ids))
             now = _now()
             conn.execute(
@@ -1061,6 +1116,161 @@ def custom_tag_rows():
     return [(int(r["id"]), r["parent_id"], (r["name"] or "").strip()) for r in rows]
 
 
+def custom_tag_get(tid):
+    """取单个自定义标签行 {"id","parent_id","name"}；不存在/非法返回 None。"""
+    try:
+        i = int(tid)
+    except (TypeError, ValueError):
+        return None
+    if i <= 0:
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            r = conn.execute(
+                "SELECT id, parent_id, name FROM {0} WHERE id=?".format(CUSTOM_TAG_TABLE), (i,)
+            ).fetchone()
+        finally:
+            conn.close()
+    if not r:
+        return None
+    return {"id": int(r["id"]), "parent_id": r["parent_id"], "name": (r["name"] or "").strip()}
+
+
+def custom_tag_subtree_ids(tid):
+    """节点自身 + 全部后代 id 列表（按 id 升序；防环最多 4096 个）。"""
+    try:
+        root = int(tid)
+    except (TypeError, ValueError):
+        return []
+    if root <= 0:
+        return []
+    rows = custom_tag_rows()
+    kids = {}
+    valid = set()
+    for i, p, _n in rows:
+        valid.add(i)
+        if p is not None:
+            kids.setdefault(int(p), []).append(i)
+    if root not in valid:
+        return []
+    out, stack, seen = [], [root], set()
+    while stack and len(out) < 4096:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        out.append(cur)
+        stack.extend(kids.get(cur) or [])
+    return sorted(out)
+
+
+def custom_tag_create(parent_id, name):
+    """在指定父级下新建自定义标签（parent_id 为 None/空表示顶层）。
+
+    同级同名已存在时**直接复用**该节点（不报错，返回 exist=1）。
+    返回 (id, err, existed)：成功时 err 为空串。
+    """
+    n = (name or "").strip().strip("/")
+    if not n:
+        return 0, "名称不能为空", 0
+    if len(n) > 40:
+        return 0, "名称最多 40 字", 0
+    if _TAG_PATH_SEP_RE.search(n):
+        return 0, "名称不能包含 / \\ : - 等层级分隔符", 0
+    pid = None
+    if parent_id not in (None, "", 0, "0"):
+        try:
+            pid = int(parent_id)
+        except (TypeError, ValueError):
+            return 0, "父级标签无效", 0
+        if not custom_tag_get(pid):
+            return 0, "父级标签不存在", 0
+    exist = custom_tag_find(pid, n)
+    if exist:
+        return int(exist), "", 1
+    cid = custom_tag_child_insert(pid, n)
+    if not cid:
+        return 0, "写入失败", 0
+    return int(cid), "", 0
+
+
+def custom_tag_rename(tid, name):
+    """重命名自定义标签（同级去重）。返回错误串；成功返回空串。"""
+    node = custom_tag_get(tid)
+    if not node:
+        return "标签不存在"
+    n = (name or "").strip().strip("/")
+    if not n:
+        return "名称不能为空"
+    if len(n) > 40:
+        return "名称最多 40 字"
+    if _TAG_PATH_SEP_RE.search(n):
+        return "名称不能包含 / \\ : - 等层级分隔符"
+    if n == node["name"]:
+        return ""
+    dup = custom_tag_find(node["parent_id"], n)
+    if dup and int(dup) != node["id"]:
+        return "同级已存在同名标签"
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            conn.execute(
+                "UPDATE {0} SET name=?, updated_at=? WHERE id=?".format(CUSTOM_TAG_TABLE),
+                (n, _now(), node["id"]),
+            )
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 自定义标签改名失败: {e}")
+            return "写入失败"
+        finally:
+            conn.close()
+    return ""
+
+
+def custom_tag_delete(tid):
+    """删除自定义标签及其全部后代，并清理图库侧的引用。
+
+    返回 (ids, rels)：ids 为被删的 custom_tag id 列表（含后代），
+    rels 为受影响的图库图片相对路径（供上层清理 PNG 内的标签快照）。
+    字典表删除后，读取侧 custom_tag_path_index 查不到 id → 图片不再展示该标签。
+    """
+    ids = custom_tag_subtree_ids(tid)
+    if not ids:
+        return [], []
+    ph = ",".join("?" * len(ids))
+    rels = []
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_custom_tag_schema(conn)
+            try:
+                _ensure_gallery_schema(conn)
+                rows = conn.execute(
+                    "SELECT DISTINCT i.name AS n FROM {0} t "
+                    "JOIN {1} i ON i.id=t.gallery_id WHERE t.custom_id IN ({2})"
+                    .format(GAL_TAG_TABLE, GAL_IMG_TABLE, ph), ids
+                ).fetchall()
+                rels = [(r["n"] or "").strip() for r in rows if (r["n"] or "").strip()]
+                conn.execute(
+                    "DELETE FROM {0} WHERE custom_id IN ({1})".format(GAL_TAG_TABLE, ph), ids
+                )
+            except sqlite3.Error as e:
+                print(f"[ZhuleDB] 自定义标签关联清理失败: {e}")
+            conn.execute(
+                "DELETE FROM {0} WHERE id IN ({1})".format(CUSTOM_TAG_TABLE, ph), ids
+            )
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 自定义标签删除失败: {e}")
+            return [], []
+        finally:
+            conn.close()
+    return ids, rels
+
+
 def tag_refs(ids):
     """批量把词条 id 转成 [{"id":..,"n":..}]；**一次查表**，不逐个查。
 
@@ -1236,6 +1446,35 @@ def gallery_load_records(ids=None):
         })
     records.sort(key=lambda r: r["mtime"], reverse=True)
     return records
+
+
+def gallery_load_records_by_keys(keys):
+    """按图库相对路径（name/key）批量加载记录，返回顺序与传入 keys 保持一致。
+
+    供随机拼页等“已知 key 列表、需要整行记录”的场景：先按 name IN 反查
+    gallery_image.id，再复用 gallery_load_records 的关联组装（模型/LORA/标签
+    实时 JOIN），避免重新全量筛选。查不到的 key 直接跳过。
+    """
+    keys = [k for k in keys if k]
+    if not keys:
+        return []
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            _ph = ",".join("?" * len(keys))
+            rows = conn.execute(
+                "SELECT id, name FROM {0} WHERE name IN ({1})".format(GAL_IMG_TABLE, _ph),
+                keys
+            ).fetchall()
+        finally:
+            conn.close()
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return []
+    recs = gallery_load_records(ids) or []
+    by_key = {r["key"]: r for r in recs}
+    return [by_key[k] for k in keys if k in by_key]
 
 
 def gallery_get_by_name(key):

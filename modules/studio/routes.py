@@ -36,6 +36,8 @@ def register_routes():
     routes.get("/zhule_studio/api/gallery/tagtree")(gallery.get_gallery_tagtree)
     # gallery/tagtree/order 已移除：排序统一走 DB 版 wordbank/sort-save（写 sort_order）
     routes.get("/zhule_studio/api/gallery/detail")(gallery.get_gallery_detail)
+    routes.get("/zhule_studio/api/gallery/ids")(gallery.get_gallery_ids)
+    routes.get("/zhule_studio/api/gallery/random")(gallery.get_gallery_random)
     routes.get("/zhule_studio/api/gallery/workflow")(gallery.get_gallery_workflow)
     routes.get("/zhule_studio/api/gallery/thumb")(gallery.get_gallery_thumb)
     routes.get("/zhule_studio/api/gallery/image")(gallery.get_gallery_image)
@@ -46,6 +48,8 @@ def register_routes():
     routes.post("/zhule_studio/api/gallery/annotate")(gallery.post_gallery_annotate)
     routes.post("/zhule_studio/api/gallery/rename")(gallery.post_gallery_rename)
     routes.post("/zhule_studio/api/gallery/rename-file")(gallery.post_gallery_rename_file)
+    # 自定义标签增删改（标签层级面板内就地维护）
+    routes.post("/zhule_studio/api/gallery/custom-tag")(gallery.post_gallery_custom_tag)
 
     # Studio 页面与静态资源
     routes.get("/zhule_studio")(api.get_index)
