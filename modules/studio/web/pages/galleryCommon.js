@@ -306,6 +306,18 @@ export function fmtModel(name) {
   return name.replace(/\.[^.\/\\]+$/, '');
 }
 
+// 图库卡片原生悬停提示：卡片改为「图片为主角 + 名字叠图」后，
+// 模型 / 标签等次要信息收进 title，鼠标悬停即可查看，不占用卡片版面
+export function cardTip(it) {
+  if (!it) return '';
+  const parts = [];
+  if (it.name) parts.push(it.name);
+  if (it.model) parts.push('模型：' + fmtModel(it.model));
+  const tags = cardTags(it);
+  if (tags && tags.length) parts.push('标签：' + tags.join(' / '));
+  return parts.join('\n');
+}
+
 export function useGalleryCommon(opts = {}) {
   const route = useRoute();
   const router = useRouter();
@@ -1866,6 +1878,7 @@ export function useGalleryCommon(opts = {}) {
     openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
+    cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,
     askDeleteTag,

@@ -1624,7 +1624,9 @@ def gallery_tag_counts():
 
     返回 {"prompt": {prompt_id(int): 图数}, "custom": {custom_id(int): 图数}}。
     计数按 gallery_tag 行去重 gallery_id，同一张图同一标签只算一次。
-    自定义标签只算叶子自身的挂接（图片只挂叶子），父级不汇总子级。
+    JOIN gallery_image 过滤掉图片已删除后的残留关联行（gallery_tag 无外键级联，
+    删图会留下孤儿行，不过滤会让角标虚高）。
+    自定义标签只算叶子自身的挂接（图片只挂叶子），父级汇总由调用方按树结构累加。
     读取失败返回空映射（调用方按 0 处理，不影响详情展示）。
     """
     out = {"prompt": {}, "custom": {}}
@@ -1633,12 +1635,14 @@ def gallery_tag_counts():
         try:
             _ensure_gallery_schema(conn)
             prow = conn.execute(
-                "SELECT prompt_id AS id, COUNT(DISTINCT gallery_id) AS n FROM {0} "
-                "WHERE prompt_id IS NOT NULL GROUP BY prompt_id".format(GAL_TAG_TABLE)
+                "SELECT t.prompt_id AS id, COUNT(DISTINCT t.gallery_id) AS n FROM {0} t "
+                "JOIN gallery_image g ON g.id = t.gallery_id "
+                "WHERE t.prompt_id IS NOT NULL GROUP BY t.prompt_id".format(GAL_TAG_TABLE)
             ).fetchall()
             crow = conn.execute(
-                "SELECT custom_id AS id, COUNT(DISTINCT gallery_id) AS n FROM {0} "
-                "WHERE custom_id IS NOT NULL GROUP BY custom_id".format(GAL_TAG_TABLE)
+                "SELECT t.custom_id AS id, COUNT(DISTINCT t.gallery_id) AS n FROM {0} t "
+                "JOIN gallery_image g ON g.id = t.gallery_id "
+                "WHERE t.custom_id IS NOT NULL GROUP BY t.custom_id".format(GAL_TAG_TABLE)
             ).fetchall()
         except Exception:
             return out

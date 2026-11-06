@@ -1014,6 +1014,8 @@ export default {
           }
         }
         await load();
+        // 全屏查看器内发起的删除：保持全屏不中断，自动接续同位置的下一张词条（见 resumeZoomAfterDelete）
+        if (!json.error && zoomDelCtx) resumeZoomAfterDelete();
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
       } finally {
@@ -1819,6 +1821,36 @@ const submitAddTab = async () => {
     // 放大查看器当前展示的词条（供底部按钮回调读取）
     let zoomCtx = { file: null };
 
+    // 全屏删除上下文：记录被删词条在「当前筛选结果」中的位置，
+    // 删除完成后按原位置接续下一张，避免在整理词条时被弹回列表、每删一张都要重新放大。
+    // 结构与详情弹层/图库全屏一致：删除后从命中池移除当前项并跳到下一张，池空则关闭。
+    let zoomDelCtx = null;
+
+    // 全屏底部「删除」按钮：走全站唯一删除确认（del.ask），先记账再交给通用删除流程
+    const zoomAskDelete = () => {
+      const file = zoomCtx.file;
+      if (!file) return;
+      const list = filteredFiles.value || [];
+      const idx = list.findIndex(f => f && f.id != null && f.id === file.id);
+      zoomDelCtx = { id: (file.id != null ? file.id : null), idx };
+      askDeleteWord(file);
+    };
+
+    // 删除成功后由 deleteWordNow 调用：同位置 → 末位 → 关闭
+    const resumeZoomAfterDelete = () => {
+      const c = zoomDelCtx;
+      zoomDelCtx = null;
+      if (!fullViewer || !fullViewer.isOpen) return;
+      const list = (filteredFiles.value || []).filter(f => f && !(c && c.id != null && f.id === c.id));
+      const target = (c && c.idx >= 0) ? (list[c.idx] || list[list.length - 1]) : null;
+      if (target) {
+        zoomCtx.file = target;
+        openZoomedFile(target);
+      } else {
+        fullViewer.close();
+      }
+    };
+
     // 在放大查看器中展示某词条的当前参考图；无参考图时回退默认图
     const openZoomedFile = (file) => {
       if (file.images && file.images.length) fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
@@ -1869,6 +1901,9 @@ const submitAddTab = async () => {
             { label: '🎲', tip: '随机提示词（当前范围）', dice: true, onClick: zoomRandomWord },
             { label: '›', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
             { label: '›', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
+            // 分隔线右侧放破坏性操作，与详情弹层右上角 🗑 保持同一语义（删除整条词条）
+            { sep: true },
+            { label: '🗑', tip: '删除当前词条', onClick: () => zoomAskDelete() },
           ],
         });
       }

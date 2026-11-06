@@ -111,19 +111,41 @@ export default {
       <div class="zhg-grid" ref="gridEl" :style="gridStyle" v-if="items.length" @pointerdown="onPointerDown">
         <div class="zhg-card" v-for="it in items" :key="it.key" :data-key="it.key"
              :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)">
-          <div class="zhg-thumb-wrap">
+          <div class="zhg-thumb-wrap" :title="cardTip(it)">
             <img class="zhg-thumb" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
-            <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}" @click.stop="toggleSel(it.key)">{{ isSel(it.key) ? '✓' : '▢' }}</button>
-            <button class="zhg-del-btn" @click.stop="askDelete(it)">✕</button>
-            <button class="zhg-zoom-btn" @click.stop="zoomView(imgUrl(it.key, it.mtime), it)">🔍</button>
-          </div>
-          <div class="zhg-card-info">
-            <div class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</div>
-            <div class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</div>
-            <div class="zhg-card-model" v-if="pref.gallery.showModel && it.model" :data-tip="it.model">{{ fmtModel(it.model) }}</div>
-            <div class="zhg-card-tags" v-if="pref.gallery.showTags && it.tags && it.tags.length">
-              <span class="zhg-card-tag" v-for="t in cardTags(it).slice(0, 4)" :key="it.key+t">{{ t }}</span>
-              <span class="zhg-card-tag-more" v-if="cardTags(it).length > 4">+{{ cardTags(it).length - 4 }}</span>
+            <!-- 左侧竖排操作：选择 / 放大 / 删除（与词库卡片同款，悬停显现，永不挤压名字） -->
+            <div class="zhg-card-actions">
+              <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}"
+                      :data-tip="isSel(it.key) ? '取消选中' : '选中这张图（也可 Ctrl+点击 / 拖动框选）'"
+                      @click.stop="toggleSel(it.key)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4.5 12.6l4.8 4.8L19.5 7.2"/>
+                </svg>
+              </button>
+              <button class="zhg-zoom-btn" data-tip="放大预览"
+                      @click.stop="zoomView(imgUrl(it.key, it.mtime), it)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="10.8" cy="10.8" r="6.8"/>
+                  <path d="M16 16l4.4 4.4"/>
+                  <path d="M10.8 7.9v5.8M7.9 10.8h5.8"/>
+                </svg>
+              </button>
+              <button class="zhg-del-btn" data-tip="删除这张图" @click.stop="askDelete(it)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 7h16"/>
+                  <path d="M9.5 7V4.8h5V7"/>
+                  <path d="M6.5 7l.9 12.2h9.2L17.5 7"/>
+                  <path d="M10.4 10.6v5.8M13.6 10.6v5.8"/>
+                </svg>
+              </button>
+            </div>
+            <!-- 底部压暗渐变 + 名字叠于图上（与词库卡片一致） -->
+            <div class="zhg-card-caption">
+              <span class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</span>
+              <span class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</span>
             </div>
           </div>
         </div>

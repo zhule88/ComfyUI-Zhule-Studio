@@ -1414,8 +1414,8 @@ async def get_gallery_tagtree(request):
     """标签层级树：词库 prompt 目录树（顶层=Tab，叶子=词条）+ 自定义标签层级树（不套总壳，置于树末，二者同级并列）。
 
     每个节点附带 count（关联图数）：一次 gallery_tag_counts() 全量统计，按节点 id 分域命中，
-    供编辑面板与外部过滤区直接渲染角标。父级分组只给**自身直接关联数**（不累加子树），
-    避免与「筛选命中数」概念混淆。
+    供编辑面板与外部过滤区直接渲染角标。节点 count = 自身直接关联 + 所有后代关联之和，
+    因此「角色/神态/服装」这类目录节点也能显示整棵子树的总图数，不再恒为 0。
     """
     tree, _ = get_tag_tree()
     custom_tree = _build_custom_tag_tree()
@@ -1426,16 +1426,22 @@ async def get_gallery_tagtree(request):
     counts = db.gallery_tag_counts()
 
     def attach(ns):
+        # 返回本层子树合计：节点 count = 自身直接关联 + 所有后代关联之和。
+        # 目录/分组容器本身通常没有直接挂接图片，若不向上汇总，面板顶层分类会全为 0。
+        total = 0
         for n in ns:
             try:
                 nid = int(n.get("id"))
             except (TypeError, ValueError):
                 nid = None
+            own = 0
             if nid is not None:
                 src = counts["custom"] if n.get("isCustom") else counts["prompt"]
-                n["count"] = src.get(nid, 0)
-            if n.get("children"):
-                attach(n["children"])
+                own = src.get(nid, 0)
+            sub = attach(n["children"]) if n.get("children") else 0
+            n["count"] = own + sub
+            total += own + sub
+        return total
 
     attach(tree)
     return web.json_response({
