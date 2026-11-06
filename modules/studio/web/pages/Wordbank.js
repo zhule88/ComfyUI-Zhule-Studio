@@ -506,6 +506,47 @@ export default {
       catch (e) { console.warn('zhule: 词库状态保存失败（localStorage/序列化）:', e); }
     };
 
+    // imgIndices 收敛：卡片参考图下标按 relPath 存存档，但图库删图不会回写这里，
+    // 剩下的越界下标就是黑图与 "4/1" 的源头。每次数据加载完成后按当前 images
+    // 实际长度重算一次，有变化才回写存档（避免跨会话反复带病）。
+    // pruneOrphans 仅在全量加载时开启：局部加载只持有部分 tab，此时按已加载范围
+    // 删下标会误伤其它 tab 的存档。
+    const normalizeImgIndices = (pruneOrphans) => {
+      const bank = bankData.value || {};
+      const map = (data.imgIndices && typeof data.imgIndices === 'object')
+        ? data.imgIndices
+        : (data.imgIndices = {});
+      let changed = false;
+      const alive = new Set();
+      Object.keys(bank).forEach(t => {
+        (bank[t] || []).forEach(card => {
+          if (!card || !card.relPath) return;
+          alive.add(card.relPath);
+          const cur = map[card.relPath];
+          if (cur === undefined || cur === null) return;
+          const n = (card.images || []).length;
+          const num = Number(cur);
+          const want = n
+            ? Math.min(Math.max(Number.isFinite(num) ? Math.trunc(num) : 0, 0), n - 1)
+            : 0;
+          if (want !== cur) {
+            map[card.relPath] = want;
+            changed = true;
+          }
+        });
+      });
+      if (pruneOrphans) {
+        Object.keys(map).forEach(k => {
+          if (!alive.has(k)) {
+            delete map[k];
+            changed = true;
+          }
+        });
+      }
+      if (changed) saveState();
+      return changed;
+    };
+
     const restoreState = () => {
       // 存档可能来自旧版本或手工修改，任何单点异常都不应阻断词库页加载
       try {
@@ -1292,6 +1333,9 @@ export default {
           orderTabs();
           if (tabs.value.length && !tabs.value.includes(data.activeTab)) data.activeTab = tabs.value[0];
         }
+        // 数据就绪后统一收敛参考图下标（图库删图造成的越界下标在此修正并回写存档）。
+        // 必须在 restoreState 之后，否则会被存档里的旧越界值覆盖回去。
+        normalizeImgIndices(!!force && !tabName);
         loaded.value = true;
         // 已选列表中若含尚未加载的 tab，补拉数据以恢复完整内容（fire-and-forget）
         const need = new Set();
@@ -1482,8 +1526,23 @@ export default {
       if (!path) return '';
       return '/zhule_studio/api/image?path=' + encodeURIComponent(path);
     };
-    const getImgIdx = (file) => data.imgIndices[file.relPath] || 0;
-    const setImgIdx = (file, idx) => { data.imgIndices[file.relPath] = idx; };
+    // 参考图下标：一律按当前 images 实际长度钳制后再取。
+    // 存档里的下标是按 relPath 持久化的，图库删图后不会同步回写，
+    // 越界下标会让 images[idx] 为 undefined → 卡片黑图、页码显示成 "4/1"。
+    const getImgIdx = (file) => {
+      const list = (file && file.images) || [];
+      const n = list.length;
+      if (!n) return 0;
+      const raw = Number((data.imgIndices || {})[file.relPath]);
+      const i = Number.isFinite(raw) ? Math.trunc(raw) : 0;
+      return Math.min(Math.max(i, 0), n - 1);
+    };
+    const setImgIdx = (file, idx) => {
+      if (!file || !file.relPath) return;
+      const n = ((file.images) || []).length;
+      const i = Number.isFinite(Number(idx)) ? Math.trunc(Number(idx)) : 0;
+      data.imgIndices[file.relPath] = n ? Math.min(Math.max(i, 0), n - 1) : 0;
+    };
     const displayContent = (file) => (pref.translate && file.content_cn) ? file.content_cn : file.content;
     const isFileSelected = (file) => data.selected.some(s => s.relPath === file.relPath);
 

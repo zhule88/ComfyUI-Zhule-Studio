@@ -20,3 +20,6 @@ modules/studio/zhule.db
 
 # 运行日志（本地生成，不上传）
 log/
+
+# 鏈湴鏁版嵁搴撳浠藉揩鐓э紙搴撻噷鍚湰鍦版暟鎹紝涓嶄笂浼狅級
+modules/studio/zhule.db.*

@@ -1958,9 +1958,13 @@ def gallery_reserve(rels):
 
 
 def gallery_delete_records(keys):
-    """行级删除图库记录（tag 行由 gallery_id 外键 ON DELETE CASCADE 一并清除）。
+    """行级删除图库记录，并显式清除其在 gallery_tag / gallery_lora 的关联行。
 
-    返回删除条数；失败返回 0。
+    gallery_tag / gallery_lora 建表时虽声明了 gallery_id REFERENCES gallery_image(id)
+    ON DELETE CASCADE，但早期版本的表没有该外键（CREATE TABLE IF NOT EXISTS 不会给
+    已存在的旧表补约束），旧库里删图仍会留下孤儿关联行（标签角标虚高）。因此这里按
+    name 先取 gallery_image.id，再显式删两张关联表，不依赖外键是否真的生效。
+    返回删除条数；失败返回 0（整批回滚）。
     """
     if not keys:
         return 0
@@ -1972,6 +1976,18 @@ def gallery_delete_records(keys):
                 key = (key or "").strip()
                 if not key:
                     continue
+                ids = [
+                    r["id"] for r in conn.execute(
+                        "SELECT id FROM {0} WHERE name=?".format(GAL_IMG_TABLE), (key,)
+                    ).fetchall()
+                ]
+                for gid in ids:
+                    conn.execute(
+                        "DELETE FROM {0} WHERE gallery_id=?".format(GAL_TAG_TABLE), (gid,)
+                    )
+                    conn.execute(
+                        "DELETE FROM {0} WHERE gallery_id=?".format(GAL_LORA_TABLE), (gid,)
+                    )
                 cur = conn.execute(
                     "DELETE FROM {0} WHERE name=?".format(GAL_IMG_TABLE), (key,)
                 )
