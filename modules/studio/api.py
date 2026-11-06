@@ -235,7 +235,7 @@ def _cards_from_tree(tree):
     """缓存树 → 与原扫描完全一致的 {tabs, data} 结构。
 
     每张卡片字段：id/name/number/rawName/relPath/chips/chipKeys/content/
-    content_cn/images/mtime。id 为 DB 词条 id（提示词标签按 id 传递，词条改名/移动
+    content_cn/neg/override/images/mtime。neg=负面提示词，override=排除词。id 为 DB 词条 id（提示词标签按 id 传递，词条改名/移动
     后不脱钩）；rawName/relPath/chips/chipKeys 由节点原始目录名还原（与磁盘一致）；
     images/mtime 实时读磁盘（参考图不参与缓存）。
     tabs 数组与 data 键统一用顶层 tab 纯显示名（name，无编号前缀），
@@ -284,6 +284,8 @@ def _cards_from_tree(tree):
                     "chipIds": ids[1:end],
                     "content": node.get("en") or "",
                     "content_cn": "",
+                    "neg": node.get("neg") or "",
+                    "override": node.get("override") or "",
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
@@ -303,6 +305,8 @@ def _cards_from_tree(tree):
                     "chipIds": ids[1:end],
                     "content": node.get("en") or "",
                     "content_cn": node.get("cn") or "",
+                    "neg": node.get("neg") or "",
+                    "override": node.get("override") or "",
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
@@ -392,11 +396,15 @@ async def post_rename(request):
         return web.json_response({"error": "词条已存在: " + dup}, status=409)
     content = body.get("content")
     content_cn = body.get("content_cn")
+    neg = body.get("neg")
+    override = body.get("override")
     ok = db.update_node(
         nid,
         name=name,
         en=(content if isinstance(content, str) else None),
         cn=(content_cn if isinstance(content_cn, str) else None),
+        neg=(neg if isinstance(neg, str) else None),
+        override=(override if isinstance(override, str) else None),
     )
     if not ok:
         return web.json_response({"error": "更新失败"}, status=500)

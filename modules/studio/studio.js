@@ -85,14 +85,21 @@ async function handleRunMessage(msg) {
   }
 
   // 写入网页选词；显式保证前端序列化进 prompt（勿依赖 hidden 默认行为）
-  // 对象格式 {id, name, content}：id=词条 id（SaveImage 提取提示词标签用，词条改名/移动不脱钩），
-  // name=词条名（节点 tags 输出用），content=提示词文本
+  // 对象格式 {id, name, content, neg, override}：id=词条 id（SaveImage 提取提示词标签用，
+  // 词条改名/移动不脱钩），name=词条名（节点 tags 输出用），content=提示词文本，
+  // neg=负面提示词（并入负面输出），override=排除词（只删别的词条的提示词段，不删自己）
   const items = Array.isArray(msg.items) ? msg.items.map((s) => {
     if (s && typeof s === 'object' && !Array.isArray(s)) {
-      return { id: String(s.id || ''), name: String(s.name || ''), content: String(s.content || '') };
+      return {
+        id: String(s.id || ''),
+        name: String(s.name || ''),
+        content: String(s.content || ''),
+        neg: String(s.neg || ''),
+        override: String(s.override || ''),
+      };
     }
     // 兼容纯字符串消息：无 id/name 时节点 tags 输出为空，SaveImage 回退存原字符串
-    return { id: '', name: '', content: String(s) };
+    return { id: '', name: '', content: String(s), neg: '', override: '' };
   }) : [];
   w.value = JSON.stringify(items);
   if (!w.options) w.options = {};

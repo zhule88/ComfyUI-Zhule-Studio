@@ -275,22 +275,21 @@ def _extract_positive_prompt(pt):
         except (json.JSONDecodeError, TypeError):
             data = None
     # 快照为空（新节点/手动 Run 未选词）不再从 state 文件兜底
-    parts = []
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                # 与 ZhuleStudio 节点运行逻辑一致：取 content（真实提示词文本）
-                c = str(item.get("content") or "").strip()
-                if c:
-                    parts.append(c)
-            else:
-                t = str(item).strip()
-                if t:
-                    parts.append(t)
-    selected = ", ".join(parts).strip()
-    if pre and selected:
-        return pre + ", " + selected
-    return pre or selected or None
+    if not isinstance(data, list):
+        data = []
+    items = []
+    for item in data:
+        if isinstance(item, dict):
+            items.append(item)
+        else:
+            t = str(item).strip()
+            if t:
+                items.append({"id": "", "name": "", "content": t})
+    # 与 ZhuleStudio 节点运行逻辑完全同一套：段级排除词（override）过滤 + 前置提示词拼接，
+    # 保证图库存的提示词与真实出图一致（图库标签反查依赖这段文本）
+    from .node import build_prompt
+    positive, _neg = build_prompt(items, pre or "")
+    return positive or None
 
 
 def build_index(force=False):

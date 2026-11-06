@@ -278,6 +278,7 @@ export default {
     <div class="edit-overlay" v-if="editWbTarget" @click.self="cancelEditWb">
       <div class="edit-dialog">
         <div class="title">编辑：{{ editWbTarget.name }}</div>
+        <div class="edit-body">
         <div class="field">
           <label>名字</label>
           <input type="text" v-model="editWbName" spellcheck="false"
@@ -300,6 +301,7 @@ export default {
           <textarea v-model="editWbContentCn" rows="3" spellcheck="false"
                     @keydown.ctrl.enter="submitEditWb" @keydown.esc="cancelEditWb"></textarea>
           <span v-if="editWbIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
+        </div>
         </div>
         <div class="actions">
           <button class="btn danger zhg-mini" :disabled="editWbDeleting" @click="askDeleteEditWb">删除</button>

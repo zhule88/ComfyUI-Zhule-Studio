@@ -183,6 +183,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   transition: transform 0.4s ease; }
 /* 悬停轻微推近，强化「图片是主角」的作品集手感 */
 .card.image:hover .card-thumb { transform: scale(1.045); }
+/* 词条徽标：排除词 / 负面提示词（缩略图左上角，纯提示不拦交互） */
+.thumb-badge { position: absolute; left: 6px; z-index: 3; padding: 1px 6px; border-radius: 6px;
+  font-size: 10px; font-weight: 600; line-height: 16px; pointer-events: none;
+  background: rgba(12,16,24,0.78); border: 1px solid rgba(255,255,255,0.22); color: #cfe0f5; }
+.thumb-badge.ov { top: 6px; color: #ffd27a; border-color: rgba(255,210,122,0.5); }
+.thumb-badge.ng { top: 28px; color: #9fd4ff; border-color: rgba(159,212,255,0.5); }
 /* 缩略图序号：并入底部说明条，作为名字右侧的小徽标 */
 .thumb-count { flex-shrink: 0;
   padding: 1px 6px; border-radius: 9px; background: rgba(0,0,0,0.55);
@@ -342,6 +348,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   position: fixed; inset: 0; z-index: 10000;
   background: rgba(0,0,0,0.72);
   display: flex; align-items: center; justify-content: center;
+  padding: 16px; overflow-y: auto;
 }
 /* 遮罩层细网格，压住纯黑的沉闷感 */
 .edit-overlay::before {
@@ -357,7 +364,8 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   width: 560px; max-width: 92vw;
   border: 1px solid transparent; border-radius: 16px;
   padding: 22px 24px 20px;
-  display: flex; flex-direction: column; gap: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 88vh; overflow-y: auto; overflow-x: hidden;
   background:
     linear-gradient(180deg, #262b34, #1e222a 70%) padding-box,
     linear-gradient(140deg, rgba(79,143,247,0.85), rgba(167,139,250,0.55) 42%, rgba(34,211,238,0.7)) border-box;
@@ -371,7 +379,20 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 @media (prefers-reduced-motion: reduce) { .edit-dialog { animation: none; } }
 /* 标题左侧渐变光条 */
 .edit-dialog .title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; color: var(--text);
-  display: flex; align-items: center; gap: 11px; }
+  display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
+.edit-dialog .title .title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 全部收起/展开：标题右侧的小开关 */
+.edit-dialog .title .acc-all {
+  margin-left: auto; flex: 0 0 auto; cursor: pointer;
+  font-family: inherit; font-size: 11px; font-weight: 500; letter-spacing: 0.6px;
+  padding: 4px 10px; border-radius: 999px;
+  color: #9fb4cc; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  transition: color .16s, background .16s, border-color .16s;
+}
+.edit-dialog .title .acc-all:hover {
+  color: #cfe1ff; background: rgba(79,143,247,0.16); border-color: rgba(79,143,247,0.45);
+}
 .edit-dialog .title::before {
   content: ""; width: 4px; height: 20px; border-radius: 3px; flex-shrink: 0;
   background: linear-gradient(180deg, #22d3ee, var(--primary) 55%, var(--purple));
@@ -462,6 +483,69 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border-color: rgba(255,92,138,0.62); background: rgba(255,92,138,0.14); }
 .edit-dialog .path { color: var(--text-3); font-size: 11px; word-break: break-all;
   font-family: ui-monospace, Consolas, monospace; }
+
+/* ===== 字段区滚动容器：标题与底部按钮常驻，中间内容超高时内部滚动 ===== */
+.edit-dialog .edit-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 12px;
+  padding-right: 6px; margin-right: -6px;
+}
+/* 关键：字段不参与收缩，超高时走滚动而不是把 textarea 压扁 */
+.edit-dialog .edit-body > .field { flex: 0 0 auto; }
+/* 兜底：未包 .edit-body 的旧弹窗（图库改名等），子项不收缩，靠弹窗自身滚动保证按钮可滚到 */
+.edit-dialog > .title, .edit-dialog > .field, .edit-dialog > .sep { flex: 0 0 auto; }
+.edit-dialog .edit-body::-webkit-scrollbar { width: 8px; }
+.edit-dialog .edit-body::-webkit-scrollbar-thumb { background: #2f3540; border-radius: 4px; }
+.edit-dialog .edit-body::-webkit-scrollbar-thumb:hover { background: #3d4c63; }
+.edit-dialog .actions { flex: 0 0 auto; }
+
+/* ===== 字段抽屉（名字 / 中英提示词 / 负面 / 排除）：标题即按钮 ===== */
+.edit-dialog .acc { gap: 0; }
+.edit-dialog .acc-head {
+  cursor: pointer; user-select: none;
+  padding: 6px 10px 6px 6px; border-radius: 8px;
+  background: rgba(255,255,255,0.022);
+  border: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.16s, border-color 0.16s;
+}
+.edit-dialog .acc-head:hover { background: rgba(79,143,247,0.10); border-color: rgba(79,143,247,0.30); }
+.edit-dialog .acc.open .acc-head { background: rgba(79,143,247,0.08); border-color: rgba(79,143,247,0.22); }
+.edit-dialog .acc-head .acc-meta {
+  margin-left: auto; font-size: 10.5px; letter-spacing: 0.4px;
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.edit-dialog .acc.filled .acc-head .acc-meta { color: #7fd7ff; }
+/* 名字抽屉收起时的当前值摘要：单行省略，不和「未填/字数」抢视觉 */
+.edit-dialog .acc-head .acc-meta.acc-val {
+  max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #cfd9e6; font-size: 11.5px; letter-spacing: 0;
+}
+.edit-dialog .acc.filled .acc-head .acc-meta::before {
+  content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: #34d3eb; margin-right: 6px; vertical-align: 1px;
+  box-shadow: 0 0 6px rgba(52,211,235,0.9);
+}
+/* 纯 CSS 折角箭头：收起指向右，展开转 90° 指向下 */
+.edit-dialog .acc-head .acc-arrow {
+  flex: 0 0 auto; width: 6px; height: 6px; margin: 0 4px 3px 10px;
+  border-right: 1.6px solid #6d7f96; border-bottom: 1.6px solid #6d7f96;
+  transform: rotate(-45deg); transform-origin: 70% 70%;
+  transition: transform 0.18s, border-color 0.18s;
+}
+.edit-dialog .acc-head:hover .acc-arrow { border-color: #cfe1ff; }
+.edit-dialog .acc.open .acc-head .acc-arrow { transform: rotate(45deg); border-color: #7fd7ff; }
+/* 抽屉内容：展开时淡入下滑，收起时不占位 */
+.edit-dialog .acc-body {
+  display: flex; flex-direction: column; gap: 7px;
+  padding-top: 9px;
+  animation: zh-acc-in 0.16s ease-out;
+}
+@keyframes zh-acc-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) { .edit-dialog .acc-body { animation: none; } }
 
 /* 上传参考图弹窗 */
 .upload-dialog { width: 460px; }

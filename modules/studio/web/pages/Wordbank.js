@@ -92,6 +92,8 @@ export default {
                  }"
                  @pointerdown="onCardPointerDown($event, file)">
               <div class="card-thumb-wrap">
+                <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
+                <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
                 <img v-if="file.images && file.images.length"
                      class="card-thumb" draggable="false" loading="lazy" decoding="async"
                      :src="imageUrl(file.images[getImgIdx(file)])"
@@ -312,26 +314,69 @@ export default {
       <!-- 编辑弹窗（不响应外部点击关闭，只能点「取消」关闭，避免拖选复制文字时误关） -->
       <div v-if="editTarget" class="edit-overlay">
         <div class="edit-dialog">
-          <div class="title">编辑：{{ editTarget.name }}</div>
-          <div class="field">
-            <label>名字</label>
-            <input type="text" v-model="editName" @keydown.enter="submitEdit">
+          <div class="title">
+            <span class="title-text">编辑：{{ editTarget.name }}</span>
+            <button type="button" class="acc-all" @click="toggleAllAcc"
+                    :data-tip="allAccOpen ? '收起全部字段' : '展开全部字段'">{{ allAccOpen ? '全部收起' : '全部展开' }}</button>
           </div>
-          <div class="field en">
-            <div class="field-head">
+          <!-- 字段区可滚动：全展开也不会把底部按钮顶出屏幕 -->
+          <div class="edit-body">
+          <!-- 每个字段都是抽屉：点标题条即收起/展开，开合状态写 localStorage 持久化 -->
+          <div class="field acc" :class="{ open: acc.name }">
+            <div class="field-head acc-head" @click="toggleAcc('name')">
+              <label>名字</label>
+              <span class="acc-meta acc-val" v-if="(editName || '').trim()">{{ editName }}</span>
+              <span class="acc-meta" v-else>空</span>
+              <span class="acc-arrow"></span>
+            </div>
+            <div v-show="acc.name" class="acc-body">
+              <input type="text" v-model="editName" @keydown.enter="submitEdit">
+            </div>
+          </div>
+          <div class="field en acc" :class="{ open: acc.en }">
+            <div class="field-head acc-head" @click="toggleAcc('en')">
               <label>提示词（英）</label>
-              <span class="count">{{ (editContent || '').length }} 字</span>
+              <span class="acc-meta">{{ (editContent || '').length }} 字</span>
+              <span class="acc-arrow"></span>
             </div>
-            <textarea v-model="editContent" rows="4" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
+            <div v-show="acc.en" class="acc-body">
+              <textarea v-model="editContent" rows="4" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
+            </div>
           </div>
-          <div class="sep"></div>
-          <div class="field cn">
-            <div class="field-head">
+          <div class="field cn acc" :class="{ open: acc.cn }">
+            <div class="field-head acc-head" @click="toggleAcc('cn')">
               <label>提示词（中）</label>
-              <span class="count">{{ (editContentCn || '').length }} 字</span>
+              <span class="acc-meta">{{ (editContentCn || '').length }} 字</span>
+              <span class="acc-arrow"></span>
             </div>
-            <textarea v-model="editContentCn" rows="3" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
-            <span v-if="editIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
+            <div v-show="acc.cn" class="acc-body">
+              <textarea v-model="editContentCn" rows="3" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
+              <span v-if="editIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
+            </div>
+          </div>
+          <div class="field neg acc" :class="{ open: acc.neg, filled: (editNeg || '').trim() }">
+            <div class="field-head acc-head" @click="toggleAcc('neg')">
+              <label>负面提示词</label>
+              <span class="acc-meta" v-if="!(editNeg || '').trim()">未填</span>
+              <span class="acc-meta" v-else>{{ (editNeg || '').length }} 字</span>
+              <span class="acc-arrow"></span>
+            </div>
+            <div v-show="acc.neg" class="acc-body">
+              <textarea v-model="editNeg" rows="2" spellcheck="false" placeholder="该词条被选中时并入负面提示词；多条用逗号分隔" @keydown.ctrl.enter="submitEdit"></textarea>
+            </div>
+          </div>
+          <div class="field override acc" :class="{ open: acc.override, filled: (editOverride || '').trim() }">
+            <div class="field-head acc-head" @click="toggleAcc('override')">
+              <label>排除</label>
+              <span class="acc-meta" v-if="!(editOverride || '').trim()">未填</span>
+              <span class="acc-meta" v-else>{{ (editOverride || '').length }} 字</span>
+              <span class="acc-arrow"></span>
+            </div>
+            <div v-show="acc.override" class="acc-body">
+              <textarea v-model="editOverride" rows="2" spellcheck="false" placeholder="只删「别的词条」里命中的逗号段，不删自己。多条用逗号分隔；段内任一词命中即排除" @keydown.ctrl.enter="submitEdit"></textarea>
+              <span class="hint">例：发型词条写 hair → 角色词条自带的 long green hair 段被删，发型自己的 long hair 保留</span>
+            </div>
+          </div>
           </div>
           <div class="actions">
             <button class="btn danger" @click="askDeleteWord(editTarget)">删除</button>
@@ -505,7 +550,7 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
+        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
         randomPools: data.randomPools,
         randomMode: data.randomMode,
         traverseMode: data.traverseMode,
@@ -641,14 +686,14 @@ export default {
             if (s._ph) {
               // 占位符：直接还原（类名即占位名，随机池恢复后 sync 兜底补齐）；
               // 已抽取（_filled）的占位符带绑定词条信息，普通模式运行直接可用
-              rebuilt.push({ _ph: true, _poolKey: s._poolKey || '', tab: s.tab || '', name: s.name || '', _filled: !!s._filled, relPath: s.relPath || '', id: s.id || '', content: s.content || '', content_cn: s.content_cn || '' });
+              rebuilt.push({ _ph: true, _poolKey: s._poolKey || '', tab: s.tab || '', name: s.name || '', _filled: !!s._filled, relPath: s.relPath || '', id: s.id || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '' });
               return;
             }
             if (!s.tab || !s.relPath) return;
             const cards = bankData.value[s.tab] || [];
             const card = cards.find(c => c.relPath === s.relPath);
-            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, _poolKey: s._poolKey || undefined });
-            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', _poolKey: s._poolKey || undefined });
+            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined });
+            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined });
           });
           data.selected = rebuilt;
           // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
@@ -712,7 +757,37 @@ export default {
     const editName = ref('');
     const editContent = ref('');
     const editContentCn = ref('');
+    const editNeg = ref('');       // 负面提示词（选中该词条时并入负面）
+    const editOverride = ref('');  // 排除词（只删别的词条产出的提示词段，不删自己）
     const editing = ref(false);
+
+    // 字段抽屉开合：名字/中英默认展开，负面/排除默认收起；任意开合写 localStorage 持久化
+    const ACC_KEY = 'zhule_wordbank_edit_acc';
+    const ACC_DEFAULT = { name: true, en: true, cn: true, neg: false, override: false };
+    const acc = reactive({ ...ACC_DEFAULT });
+    (() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem(ACC_KEY) || 'null');
+        if (raw && typeof raw === 'object') {
+          Object.keys(ACC_DEFAULT).forEach((k) => {
+            if (k in raw) acc[k] = !!raw[k];
+          });
+        }
+      } catch (e) { /* localStorage 不可用：保持默认 */ }
+    })();
+    const allAccOpen = computed(() => Object.keys(ACC_DEFAULT).every((k) => acc[k]));
+    const toggleAllAcc = () => {
+      const next = !allAccOpen.value;
+      Object.keys(ACC_DEFAULT).forEach((k) => { acc[k] = next; });
+      try { localStorage.setItem(ACC_KEY, JSON.stringify({ ...acc })); }
+      catch (e) { /* 忽略 */ }
+    };
+    const toggleAcc = (k) => {
+      if (!(k in ACC_DEFAULT)) return;
+      acc[k] = !acc[k];
+      try { localStorage.setItem(ACC_KEY, JSON.stringify({ ...acc })); }
+      catch (e) { /* 忽略 */ }
+    };
 
     // 散 txt 卡片（多 txt / 含子目录目录中的单个 txt）：后端不支持中文提示词
     const editIsTxt = computed(() => {
@@ -992,6 +1067,11 @@ export default {
       editName.value = file.name || '';
       editContent.value = file.content || '';
       editContentCn.value = file.content_cn || '';
+      editNeg.value = file.neg || '';
+      editOverride.value = file.override || '';
+      // 有内容就临时展开露出，避免藏着看不见；不改用户持久化偏好
+      if ((editNeg.value || '').trim()) acc.neg = true;
+      if ((editOverride.value || '').trim()) acc.override = true;
     };
 
     const cancelEdit = () => {
@@ -1016,6 +1096,9 @@ export default {
         if (!editIsTxt.value && (editContentCn.value || editTarget.value.content_cn)) {
           body.content_cn = editContentCn.value;
         }
+        // 负面提示词 / 排除词：同样只在有值时写回，避免误清空
+        if (editNeg.value || editTarget.value.neg) body.neg = editNeg.value;
+        if (editOverride.value || editTarget.value.override) body.override = editOverride.value;
         const resp = await fetch('/zhule_studio/api/rename', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1027,8 +1110,28 @@ export default {
           editing.value = false;
           return;
         }
+        const saved = {
+          id: editTarget.value.id,
+          relPath: editTarget.value.relPath,
+          name: nm,
+          content: ('content' in body) ? body.content : editTarget.value.content,
+          content_cn: ('content_cn' in body) ? body.content_cn : editTarget.value.content_cn,
+          neg: ('neg' in body) ? body.neg : (editTarget.value.neg || ''),
+          override: ('override' in body) ? body.override : (editTarget.value.override || ''),
+        };
         editTarget.value = null;
         editing.value = false;
+        // 已选列表里若有该词条，同步刷新快照（运行/预览取的是快照，不刷新会用到旧的排除词）
+        data.selected.forEach(sl => {
+          const sameId = saved.id && sl.id && String(sl.id) === String(saved.id);
+          if (sameId || sl.relPath === saved.relPath) {
+            sl.name = saved.name;
+            sl.content = saved.content;
+            sl.content_cn = saved.content_cn;
+            sl.neg = saved.neg;
+            sl.override = saved.override;
+          }
+        });
         await load();
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
@@ -1291,7 +1394,7 @@ export default {
       data.selected.forEach(s => {
         if (s.tab !== tabName || s.content) return;
         const c = cards.find(x => x.relPath === s.relPath);
-        if (c) { s.id = c.id || s.id; s.name = c.name; s.content = c.content; s.content_cn = c.content_cn; dirty = true; }
+        if (c) { s.id = c.id || s.id; s.name = c.name; s.content = c.content; s.content_cn = c.content_cn; s.neg = c.neg || ''; s.override = c.override || ''; dirty = true; }
       });
       if (dirty) saveState();
     };
@@ -1528,13 +1631,63 @@ export default {
     // 筛选/排序结果变化时回到第一页，避免停留在无效页码
     watch(filteredFiles, () => { pageIndex.value = 0; });
 
+    // ============ 排除词引擎（与节点 modules/studio/node.py::build_prompt 同一套规则）============
+    // 段分隔：中英逗号 / 顿号 / 分号 / 换行；段内按空白分词；段内任一命中（OR）即排除。
+    // 语义：排除词只删「别的词条」产出的段，永远不删自己；粒度是逗号段（不是整条词条）。
+    const splitSegments = (text) => String(text || '').split(/[,，、;；\n\r]+/).map(t => t.trim()).filter(Boolean);
+    const parseFilters = (override) => {
+      const groups = [];
+      splitSegments(override).forEach((raw) => {
+        const words = raw.toLowerCase().split(/[\s\u3000]+/).map(w => w.replace(/^\++/, '')).filter(Boolean);
+        if (words.length) groups.push(words);
+      });
+      return groups;
+    };
+    // list: [{ id, content, override }] → { segments: 保留的段文本, removed: 被删段数 }
+    const filterSegments = (list) => {
+      const segs = [];
+      (list || []).forEach(it => {
+        const src = String(it.id || '');
+        splitSegments(it.content).forEach(t => segs.push({ src, text: t }));
+      });
+      const filters = [];
+      (list || []).forEach(it => {
+        const src = String(it.id || '');
+        parseFilters(it.override).forEach(words => filters.push({ src, words }));
+      });
+      let removed = 0;
+      const kept = [];
+      segs.forEach((seg) => {
+        const low = seg.text.toLowerCase();
+        const hit = filters.some(f => {
+          if (f.src === seg.src) return false;   // 不删自己
+          return f.words.some(w => low.includes(w));
+        });
+        if (hit) removed++;
+        else kept.push(seg.text);
+      });
+      return { segments: kept, removed };
+    };
+    // 预览用：中文模式显示中文段，但删除判定与英文一致性各自独立计算
+    const composePreview = (items) => {
+      const src = items.map(s => ({ id: s.id || '', content: s.content || '', override: s.override || '' }));
+      const en = filterSegments(src);
+      if (!pref.translate) return { text: en.segments.join(', '), removed: en.removed };
+      const cn = filterSegments(items.map(s => ({
+        id: s.id || '',
+        content: (s.content_cn && s.content_cn.trim()) ? s.content_cn : s.content,
+        override: s.override || '',
+      })));
+      return { text: cn.segments.join(', '), removed: en.removed };
+    };
+    const withRemoved = (ph) => (ph.removed ? '（排除 ' + ph.removed + ' 段）' + (ph.text || '（空）') : (ph.text || '（空）'));
+
     const previewText = computed(() => {
       if (data.randomMode || data.traverseMode) {
         const modeName = data.traverseMode ? '遍历' : '随机';
         const filled = data.selected.filter(s => !s._ph || s._filled);
         if (filled.length) {
-          const texts = filled.map(s => (pref.translate && s.content_cn && s.content_cn.trim()) ? s.content_cn : s.content);
-          return modeName + '抽取：' + texts.join(', ');
+          return modeName + '抽取：' + withRemoved(composePreview(filled));
         }
         if (data.randomPools.length) {
           const display = data.randomPools.map(p => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display));
@@ -1543,11 +1696,9 @@ export default {
         }
         return modeName + '模式已开，但随机池为空。右键 tab 或 chip 加入';
       }
-      const text = data.selected.filter(s => !s._ph || s._filled).map(s => {
-        if (pref.translate && s.content_cn && s.content_cn.trim()) return s.content_cn;
-        return s.content;
-      }).join(', ');
-      return text || '（空）';
+      const picked = data.selected.filter(s => !s._ph || s._filled);
+      if (!picked.length) return '（空）';
+      return withRemoved(composePreview(picked));
     });
 
     // ============ 工具 ============
@@ -1828,7 +1979,7 @@ const submitAddTab = async () => {
         ph._filled = true;
         ph.tab = e.tab; ph.relPath = e.relPath; ph.id = e.id || '';
         ph.name = placeholderBaseName(ph) + '：' + e.name;
-        ph.content = e.content; ph.content_cn = e.content_cn;
+        ph.content = e.content; ph.content_cn = e.content_cn; ph.neg = e.neg || ''; ph.override = e.override || '';
       };
       // 1) 已存在的占位符原位填充/更新
       for (const s of data.selected) {
@@ -2073,7 +2224,7 @@ const submitAddTab = async () => {
         if (!c || !c.length) { zhuleLog('pickFromEachPool: 候选为空返回null', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromEachPool: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, 'relPath=', file.relPath, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, _poolKey: poolKeyFor(item) });
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', _poolKey: poolKeyFor(item) });
       }
       return picks;
     };
@@ -2133,7 +2284,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, _pool: true, _poolKey: e._poolKey })));
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _poolKey: e.file.content_cn, _pool: true, _poolKey: e._poolKey })));
     };
 
     // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
@@ -2267,7 +2418,7 @@ const submitAddTab = async () => {
         type: 'zhule:run',
         bindId: linkParams.bind,
         seq: ++runSeq,
-        items: items.map(s => ({ id: s.id || '', name: s.name, content: s.content })),
+        items: items.map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
         count: 1,
       });
       let done = false;
@@ -2365,7 +2516,7 @@ const submitAddTab = async () => {
         bindId: linkParams.bind,
         seq: ++runSeq,
         // 带 id（词条 id，提示词标签按 id 传递，词条改名/移动不脱钩）、name（词条名）与 content（提示词文本）
-        items: readyItems.map(s => ({ id: s.id || '', name: s.name, content: s.content })),
+        items: readyItems.map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
         count,
       });
       let done = false;
@@ -2588,7 +2739,7 @@ const submitAddTab = async () => {
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
-        item: { tab: data.activeTab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn },
+        item: { tab: data.activeTab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '' },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -2741,7 +2892,7 @@ const submitAddTab = async () => {
           else t = fromIdx < idx ? idx : idx + 1;
           data.selected.splice(t, 0, moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
           const existIdx = data.selected.findIndex(s => s.relPath === item.relPath);
           let targetIdx = idx;
           if (existIdx >= 0) {
@@ -2759,7 +2910,7 @@ const submitAddTab = async () => {
           const [moved] = data.selected.splice(p.sourceIdx, 1);
           data.selected.push(moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
           if (data.selected.some(s => s.relPath === item.relPath)) return;
           data.selected.push(item);
         }
@@ -2772,7 +2923,7 @@ const submitAddTab = async () => {
         const target = rel ? filteredFiles.value.find(x => x.relPath === rel) : null;
         if (!target) return;
         const targetIdx = data.selected.findIndex(s => s.relPath === target.relPath);
-        const item = { tab: p.item.tab, relPath: p.item.relPath, name: p.item.name, content: p.item.content, content_cn: p.item.content_cn };
+        const item = { tab: p.item.tab, relPath: p.item.relPath, name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
@@ -2788,6 +2939,7 @@ const submitAddTab = async () => {
       else data.selected.push({
         tab: data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
         content: file.content, content_cn: file.content_cn,
+        neg: file.neg || '', override: file.override || '',
       });
     };
 
@@ -2821,7 +2973,7 @@ const submitAddTab = async () => {
 
     return {
       loaded, tabLoading, error, tabs, data, pref, drag, load,
-      editTarget, editName, editContent, editContentCn, editIsTxt, editing,
+      editTarget, editName, editContent, editContentCn, editNeg, editOverride, editIsTxt, editing, acc, toggleAcc, allAccOpen, toggleAllAcc,
       openEdit, cancelEdit, submitEdit, toggleMute,
       del, askDeleteWord, askDeleteRef,
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,

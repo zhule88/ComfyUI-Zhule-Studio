@@ -86,7 +86,7 @@ def raw_name(node):
 def fetch_tree():
     """全树：顶层 tab（parent_id NULL）按 sort_order/名称排序。
 
-    返回 [{id, type, name, en?, cn?, mute?, sortOrder?, updatedAt?, children?}]，
+    返回 [{id, type, name, en?, cn?, neg?, override?, mute?, sortOrder?, updatedAt?, children?}]，
     id 为 DB 自增 id（str）；updatedAt 为 updated_at 时间戳（卡片按时间排序用）；
     mute 仅 entry 节点携带（1=静音（mute）：自动选词跳过，仅手动点选可用）。
     """
@@ -94,7 +94,7 @@ def fetch_tree():
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, sort_order, mute, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, updated_at "
                 "FROM {0} WHERE isdel=0 ORDER BY id".format(TABLE)
             ).fetchall()
         finally:
@@ -110,6 +110,8 @@ def fetch_tree():
             if r["type"] == "entry":
                 node["en"] = r["en"] or ""
                 node["cn"] = r["cn"] or ""
+                node["neg"] = r["neg"] or ""
+                node["override"] = r["override"] or ""
                 node["mute"] = r["mute"] or 0
             if r["sort_order"]:
                 node["sortOrder"] = r["sort_order"]
@@ -160,7 +162,7 @@ def node_by_raw_path(raw_path):
 
 
 def node_by_id(node_id):
-    """按 DB id 查询未删除节点。返回 dict {id, parent_id, type, name, en, cn, mute, sortOrder, updatedAt}，不存在返回 None。"""
+    """按 DB id 查询未删除节点。返回 dict {id, parent_id, type, name, en, cn, neg, override, mute, sortOrder, updatedAt}，不存在返回 None。"""
     try:
         node_id = int(node_id)
     except (TypeError, ValueError):
@@ -169,7 +171,7 @@ def node_by_id(node_id):
         conn = connect()
         try:
             r = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, sort_order, mute, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, updated_at "
                 "FROM {0} WHERE id=? AND isdel=0".format(TABLE),
                 (node_id,),
             ).fetchone()
@@ -182,6 +184,8 @@ def node_by_id(node_id):
                 "name": r["name"] or "",
                 "en": r["en"] or "",
                 "cn": r["cn"] or "",
+                "neg": r["neg"] or "",
+                "override": r["override"] or "",
                 "mute": r["mute"] or 0,
                 "sortOrder": r["sort_order"],
                 "updatedAt": r["updated_at"] or 0,
@@ -256,8 +260,12 @@ def insert_node(parent_id, type_, name, en="", cn="", so=None):
             conn.close()
 
 
-def update_node(node_id, name=None, en=None, cn=None):
-    """编辑节点：可选更新 name/en/cn，并刷新 updated_at。"""
+def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None):
+    """编辑节点：可选更新 name/en/cn/neg/override，并刷新 updated_at。
+
+    neg：该词条附带的负面提示词（选中时汇总进最终负面提示词）。
+    override：排除词（命中其它词条产出的提示词段即删除该段，不含自身）。
+    """
     with _lock:
         conn = connect()
         try:
@@ -271,6 +279,12 @@ def update_node(node_id, name=None, en=None, cn=None):
             if cn is not None:
                 sets.append("cn=?")
                 vals.append(cn)
+            if neg is not None:
+                sets.append("neg=?")
+                vals.append(neg)
+            if override is not None:
+                sets.append("override=?")
+                vals.append(override)
             if not sets:
                 return False
             sets.append("updated_at=?")
