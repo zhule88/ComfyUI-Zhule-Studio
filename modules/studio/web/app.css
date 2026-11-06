@@ -768,15 +768,39 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   box-shadow: 0 0 6px rgba(79,143,247,0.5); }
 .zhg-card-actions .zhg-del-btn:hover { background: rgba(214, 69, 69, 0.92); color: #fff; border-color: #e5484d; }
 
-/* 底部压暗渐变 + 名字：与词库 .card-caption 完全一致的视觉（名字叠在图上，独占整行） */
+/* 底部压暗渐变 + 模型/标签 + 名字：三段纵向排布，名字独占一整行不被图标挤压 */
 .zhg-card-caption {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
-  display: flex; align-items: flex-end; gap: 6px;
-  padding: 26px 9px 8px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  padding: 30px 9px 8px;
   background: linear-gradient(to top,
-    rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.72) 32%, rgba(0,0,0,0.32) 68%, rgba(0,0,0,0) 100%);
+    rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.74) 40%, rgba(0,0,0,0.30) 74%, rgba(0,0,0,0) 100%);
   pointer-events: none;
 }
+/* 模型名 + 标签：一行内横向排列，超出裁掉（完整内容看 data-tip 悬停提示） */
+.zhg-card-meta {
+  display: flex; align-items: center; gap: 4px;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 82%, transparent 100%);
+          mask-image: linear-gradient(to right, #000 82%, transparent 100%);
+}
+.zhg-card-chip {
+  flex: 0 0 auto; max-width: 7.5em; padding: 1px 6px;
+  border-radius: 7px; font-size: 10px; line-height: 1.45;
+  color: #d4dce8; background: rgba(0, 0, 0, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+  pointer-events: auto;
+}
+/* 模型名用紫色调区分标签（与详情里的 LoRA 徽标同色系） */
+.zhg-card-chip.model {
+  max-width: 9em; font-weight: 600;
+  color: #dcd3ff; background: rgba(76, 58, 122, 0.72);
+  border-color: rgba(167, 139, 250, 0.55);
+}
+.zhg-card-chip.more { color: var(--text-3); background: rgba(0, 0, 0, 0.45); }
+.zhg-card-line { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
 .zhg-card-caption .zhg-card-name {
   flex: 1; min-width: 0;
   font-size: 12.5px; font-weight: 600; color: #fff; line-height: 1.3;

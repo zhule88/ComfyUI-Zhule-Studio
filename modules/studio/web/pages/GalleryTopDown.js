@@ -142,10 +142,23 @@ export default {
                 </svg>
               </button>
             </div>
-            <!-- 底部压暗渐变 + 名字叠于图上（与词库卡片一致） -->
+            <!-- 底部压暗渐变 + 模型/标签 + 名字叠于图上 -->
             <div class="zhg-card-caption">
-              <span class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</span>
-              <span class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</span>
+              <div class="zhg-card-meta"
+                   v-if="(pref.gallery.showModel !== false && it.model) || (pref.gallery.showTags !== false && cardTags(it).length)">
+                <span class="zhg-card-chip model" v-if="pref.gallery.showModel !== false && it.model"
+                      :data-tip="'模型：' + fmtModel(it.model)">{{ fmtModel(it.model) }}</span>
+                <template v-if="pref.gallery.showTags !== false">
+                  <span class="zhg-card-chip" v-for="t in cardTags(it).slice(0, 3)" :key="'ct' + t"
+                        :data-tip="'标签：' + t">{{ t }}</span>
+                  <span class="zhg-card-chip more" v-if="cardTags(it).length > 3"
+                        :data-tip="'标签：' + cardTags(it).join(' / ')">+{{ cardTags(it).length - 3 }}</span>
+                </template>
+              </div>
+              <div class="zhg-card-line">
+                <span class="zhg-card-name" v-if="pref.gallery.showName" :data-tip="it.name">{{ fmtModel(it.name) }}</span>
+                <span class="zhg-card-time" v-if="pref.gallery.showTime">{{ fmtTime(it.mtime, pref.gallery.timeFmt) }}</span>
+              </div>
             </div>
           </div>
         </div>
