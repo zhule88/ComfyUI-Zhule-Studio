@@ -332,25 +332,127 @@ export function useGalleryCommon(opts = {}) {
       || JSON.stringify(prev.gallery.tagColor || null) !== JSON.stringify(pref.gallery.tagColor || null)) refreshTagColors();
     if (opts.onPrefChangedExtra) opts.onPrefChangedExtra(p, prev);
   }
-  const filters = reactive({ q: '', sortField: 'time', sortDir: 'desc', tags: [], models: [], loras: [], tagMode: 'and' });
+  const filters = reactive({ q: '', sortField: 'time', sortDir: 'desc', models: [], loras: [], tagMode: 'and' });
   const meta = reactive({ tags: [], models: [], loras: [], total: 0 });
-  // 外部过滤区标签状态持久化：filters.tags 完整数组（含 hidden 项）序列化到 localStorage；
+
+  // ── 外部过滤区标签：唯一真源 ─────────────────────────────────────────────
+  // tagMap: Map<tagKey, item>，key 由 tagKey() 统一计算（有 id 用 p:/c: 前缀，无 id 用 name|rel）。
+  // 用 Map 而不是数组的原因：结构上同一标签只可能占一个 key，重复入列在数据模型层面就不可能发生，
+  // 因此不再需要「入列前查重」「load 后按 name 兜底」「dedupeTagFilters 合并」这类补丁式逻辑。
+  // 各组件/模板只读 tagList（computed 展开数组），任何写入都必须走下面的 upsertTag / patchTag / dropTag。
+  const tagMap = reactive(new Map());
+  const tagList = computed(() => Array.from(tagMap.values()));
+
+  // 入参归一化：树节点（isCustom）、筛选区条目（kind）、裸名字字符串三种形态 → {name, rel, id, kind}。
+  // kind 双形态兼容是必需的：条目带 kind、树节点带 isCustom，缺了这层树节点会被误判成 prompt 域，
+  // tagKey 前缀算错（c:5 → p:5）就会匹配不上已有条目。
+  function tagInfo(item) {
+    if (typeof item === 'string') return { name: item, rel: '', id: '', kind: 'prompt' };
+    if (!item) return { name: '', rel: '', id: '', kind: 'prompt' };
+    return {
+      name: item.name || '',
+      rel: item.rel || '',
+      id: (item.id != null && item.id !== '') ? String(item.id) : '',
+      kind: item.kind || (item.isCustom ? 'custom' : 'prompt'),
+    };
+  }
+
+  // 按唯一键查条目。key 未命中时按同名反查一次：「树内渲染」只传裸名字（拿不到 id），
+  // 算出的键是 n:name|''，命中不了已带 id 的条目，这一路兜底不可省。
+  // 注意不做「跨域同 id」兜底：prompt#5 与 custom#5 是两条不同标签，混为一谈会串标签。
+  function findTagEntry(item) {
+    const info = tagInfo(item);
+    const k = tagKey(info);
+    const hit = k ? tagMap.get(k) : null;
+    if (hit) return hit;
+    if (!info.name) return null;
+    for (const t of tagMap.values()) {
+      if (String(t.name || '') !== info.name) continue;
+      if (info.rel && String(t.rel || '') !== info.rel) continue;
+      return t;
+    }
+    return null;
+  }
+
+  // 写入原语一：新键则建条目，旧键则只补空字段 + 打状态补丁。绝不产生第二条。
+  function upsertTag(item, patch) {
+    const info = tagInfo(item);
+    const k = tagKey(info);
+    if (!k) return null;
+    const cur = tagMap.get(k);
+    if (cur) {
+      // 只补空字段：调用方可能只有裸名字（树内渲染），拿它的默认值覆盖已有 id / 域会串标签
+      const fill = {};
+      if (!cur.name && info.name) fill.name = info.name;
+      if (!cur.rel && info.rel) fill.rel = info.rel;
+      if (!cur.id && info.id) fill.id = info.id;
+      if (!cur.kind && info.kind) fill.kind = info.kind;
+      return patchTag(cur, Object.assign(fill, patch));
+    }
+    const entry = {
+      name: info.name, rel: info.rel, id: info.id, kind: info.kind,
+      active: false, hidden: false, inner: false,
+    };
+    if (patch) Object.assign(entry, patch);
+    tagMap.set(tagKey(entry), entry);
+    // 必须把代理对象交还调用方：后续改它（或 patchTag 里 Object.assign）才会触发响应式更新
+    return tagMap.get(tagKey(entry));
+  }
+
+  // 写入原语二：修改已存在条目。id / kind / name / rel 参与计算唯一键，
+  // 一旦改动就让条目换了 key，所以这里必须同步把 Map 的键迁过去（rekey），
+  // 否则旧键残留、新键查不到 → 又建一条 → 回到重复入列。迁移后若撞上已存在的同键条目（老状态里
+  // 「无 id 一条 + 有 id 一条」回填后指向同一标签），就地合并状态并返回幸存条目。
+  function patchTag(entry, patch) {
+    if (!entry) return null;
+    const oldKey = tagKey(entry);
+    // 已被合并丢弃的条目不在 Map 里：忽略写入，避免留下幽灵对象
+    if (tagMap.get(oldKey) !== entry) return entry;
+    if (!patch) return entry;
+    const keyTouched = ('id' in patch) || ('kind' in patch) || ('name' in patch) || ('rel' in patch);
+    Object.assign(entry, patch);
+    if (!keyTouched) return entry;
+    const newKey = tagKey(entry);
+    if (newKey === oldKey) return entry;
+    tagMap.delete(oldKey);
+    const dup = tagMap.get(newKey);
+    if (!dup) {
+      tagMap.set(newKey, entry);
+      return entry;
+    }
+    dup.active = !!(dup.active || entry.active);
+    dup.hidden = !!(dup.hidden && entry.hidden);
+    dup.inner = !!(dup.inner && entry.inner);
+    if (!dup.rel && entry.rel) dup.rel = entry.rel;
+    return dup;
+  }
+
+  // 写入原语三：删除条目
+  function dropTag(entry) {
+    if (!entry) return;
+    const k = tagKey(entry);
+    if (k && tagMap.get(k) === entry) tagMap.delete(k);
+  }
+
+  // 外部过滤区标签状态持久化：整表（含 hidden 项）序列化到 localStorage；
   // localStorage 不可用 / 解析失败时静默降级为纯内存（不崩溃、不抛错）
   const TAG_STORAGE_KEY = 'zhule_gallery_tags';
   function saveTagPref() {
     try {
-      localStorage.setItem(TAG_STORAGE_KEY, JSON.stringify({ version: 1, tags: filters.tags }));
+      localStorage.setItem(TAG_STORAGE_KEY, JSON.stringify({ version: 2, tags: tagList.value }));
     } catch (e) { /* ignore: 降级为纯内存 */ }
   }
   function loadTagPref() {
     try {
       const raw = JSON.parse(localStorage.getItem(TAG_STORAGE_KEY) || 'null');
-      if (raw && raw.version === 1 && Array.isArray(raw.tags)) {
-        const valid = raw.tags
-          .filter((t) => t && typeof t.name === 'string')
-          .map((t) => ({ name: t.name, rel: t.rel || '', active: !!t.active, hidden: !!t.hidden, inner: !!t.inner, id: t.id || '', kind: t.kind || '' }))
-          .filter((t, i, arr) => { const k = tagKey(t); return !k || arr.findIndex((o) => tagKey(o) === k) === i; });
-        if (valid.length) filters.tags = valid;
+      // version 1 为历史数组格式，结构相同，一并兼容；重复项由 upsertTag 按键自然合并
+      if (raw && (raw.version === 1 || raw.version === 2) && Array.isArray(raw.tags)) {
+        for (const t of raw.tags) {
+          if (!t || typeof t.name !== 'string') continue;
+          upsertTag({
+            name: t.name, rel: t.rel || '', id: t.id || '', kind: t.kind || '',
+          }, { active: !!t.active, hidden: !!t.hidden, inner: !!t.inner });
+        }
       }
     } catch (e) { /* ignore: 解析失败，保留空 tags */ }
   }
@@ -511,83 +613,30 @@ export function useGalleryCommon(opts = {}) {
     const er = String((entry && entry.rel) || '');
     if (!er) return;
     const ek = entry.kind || '';
-    filters.tags = filters.tags.filter((t) => {
-      if (!t.inner) return true;
-      if ((t.kind || '') !== ek) return true;
+    for (const t of [...tagMap.values()]) {
+      if (!t.inner) continue;
+      if ((t.kind || '') !== ek) continue;
       const tr = String(t.rel || '');
-      return !(tr && tr !== er && tr.startsWith(er + '/'));
-    });
-  }
-  // 标签条目查找（全链路唯一入口）：先按唯一键（有 id 用 id）精确匹配，未命中再按 name(+rel) 兜底。
-  // 兜底的必要性：老 localStorage / URL 直达条目没有 id，键为 'n:name|rel'，树加载回填 id 前
-  // 点同一个标签会算成另一个键 → 重复入列；统一走本函数后同一标签永远只有一条。
-  // 传字符串（裸标签名）时只按 name 匹配，忽略 rel。
-  function findTagEntry(t) {
-    if (!t) return null;
-    const isStr = typeof t === 'string';
-    if (!isStr) {
-      const k = tagKey(t);
-      if (k) {
-        const hit = filters.tags.find((x) => tagKey(x) === k);
-        if (hit) return hit;
-      }
+      if (tr && tr !== er && tr.startsWith(er + '/')) dropTag(t);
     }
-    const nm = isStr ? t : (t.name || '');
-    const rl = isStr ? null : (t.rel || '');
-    return filters.tags.find((x) => String(x.name || '') === String(nm || '')
-      && (rl === null || String(x.rel || '') === String(rl || ''))) || null;
   }
-  // 按键去重合并：历史状态里同一标签可能同时存在「有 id」与「无 id」两条，backfillTagIds 回填 id 后
-  // 两条键相同 → 筛选区出现两个同名标签（如两个「单眼遮发」），且点一个另一个也亮
-  // （渲染按下标各画一条、高亮按 key 查首条）。合并规则：active 任一为真即真；
-  // hidden 全部为真才隐藏；inner 全部为真才算内层。返回是否有合并。
-  function dedupeTagFilters() {
-    const seen = new Map();
-    const out = [];
-    for (const t of filters.tags) {
-      const k = tagKey(t);
-      if (!k) { out.push(t); continue; }
-      const prev = seen.get(k);
-      if (!prev) { seen.set(k, t); out.push(t); continue; }
-      prev.active = !!(prev.active || t.active);
-      prev.hidden = !!(prev.hidden && t.hidden);
-      prev.inner = !!(prev.inner && t.inner);
-      if (!prev.id && t.id) { prev.id = t.id; prev.kind = t.kind || prev.kind; }
-      if (!prev.rel && t.rel) prev.rel = t.rel;
-    }
-    const changed = out.length !== filters.tags.length;
-    if (changed) filters.tags = out;
-    return changed;
-  }
+  // 编辑面板左键点击：未入列则放入（红色待启用），已入列则移除；此前被隐藏过的条目转为显式启用。
+  // 入参是树节点 / 筛选区条目 / 裸名字，统一交给 tagInfo 归一化，不再手写 name/rel/id/kind 提取。
   function addTagFilter(item) {
-    // 编辑面板左键点击 emit 的是完整 node 对象（tagTreePanel setFilter emit('add', node)），
-    // 这里统一提取 name 字符串：避免把整个 node 对象当 name 存入外部过滤区，
-    // 否则渲染 {{ node.name }} 会把整段 JSON 数据打出来（此前 bug）
-    const name = typeof item === 'string' ? item : (item && item.name);
-    if (!name) return;
-    const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
-    // 携带 id/kind：词条 id（prompt）或自定义标签 id（custom），点击后后端按 id 直查 gallery_tag
-    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
-    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
-    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
-    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
-    // 放到外部过滤区（编辑面板左键点击触发）：按唯一键（id 优先，无 id 回退 name|rel）判定；
-    // 同名但 id 不同（如 '测试/喜欢' 与顶层 '喜欢'）视为不同标签，互不覆盖
-    const existed = findTagEntry({ name, rel, id, kind });
-    if (existed) {
-      if (existed.hidden) {
-        existed.hidden = false;
-        existed.active = true;
-        existed.rel = rel || existed.rel;
-        if (id) { existed.id = id; existed.kind = kind; }
-      } else {
-        const si = filters.tags.indexOf(existed);
-        if (si >= 0) filters.tags.splice(si, 1);
-        pruneInnerDescendants(existed);
-      }
+    const info = tagInfo(item);
+    if (!info.name) return;
+    // 同名但 id 不同（如 '测试/喜欢' 与顶层 '喜欢'）键不同，各自独立、互不覆盖
+    const existed = findTagEntry(info);
+    if (!existed) {
+      upsertTag(info, { active: false, hidden: false });
+    } else if (existed.hidden) {
+      patchTag(existed, {
+        hidden: false, active: true, inner: false,
+        rel: info.rel || existed.rel, id: info.id || existed.id, kind: info.kind || existed.kind,
+      });
     } else {
-      filters.tags.push({ name, rel, id, kind, active: false, hidden: false });
+      pruneInnerDescendants(existed);
+      dropTag(existed);
     }
     applyFilter();
     saveTagPref();
@@ -611,18 +660,16 @@ export function useGalleryCommon(opts = {}) {
         if (m && String(m.id) === id && (!!m.isCustom) === (kind === 'custom')) { rel = m.rel || ''; break; }
       }
     }
-    const existed = findTagEntry({ name, rel, id, kind });
-    if (existed) {
-      existed.hidden = false;
-      existed.inner = false; // 提升为显式条目，才能在顶层筛选区看到并可停用
-      existed.active = true;
-      // 老状态条目缺 id / 键不一致时一并以本次点击的 id 修正，避免同标签两条并存
-      if (rel) existed.rel = rel;
-      if (id) { existed.id = id; existed.kind = kind; }
-      dedupeTagFilters(); // 回填 id 后可能与另一条「已有 id」的同名条目同键：立即合并
-    } else {
-      filters.tags.push({ name, rel, id, kind, active: true, hidden: false });
-    }
+    // 幂等放置：已入列则复用同一条并强制启用（补 id/rel 会让键迁移，由 patchTag 自动换键合并），
+    // 绝不会像 addTagFilter 那样再点一次就移除
+    const info = { name, rel, id, kind };
+    const target = findTagEntry(info) || upsertTag(info);
+    patchTag(target, {
+      hidden: false, inner: false, active: true, // 提升为显式条目，才能在顶层筛选区看到并可停用
+      rel: rel || target.rel,
+      id: id || target.id,
+      kind,
+    });
     applyFilter();
     saveTagPref();
     showToast('已加入筛选并启用：' + name, 'success');
@@ -632,48 +679,44 @@ export function useGalleryCommon(opts = {}) {
   // 隐藏不可逆（Ctrl+左键完全移除），恢复靠编辑面板重新放置，故这里不再处理 hidden
   // 匹配一律按唯一键（id 优先），同名不同 id（'测试/喜欢' vs '喜欢'）各自独立启停
   function toggleTagActive(item) {
-    const name = typeof item === 'string' ? item : (item && item.name);
-    if (!name) return;
-    const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
-    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
-    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
-    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
-    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
-    const t = findTagEntry({ name, rel, id, kind });
+    const info = tagInfo(item);
+    if (!info.name) return;
+    let t = findTagEntry(info);
     if (!t) {
-      // 首次放置：优先用节点自带 id；老状态/无 id 节点用树元信息兜底回填
-      const metaKey = rel || name;
-      const meta = (tagKidMeta.value[metaKey] || {});
-      filters.tags.push({ name, rel, id: id || meta.id || '', kind: kind || (meta.isCustom ? 'custom' : 'prompt'), active: true, hidden: false, inner: true });
+      // 首次放置（套娃内子标签）：节点没带 id 时按树元信息补齐；入列即启用并标记 inner，顶层不单独占位
+      const meta = tagKidMeta.value[info.rel || info.name] || {};
+      upsertTag({
+        name: info.name,
+        rel: info.rel,
+        id: info.id || meta.id || '',
+        kind: info.kind || (meta.isCustom ? 'custom' : 'prompt'),
+      }, { active: true, hidden: false, inner: true });
       applyFilter();
       saveTagPref();
       return;
     }
-    // 已入列但缺 id（老 localStorage 状态 / URL 直达）：用树元信息回填后走 SQL
+    // 老状态条目缺 id（老 localStorage / URL 直达）：按树元信息补齐后走 SQL。
+    // 补 id 会改变唯一键，patchTag 负责把键迁过去，迁移撞车时顺带与「已有 id」的同名条目合并。
     if (!t.id) {
       const meta = tagKidMeta.value[t.rel || t.name];
-      if (meta && meta.id) { t.id = meta.id; t.kind = meta.isCustom ? 'custom' : 'prompt'; }
+      if (meta && meta.id) t = patchTag(t, { id: meta.id, kind: meta.isCustom ? 'custom' : 'prompt' }) || t;
     }
-    t.active = !t.active;
-    dedupeTagFilters(); // 回填 id 后可能与另一条同名同 id 条目合并，避免两条各自开合
+    patchTag(t, { active: !t.active });
     applyFilter();
     saveTagPref();
   }
   // 外部过滤区：Ctrl+左键隐藏（完全移除，不可逆）——扁平列表项标记 hidden 并清除 active，
   // 渲染层统一按 hidden 过滤后标签彻底消失不占位（隐藏大标签时整棵子树随之消失）；无任何恢复入口
   function hideTag(item) {
-    const name = typeof item === 'string' ? item : (item && item.name);
-    if (!name) return;
-    const rel = typeof item === 'string' ? '' : ((item && item.rel) || '');
-    const id = (typeof item !== 'string' && item && item.id != null && item.id !== '') ? String(item.id) : '';
-    // 双形态兼容：filters.tags 项带 kind、树节点带 isCustom——优先 kind，否则按 isCustom 推导；
-    // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
-    // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
-    const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
-    const t = findTagEntry({ name, rel, id, kind });
-    if (t) { t.hidden = true; t.active = false; pruneInnerDescendants(t); }
-    else filters.tags.push({ name, rel, id, kind, active: false, hidden: true, inner: true });
+    const info = tagInfo(item);
+    if (!info.name) return;
+    const t = findTagEntry(info);
+    if (t) {
+      patchTag(t, { hidden: true, active: false });
+      pruneInnerDescendants(t);
+    } else {
+      upsertTag(info, { active: false, hidden: true, inner: true });
+    }
     applyFilter();
     saveTagPref();
   }
@@ -688,17 +731,9 @@ export function useGalleryCommon(opts = {}) {
   // 显式条目之间仍按最深选中链取代：选"角色"显示角色；编辑面板再放入"璃月"后只显示璃月；删掉璃月角色自动回归。
   // 隐藏 = 完全移除（等价 v-if=false）
   const visibleTags = computed(() => {
-    const base = filters.tags.filter((t) => !t.hidden && !t.inner);
-    // 防御性按键去重：同一标签（同 id 域）只出现一次，避免历史重复条目在筛选区渲染成两个同名标签
-    const seen = new Set();
-    const list = base.filter((t) => {
-      const k = tagKey(t);
-      if (!k) return true;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    return list.filter((t) => !list.some((u) => u !== t && tagAncestorOf(t, u)));
+    // tagMap 天然按唯一键去重，这里只需处理「显式条目之间按最长路径取代」一件事
+    const base = tagList.value.filter((t) => !t.hidden && !t.inner);
+    return base.filter((t) => !base.some((u) => u !== t && tagAncestorOf(t, u)));
   });
   // 树内递归渲染判断隐藏态：隐藏 = 完全移除，渲染时按此过滤（等价 v-if=false），隐藏大标签时整棵子树随之消失
   function isTagHidden(name) {
@@ -755,17 +790,24 @@ export function useGalleryCommon(opts = {}) {
   // 老 localStorage 状态 / URL 直达只有名字没有 id：树加载后用 rel|name 找回 id/kind，让过滤走 SQL；
   // 有 id 但 kind 缺失的更老状态同样按树元信息补域，否则自定义 id 会带 p: 前缀查错域（筛选失效/高亮失配）
   function backfillTagIds() {
-    for (const t of filters.tags) {
+    let changed = false;
+    // 迭代快照：补 id 会把条目搬到新键（rekey），撞车时当前条目还会被合并丢弃，
+    // 直接遍历 Map 会在迭代过程中改动结构
+    for (const t of [...tagMap.values()]) {
       const meta = tagKidMeta.value[t.rel || t.name];
       if (!meta) continue;
-      if (!t.id && meta.id) t.id = meta.id;
-      // kind 一律以树元信息为准：旧版本状态可能缺 kind 或存错域（custom id 带 prompt 域），
+      const id = t.id || meta.id;
+      if (!id) continue;
+      // kind 一律以树元信息为准：旧状态可能缺 kind 或存错域（custom id 带 prompt 域），
       // 域错则 tagKey 前缀错——高亮匹配不上、buildQuery 把自定义 id 发去提示词域查空
-      if (t.id) t.kind = meta.isCustom ? 'custom' : 'prompt';
+      const kind = meta.isCustom ? 'custom' : 'prompt';
+      if (t.id === id && t.kind === kind) continue;
+      patchTag(t, { id, kind });
+      changed = true;
     }
-    // 回填后同一标签可能出现「带 id / 不带 id」两条同键记录 → 合并成一条并落盘，
-    // 否则筛选区会同时显示两个同名标签，点一个另一个也跟着亮
-    if (dedupeTagFilters()) saveTagPref();
+    // 回填会改变唯一键（n:name|rel → p:id）；与既有「有 id」条目撞键时 patchTag 在迁移时已合并，
+    // 所以这里只剩落盘一件事
+    if (changed) saveTagPref();
   }
   function treeKids(item) {
     const key = (typeof item === 'object' && item) ? (item.rel || item.name) : String(item || '');
@@ -785,8 +827,8 @@ export function useGalleryCommon(opts = {}) {
     return !!findTagEntry(name);
   }
   function clearTagFilter() {
-    if (filters.tags.length) {
-      filters.tags = [];
+    if (tagMap.size) {
+      tagMap.clear();
       applyFilter();
       saveTagPref();
     }
@@ -861,7 +903,7 @@ export function useGalleryCommon(opts = {}) {
   }
 
   const hasFilter = computed(() =>
-    filters.q || filters.tags.some((t) => t.active && !t.hidden) ||
+    filters.q || tagList.value.some((t) => t.active && !t.hidden) ||
     filters.models.length || filters.loras.length);
 
   // 当前是否为上下布局（/gallery）；GalleryTopDown.js 挂在 /gallery，故此处恒为 true
@@ -1752,10 +1794,9 @@ export function useGalleryCommon(opts = {}) {
   function removeTag(item) {
     const removed = findTagEntry(item);
     if (removed) {
-      const i = filters.tags.indexOf(removed);
       // 同步清掉其 inner 后代：父条目移除后它们顶层不可见、无入口关闭，只能静默参与过滤
-      if (i >= 0) filters.tags.splice(i, 1);
       pruneInnerDescendants(removed);
+      dropTag(removed);
     }
     applyFilter();
     saveTagPref();
@@ -1771,7 +1812,7 @@ export function useGalleryCommon(opts = {}) {
     const p = reset ? 1 : page.value;
     const params = new URLSearchParams({ page: p, pageSize: pageSize.value, sort: filters.sortField + '_' + filters.sortDir });
     if (filters.q) params.set('q', filters.q);
-    const actTags = filters.tags.filter((t) => t.active && !t.hidden);
+    const actTags = tagList.value.filter((t) => t.active && !t.hidden);
     if (actTags.length) {
       // SQL 优先：有 id 的标签按 id 直查 gallery_tag（词条 id -> tags，自定义 id -> ctags），
       // 后端命中后仅加载候选图记录，不再全量遍历内存索引；无 id 的老状态按 name|rel 走 ltags 兼容路径
@@ -1897,54 +1938,34 @@ export function useGalleryCommon(opts = {}) {
     if (q) {
       const first = String(q).split(',').filter(Boolean)[0];
       if (first) {
-        // 词库跳转：不覆盖已有标签，新标签追加到最前并取消其它标签的选中状态（仅新标签生效）。
-        // 纯数字 = 词条 id（词库箭头跳转）：按 id 筛选；名字待标签树加载后回显
-        filters.tags.forEach((t) => { t.active = false; });
-        // 必须查重后再注入：本地已存同一条标签时（先手点过、再被词库跳转带进来），
-        // 盲目 unshift 会产生两条同键记录 → 筛选区出现两个同名标签、点一个另一个也亮（历史 bug）。
-        // 命中已有条目就复用并激活，取不到才新建。
-        if (/^\d+$/.test(first)) {
-          pendingTagId = first;
-          const exist = findTagEntry({ id: first, name: first, rel: '', kind: 'prompt' });
-          if (exist) {
-            if (!exist.id) exist.id = first;
-            if (!exist.kind) exist.kind = 'prompt';
-            exist.active = true;
-            exist.hidden = false;
-            exist.inner = false;
-          } else {
-            filters.tags.unshift({ id: first, name: first, rel: '', kind: 'prompt', active: true, hidden: false });
-          }
-        } else {
-          const exist = filters.tags.find((x) => String(x.name || '') === first)
-            || findTagEntry({ name: first, rel: '', kind: 'prompt' });
-          if (exist) {
-            exist.active = true;
-            exist.hidden = false;
-            exist.inner = false;
-          } else {
-            filters.tags.unshift({ name: first, rel: '', kind: 'prompt', active: true, hidden: false });
-          }
-        }
-        dedupeTagFilters();
+        // 词库跳转：不覆盖已有标签，新标签生效并取消其它标签的选中状态（仅新标签生效）。
+        // 纯数字 = 词条 id（词库箭头跳转）：先按 id 筛选，显示名等标签树加载后再回显
+        for (const t of tagMap.values()) patchTag(t, { active: false });
+        const isId = /^\d+$/.test(first);
+        if (isId) pendingTagId = first;
+        const info = isId
+          ? { id: first, name: first, rel: '', kind: 'prompt' }
+          : { name: first, rel: '', kind: 'prompt' };
+        // 命中已有条目就复用并激活（本地点过、再被词库跳转带进来时不会再多出一条），取不到才新建
+        const exist = findTagEntry(info) || upsertTag(info);
+        patchTag(exist, { active: true, hidden: false, inner: false });
       }
     }
     const qm = String(route.query.mode || 'and').toLowerCase();
     if (qm === 'or') filters.tagMode = 'or';
     ensureTagTree().then(() => {
-      if (pendingTagId) {
-        const nm = tagIdNameMap.value[pendingTagId];
-        const t = filters.tags.find((x) => x.id === pendingTagId);
-        if (t) {
-          if (nm) t.name = nm;
-          // 跳转只带 id，rel/域信息缺失；用标签树 meta 补齐，否则父子祖先判断（tagAncestorOf）对这条失效
-          const m = tagKidMeta.value[t.rel || t.name || nm] || (nm ? tagKidMeta.value[nm] : null);
-          if (m) {
-            if (!t.rel && m.rel) t.rel = m.rel;
-            if (!t.kind) t.kind = m.isCustom ? 'custom' : 'prompt';
-          }
-        }
-      }
+      if (!pendingTagId) return;
+      const nm = tagIdNameMap.value[pendingTagId];
+      // 按 id 反查（此时条目的键可能已被 backfill 迁移过），限定提示词域避免与自定义 id 撞号
+      const t = tagList.value.find((x) => String(x.id || '') === pendingTagId && x.kind !== 'custom');
+      if (!t) return;
+      // 跳转只带 id，rel/域信息缺失：用标签树 meta 补齐，否则父子祖先判断（tagAncestorOf）对这条失效
+      const m = tagKidMeta.value[t.rel || t.name || nm] || (nm ? tagKidMeta.value[nm] : null);
+      const patch = {};
+      if (nm && t.name !== nm) patch.name = nm;
+      if (!t.rel && m && m.rel) patch.rel = m.rel;
+      if (!t.kind && m) patch.kind = m.isCustom ? 'custom' : 'prompt';
+      if (Object.keys(patch).length) patchTag(t, patch);
     });
     // 首次进入立即加载列表与元数据；不做自动探活/自动刷新，需要最新数据时手动刷新页面
     loadMeta();
@@ -1961,7 +1982,7 @@ export function useGalleryCommon(opts = {}) {
     loading, loadingMore, allLoaded, dirty, tagPanelOpen, detail,
     quickTag, toast, toastType, toastIcon, del, mainEl, gridEl,
     leafName, cardTags,
-    tagKey,
+    tagKey, tagList,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, tagThemeClass, addDetailTagToFilter,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,

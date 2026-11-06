@@ -44,7 +44,7 @@ export default {
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
 
-    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="editColorOf" :show-count="showTagCount"
+    <tag-tree-panel :show="tagPanelOpen" :selected="tagList" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="editColorOf" :show-count="showTagCount"
                     @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter" @toggle="toggleTagActive" @refresh="refreshAfterTagEdit"></tag-tree-panel>
 
     <!-- 上下结构：筛选区置顶 -->
