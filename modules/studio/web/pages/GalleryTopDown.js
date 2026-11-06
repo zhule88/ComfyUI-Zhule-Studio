@@ -113,7 +113,7 @@ export default {
              :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)">
           <div class="zhg-thumb-wrap" :title="cardTip(it)">
             <img class="zhg-thumb" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
-            <!-- 左侧竖排操作：选择 / 放大 / 删除（与词库卡片同款，悬停显现，永不挤压名字） -->
+            <!-- 右侧竖排操作：选择 / 放大 / 删除（悬停显现，永不挤压名字） -->
             <div class="zhg-card-actions">
               <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}"
                       :data-tip="isSel(it.key) ? '取消选中' : '选中这张图（也可 Ctrl+点击 / 拖动框选）'"

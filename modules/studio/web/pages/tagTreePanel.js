@@ -1,4 +1,4 @@
-import { ref, watch, computed, nextTick } from 'vue';
+import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue';
 
 const API = {
   tagtree: '/zhule_studio/api/gallery/tagtree',
@@ -191,6 +191,34 @@ export default {
       return (typeof v === 'number') ? v : null;
     }
 
+    // 通用设置「隐藏被静音的提示词」：默认关闭；开启后提示词标签区不渲染 mute=1 的词条
+    // （父目录因词条被隐藏而变空时，目录节点同样不展示，避免出现空壳分组）
+    function readCommonHideMuted() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || '{}');
+        return !!(raw && raw.common && raw.common.hideMuted === true);
+      } catch (e) { return false; }
+    }
+    const hideMuted = ref(readCommonHideMuted());
+    function onGlobalPrefChanged(e) {
+      const cm = e && e.detail && e.detail.common;
+      if (cm && typeof cm.hideMuted === 'boolean') hideMuted.value = cm.hideMuted;
+    }
+    window.addEventListener('zhule-pref-changed', onGlobalPrefChanged);
+    onBeforeUnmount(() => window.removeEventListener('zhule-pref-changed', onGlobalPrefChanged));
+    // 递归剔除静音词条；返回新数组（不改动 tree 缓存，关掉开关立刻恢复）
+    function stripMuted(ns) {
+      const out = [];
+      for (const n of ns || []) {
+        if (!n) continue;
+        if (n.mute) continue;
+        const kids = (n.children && n.children.length) ? stripMuted(n.children) : [];
+        if (n.children && n.children.length && !kids.length) continue;
+        out.push({ ...n, children: kids });
+      }
+      return out;
+    }
+
     async function loadTree(force = false) {
       if (tree.value.length && !force) return;
       loading.value = !tree.value.length;
@@ -218,6 +246,7 @@ export default {
     }
 
     function open() {
+      hideMuted.value = readCommonHideMuted();
       loadTree();
     }
     watch(
@@ -277,7 +306,10 @@ export default {
 
     // 展示树分区：提示词标签（词库，非自定义，保留原有树形）+ 自定义标签（保留层级树：父级为可展开分组容器，叶子才是标签）。
     // 当前图片有标签时按完整路径（'测试/喜欢'）重建挂载树；否则直接用全量自定义树（后端已按 parent_id 组织层级）。
-    const wbTree = computed(() => (tree.value || []).filter((n) => !n.isCustom));
+    const wbTree = computed(() => {
+      const list = (tree.value || []).filter((n) => !n.isCustom);
+      return hideMuted.value ? stripMuted(list) : list;
+    });
     const csTree = computed(() => {
       const all = tree.value || [];
       return props.currentTags && props.currentTags.length

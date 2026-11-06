@@ -508,8 +508,10 @@ def _tag_tree_from_cache(tree_nodes):
             disp = nd.get("name") or raw
             rel = "/".join(parent_rawnames + [raw])
             if nd.get("type") == "entry":
+                # mute：词条静音标记（1=静音）。前端「隐藏被静音的提示词」开关开启时据此过滤节点
                 node = {"id": nd.get("id") or "", "name": disp, "rel": rel,
-                        "depth": depth, "leaf": True, "children": []}
+                        "depth": depth, "leaf": True, "children": [],
+                        "mute": int(nd.get("mute") or 0)}
             else:
                 kids = build(nd.get("children") or [], depth + 1,
                              anc_names + [disp], parent_rawnames + [raw])

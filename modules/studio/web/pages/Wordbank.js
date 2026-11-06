@@ -773,8 +773,18 @@ export default {
       } catch (e) { /* ignore */ }
       return null;
     }
+    // 通用设置「隐藏被静音的提示词」：默认关闭；开启后卡片列表不展示 mute=1 的词条（数据仍在，关掉开关即回来）
+    function readCommonHideMuted() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || '{}');
+        return !!(raw && raw.common && raw.common.hideMuted === true);
+      } catch (e) { return false; }
+    }
+    const hideMuted = ref(readCommonHideMuted());
     function onGlobalPrefChanged(e) {
       const g = e && e.detail && e.detail.gallery;
+      const cm = e && e.detail && e.detail.common;
+      if (cm && typeof cm.hideMuted === 'boolean') hideMuted.value = cm.hideMuted;
       if (g) {
         if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
         if (typeof g.tagRound === 'boolean') tagRound.value = g.tagRound;
@@ -1372,7 +1382,8 @@ export default {
     };
 
     const chipLines = computed(() => {
-      const files = bankData.value[data.activeTab] || [];
+      // 小分类 chip 同样遵循「隐藏被静音的提示词」：静音词条不参与 chip 生成，避免出现点进去空空的分组
+      const files = (bankData.value[data.activeTab] || []).filter(f => !(hideMuted.value && f.mute));
       const sel = data.selections[data.activeTab] || [];
       const lines = [];
       // 循环上限 = 词条最大层级 与 选中链深度+2 取大：选中 depth d 的空分类时需渲染 d+1 层，提供「＋」/「全部」以继续创建子分类
@@ -1452,6 +1463,8 @@ export default {
       const cur = DEFAULT_TAB_SORT;
       const mul = cur.dir === 'desc' ? -1 : 1;
       const result = files.filter(f => {
+        // 通用设置开启时隐藏已静音词条（仅影响列表展示，不影响词库数据与手动编辑）
+        if (hideMuted.value && f.mute) return false;
         for (let i = 0; i < maxDepth.value; i++) {
           const picks = sel[i];
           if (!Array.isArray(picks) || !picks.length) continue;

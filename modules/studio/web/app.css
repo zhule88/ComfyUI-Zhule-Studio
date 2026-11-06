@@ -1,5 +1,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
+  /* 卡片图片左上竖排操作图标按钮边长（设置页「图片上的图标大小」写入，默认中=26px） */
+  --zh-act-size: 26px;
   --bg: #1a1d23; --bg-2: #22262e; --card: #282c34; --card-hover: #2f3540;
   --card-sel: #16233a; --border: #303a4a; --border-2: #242b38;
   --primary: #4f8ff7; --primary-dim: #2a4a7a;
@@ -186,20 +188,25 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 1px 6px; border-radius: 9px; background: rgba(0,0,0,0.55);
   border: 1px solid rgba(255,255,255,0.18); color: #e6edf7;
   font-size: 10px; font-weight: 600; line-height: 1.5; pointer-events: none; }
-.card-thumb-wrap .thumb-enter { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;
-  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: 15px;
+.card-thumb-wrap .thumb-enter { position: absolute; top: 6px; right: 6px;
+  width: var(--zh-act-size, 26px); height: var(--zh-act-size, 26px);
+  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: calc(var(--zh-act-size, 26px) * 0.58);
   cursor: pointer; border: 1px solid rgba(255,255,255,0.15); z-index: 5;
   transition: all 0.12s; display: flex; align-items: center; justify-content: center;
   opacity: 0; }
 .card-thumb-wrap .thumb-enter:hover { background: var(--primary); color: #fff; }
-.card-thumb-wrap .thumb-zoom { position: absolute; top: 38px; right: 6px; width: 26px; height: 26px;
-  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: 13px;
+.card-thumb-wrap .thumb-zoom { position: absolute; right: 6px;
+  top: calc(var(--zh-act-size, 26px) + 12px);
+  width: var(--zh-act-size, 26px); height: var(--zh-act-size, 26px);
+  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: calc(var(--zh-act-size, 26px) * 0.5);
   cursor: pointer; border: 1px solid rgba(255,255,255,0.15); z-index: 5;
   transition: all 0.12s; display: flex; align-items: center; justify-content: center;
   opacity: 0; }
 .card-thumb-wrap .thumb-zoom:hover { background: var(--primary); color: #fff; }
-.card-thumb-wrap .thumb-del { position: absolute; top: 70px; right: 6px; width: 26px; height: 26px;
-  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: 13px;
+.card-thumb-wrap .thumb-del { position: absolute; right: 6px;
+  top: calc(var(--zh-act-size, 26px) * 2 + 18px);
+  width: var(--zh-act-size, 26px); height: var(--zh-act-size, 26px);
+  border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: calc(var(--zh-act-size, 26px) * 0.5);
   cursor: pointer; border: 1px solid rgba(255,255,255,0.15); z-index: 5;
   transition: all 0.12s; display: flex; align-items: center; justify-content: center;
   opacity: 0; }
@@ -246,14 +253,15 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 /* 触屏无 hover：操作常显，避免点不到 */
 @media (hover: none) { .card-actions { opacity: 1; } }
 .card-act {
-  width: 26px; height: 26px; padding: 0; border-radius: 8px;
+  width: var(--zh-act-size, 26px); height: var(--zh-act-size, 26px); padding: 0;
+  border-radius: calc(var(--zh-act-size, 26px) * 0.3);
   display: flex; align-items: center; justify-content: center;
   background: rgba(12, 16, 22, 0.62); color: #cfd7e3;
   border: 1px solid rgba(255,255,255,0.14);
   backdrop-filter: blur(6px);
   cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.card-act svg { width: 14px; height: 14px; display: block; }
+.card-act svg { width: calc(var(--zh-act-size, 26px) * 0.54); height: calc(var(--zh-act-size, 26px) * 0.54); display: block; }
 .card-act:hover { background: rgba(30, 40, 55, 0.92); color: #fff; }
 .card-act.act-mute:hover { background: rgba(230, 160, 60, 0.9); border-color: #f0b429; color: #1a1200; }
 .card-act.act-mute.on { background: rgba(230, 160, 60, 0.92); border-color: #f0b429; color: #1a1200; }
@@ -741,11 +749,11 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: rgba(167, 139, 250, 0.9); color: #fff; font-size: 10px; font-weight: 700;
   max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   pointer-events: none; transition: transform 0.15s; }
-.zhg-card:hover .zhg-cat-badge { transform: translateX(32px); }
+.zhg-card:hover .zhg-cat-badge { transform: none; }
 
-/* 左侧竖排操作区（与词库 .card-actions 同款）：选择 / 放大 / 删除
-   悬停显现，竖排在图片左上，不占用名字横向空间 */
-.zhg-card-actions { position: absolute; left: 6px; top: 6px; z-index: 7;
+/* 图库卡片右侧竖排操作区：选择 / 放大 / 删除
+   悬停显现，竖排在图片右上，避开左上的分类/工作流角标，也不占用名字横向空间 */
+.zhg-card-actions { position: absolute; right: 6px; top: 6px; z-index: 7;
   display: flex; flex-direction: column; gap: 5px;
   opacity: 0; transition: opacity 0.15s; }
 .zhg-card:hover .zhg-card-actions { opacity: 1; }
@@ -753,15 +761,16 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-card-actions .zhg-sel-toggle,
 .zhg-card-actions .zhg-zoom-btn,
 .zhg-card-actions .zhg-del-btn {
-  position: static; width: 26px; height: 26px; padding: 0; border-radius: 8px;
+  position: static; width: var(--zh-act-size, 26px); height: var(--zh-act-size, 26px); padding: 0;
+  border-radius: calc(var(--zh-act-size, 26px) * 0.3);
   display: flex; align-items: center; justify-content: center;
   background: rgba(12, 16, 22, 0.62); color: #cfd7e3;
   border: 1px solid rgba(255,255,255,0.14); backdrop-filter: blur(6px);
-  cursor: pointer; opacity: 1; font-size: 15px;
+  cursor: pointer; opacity: 1; font-size: calc(var(--zh-act-size, 26px) * 0.58);
   transition: background 0.12s, color 0.12s, border-color 0.12s; }
 .zhg-card-actions .zhg-sel-toggle svg,
 .zhg-card-actions .zhg-zoom-btn svg,
-.zhg-card-actions .zhg-del-btn svg { width: 14px; height: 14px; display: block; }
+.zhg-card-actions .zhg-del-btn svg { width: calc(var(--zh-act-size, 26px) * 0.54); height: calc(var(--zh-act-size, 26px) * 0.54); display: block; }
 .zhg-card-actions .zhg-sel-toggle:hover,
 .zhg-card-actions .zhg-zoom-btn:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
 .zhg-card-actions .zhg-sel-toggle.on { background: var(--primary); color: #fff; border-color: var(--primary);

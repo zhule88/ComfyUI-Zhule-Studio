@@ -1,4 +1,4 @@
-import { createApp, ref, computed } from 'vue';
+import { createApp, ref, computed, watch } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 import Wordbank from './pages/Wordbank.js';
 import Gallery from './pages/Gallery.js';
@@ -28,10 +28,22 @@ const DEFAULT_PREF = {
     } },
   wordbank: { autoSelectParent: true },
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
+  // iconSize：图库/词库卡片「图片左上竖排图标」的尺寸（按钮边长 px），写入 :root 的 --zh-act-size 供 CSS 取用
+  // hideMuted：默认关闭；开启后被静音（mute=1）的提示词在词库卡片与标签编辑面板中隐藏不展示
   // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
-  common: { noDeleteConfirm: false, collapsedGroups: {} },
+  common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
+// 卡片图标尺寸档位：图片左上竖排操作图标（选择/放大/删除/静音/编辑/上传）的按钮边长（px），
+// 统一写入 :root 的 --zh-act-size，CSS 按 0.54 比例换算内部 SVG 大小；档位外的手工值按 MIN/MAX 夹取
+const ICON_SIZES = [
+  { size: 22, label: '小' },
+  { size: 26, label: '中' },
+  { size: 32, label: '大' },
+  { size: 38, label: '特大' },
+];
+const ICON_SIZE_MIN = 18;
+const ICON_SIZE_MAX = 48;
 // 标签颜色分区（方案E复杂模式）：四个区域独立配置
 const TAG_COLOR_AREAS = [
   { key: 'detail', label: '图片详情' },
@@ -83,10 +95,17 @@ function loadPref() {
     const raw = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
     const g = Object.assign({}, DEFAULT_PREF.gallery, (raw && raw.gallery) || {});
     g.tagColor = normalizeTagColor(raw && raw.gallery && raw.gallery.tagColor);
+    const c = Object.assign({}, DEFAULT_PREF.common, (raw && raw.common) || {});
+    // 图标尺寸兜底：旧存档无该字段或数值非法时回落默认 26px，越界按 MIN/MAX 夹取
+    const sz = Number(c.iconSize);
+    c.iconSize = Number.isFinite(sz) && sz > 0
+      ? Math.min(ICON_SIZE_MAX, Math.max(ICON_SIZE_MIN, Math.round(sz)))
+      : DEFAULT_PREF.common.iconSize;
+    c.hideMuted = c.hideMuted === true;
     return {
       gallery: g,
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
-      common: Object.assign({}, DEFAULT_PREF.common, (raw && raw.common) || {}),
+      common: c,
     };
   } catch (e) {
     return JSON.parse(JSON.stringify(DEFAULT_PREF));
@@ -132,6 +151,24 @@ const App = {
       pref.value.common.noDeleteConfirm = pref.value.common.noDeleteConfirm === false;
       savePref();
     }
+    // 图片上的图标大小：写 :root 的 --zh-act-size，图库/词库卡片操作图标即时跟随（无需刷新页面）
+    function applyIconSize(px) {
+      const raw = Number(px);
+      const n = Math.min(ICON_SIZE_MAX, Math.max(ICON_SIZE_MIN,
+        Math.round(Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PREF.common.iconSize)));
+      document.documentElement.style.setProperty('--zh-act-size', n + 'px');
+      return n;
+    }
+    function setIconSize(px) {
+      pref.value.common.iconSize = applyIconSize(px);
+      savePref();
+    }
+    // 静音提示词隐藏：开启后词库卡片列表与标签编辑面板都不再展示 mute=1 的词条
+    function toggleHideMuted() {
+      pref.value.common.hideMuted = pref.value.common.hideMuted !== true;
+      savePref();
+    }
+    watch(() => pref.value.common.iconSize, (v) => applyIconSize(v), { immediate: true });
     function setTagSeed(seed) {
       pref.value.gallery.tagSeed = (seed || '').trim();
       savePref();
@@ -302,8 +339,8 @@ const App = {
           wordbankCleaningCn.value = false;
         });
     }
-    return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, toggleField, setTimeFmt, setTagTheme, setTagRound,
-      toggleNoDeleteConfirm, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+    return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
+      toggleNoDeleteConfirm, setIconSize, toggleHideMuted, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
@@ -362,8 +399,29 @@ const App = {
               <div class="settings-group-body" v-show="!isCollapsed('common')">
                 <div class="settings-row">
                   <span class="settings-label">删除时弹出确认框</span>
-                  <button class="settings-text-toggle" :class="{ on: pref.common.noDeleteConfirm !== true }" @click="toggleNoDeleteConfirm">{{ pref.common.noDeleteConfirm !== true ? '开启' : '关闭' }}</button>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="pref.common.noDeleteConfirm !== true" @change="toggleNoDeleteConfirm">
+                    <span class="settings-switch-slider"></span>
+                  </label>
                 </div>
+                <div class="settings-row">
+                  <span class="settings-label">图片上的图标大小</span>
+                  <div class="settings-seg">
+                    <button v-for="opt in ICON_SIZES" :key="opt.size"
+                            class="settings-seg-btn"
+                            :class="{ on: pref.common.iconSize === opt.size }"
+                            @click="setIconSize(opt.size)">{{ opt.label }}</button>
+                  </div>
+                </div>
+                <div class="settings-hint">调节卡片图片上操作图标（图库：右上竖排选择 / 放大 / 删除；词库：左上竖排选择 / 放大 / 静音 / 删除 / 编辑 / 上传；右上圆钮：进入详情 / 放大预览 / 删除参考图）的大小，档位点选后即时生效。</div>
+                <div class="settings-row">
+                  <span class="settings-label">隐藏被静音的提示词</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="pref.common.hideMuted === true" @change="toggleHideMuted">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">开启后，已静音（Mute）的提示词在词库卡片列表和标签编辑面板里都不再展示；关闭则照常显示（仍不参与自动选词）。</div>
                 <div class="settings-subgroup-title"><span>标签</span></div>
                 <div class="settings-row">
                   <span class="settings-label">主题</span>
