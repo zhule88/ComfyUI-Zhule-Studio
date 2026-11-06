@@ -86,14 +86,15 @@ def raw_name(node):
 def fetch_tree():
     """全树：顶层 tab（parent_id NULL）按 sort_order/名称排序。
 
-    返回 [{id, type, name, en?, cn?, sortOrder?, updatedAt?, children?}]，
-    id 为 DB 自增 id（str）；updatedAt 为 updated_at 时间戳（卡片按时间排序用）。
+    返回 [{id, type, name, en?, cn?, mute?, sortOrder?, updatedAt?, children?}]，
+    id 为 DB 自增 id（str）；updatedAt 为 updated_at 时间戳（卡片按时间排序用）；
+    mute 仅 entry 节点携带（1=静音（mute）：自动选词跳过，仅手动点选可用）。
     """
     with _lock:
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, sort_order, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, sort_order, mute, updated_at "
                 "FROM {0} WHERE isdel=0 ORDER BY id".format(TABLE)
             ).fetchall()
         finally:
@@ -109,6 +110,7 @@ def fetch_tree():
             if r["type"] == "entry":
                 node["en"] = r["en"] or ""
                 node["cn"] = r["cn"] or ""
+                node["mute"] = r["mute"] or 0
             if r["sort_order"]:
                 node["sortOrder"] = r["sort_order"]
             node["updatedAt"] = r["updated_at"] or 0
@@ -158,7 +160,7 @@ def node_by_raw_path(raw_path):
 
 
 def node_by_id(node_id):
-    """按 DB id 查询未删除节点。返回 dict {id, parent_id, type, name, en, cn, sortOrder, updatedAt}，不存在返回 None。"""
+    """按 DB id 查询未删除节点。返回 dict {id, parent_id, type, name, en, cn, mute, sortOrder, updatedAt}，不存在返回 None。"""
     try:
         node_id = int(node_id)
     except (TypeError, ValueError):
@@ -167,7 +169,7 @@ def node_by_id(node_id):
         conn = connect()
         try:
             r = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, sort_order, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, sort_order, mute, updated_at "
                 "FROM {0} WHERE id=? AND isdel=0".format(TABLE),
                 (node_id,),
             ).fetchone()
@@ -180,6 +182,7 @@ def node_by_id(node_id):
                 "name": r["name"] or "",
                 "en": r["en"] or "",
                 "cn": r["cn"] or "",
+                "mute": r["mute"] or 0,
                 "sortOrder": r["sort_order"],
                 "updatedAt": r["updated_at"] or 0,
             }
@@ -277,6 +280,35 @@ def update_node(node_id, name=None, en=None, cn=None):
                 "UPDATE {0} SET {1} WHERE id=?".format(TABLE, ", ".join(sets)), vals
             )
             conn.commit()
+            _bump()
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+
+
+def set_mute(node_id, mute):
+    """设置词条静音（mute）标记（1=静音 / 0=取消静音），返回是否成功。
+
+    静音（mute）语义：遍历、随机等「自动选词」流程跳过该词条；用户手动点选卡片不受影响。
+    与 isdel 硬删互不影响（isdel 走 delete_subtree，卡片不再返回）。
+    刻意不刷新 updated_at：静音不改变词条的编辑时间与卡片时间排序。
+    """
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET mute=? WHERE id=? AND isdel=0".format(TABLE),
+                (1 if mute else 0, node_id),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return False
             _bump()
             return True
         except sqlite3.Error:
@@ -563,6 +595,7 @@ def _ensure_prompt_schema(conn):
         "isdel INTEGER NOT NULL DEFAULT 0,"
         "neg TEXT NOT NULL DEFAULT '',"
         "override TEXT NOT NULL DEFAULT '',"
+        "mute INTEGER NOT NULL DEFAULT 0,"
         "created_at INTEGER NOT NULL,"
         "updated_at INTEGER NOT NULL"
         ")".format(TABLE)
@@ -577,6 +610,8 @@ def _ensure_prompt_schema(conn):
     _ensure_column(conn, TABLE, "isdel", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, TABLE, "neg", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, TABLE, "override", "TEXT NOT NULL DEFAULT ''")
+    # 静音（mute）列：1 = 遍历/随机等自动选词流程跳过该词条（仅手动点选可用），与 isdel 硬删互不影响
+    _ensure_column(conn, TABLE, "mute", "INTEGER NOT NULL DEFAULT 0")
     # 依赖新列的索引必须放在补列之后，否则旧库会报 no such column
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_{0}_type_del ON {0}(type, isdel)".format(TABLE)

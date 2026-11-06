@@ -86,6 +86,7 @@ export default {
                  class="card image" :data-rel="file.relPath"
                  :class="{
                    selected: isFileSelected(file),
+                   muted: !!file.mute,
                    'zhule-source': drag.active && drag.sourceType === 'card' && drag.sourceRelPath === file.relPath,
                    'drop-target': drag.hoverCardRelPath === file.relPath
                  }"
@@ -101,9 +102,6 @@ export default {
                        :src="defaultImageUrl"
                        alt="">
                 </div>
-                <div class="thumb-count" v-if="file.images && file.images.length">
-                  {{ getImgIdx(file) + 1 }}/{{ file.images.length }}
-                </div>
                 <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
                 <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
                 <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="file.images && file.images.length">🗑</div>
@@ -112,12 +110,52 @@ export default {
                   <button class="dice" @click.stop="randomImage(file)">🎲</button>
                   <button @click.stop="nextImage(file)">›</button>
                 </div>
-              </div>
-              <div class="card-name-row">
-                <span class="card-name">{{ file.name }}</span>
-                <button class="card-img-btn" data-tip="上传参考图（优先展示）" @pointerdown.stop @click.stop="openUploadRef(file)">🖼</button>
-                <button class="card-edit" data-tip="编辑" @pointerdown.stop @click.stop="openEdit(file)">⚙</button>
-                <button class="card-del-btn" data-tip="删除词条" @pointerdown.stop @click.stop="askDeleteWord(file)">✕</button>
+                <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
+                <div class="card-actions">
+                  <button class="card-act act-mute" :class="{on: !!file.mute}"
+                          :data-tip="file.mute ? '已静音（Mute）：自动选词跳过它，手动点选仍可用（点击恢复）' : '静音（Mute）：不参与随机与遍历等自动选词，仅手动点选时可用'"
+                          @pointerdown.stop @click.stop="toggleMute(file)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 3l18 18"/>
+                      <path d="M10.6 5.2A10.6 10.6 0 0 1 12 5c5 0 9 4.4 9 7 0 .9-.8 2.3-2.2 3.6"/>
+                      <path d="M6.2 6.9C3.9 8.4 3 10.3 3 12c0 2.6 4 7 9 7 1.6 0 3-.5 4.2-1.2"/>
+                      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                    </svg>
+                  </button>
+                  <button class="card-act act-del" data-tip="删除词条"
+                          @pointerdown.stop @click.stop="askDeleteWord(file)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 7h16"/>
+                      <path d="M9.5 7V4.8h5V7"/>
+                      <path d="M6.5 7l.9 12.2h9.2L17.5 7"/>
+                      <path d="M10.4 10.6v5.8M13.6 10.6v5.8"/>
+                    </svg>
+                  </button>
+                  <button class="card-act act-edit" data-tip="编辑词条"
+                          @pointerdown.stop @click.stop="openEdit(file)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 20h4.2L19 9.2a1.6 1.6 0 0 0 0-2.3l-1.9-1.9a1.6 1.6 0 0 0-2.3 0L4 15.8V20z"/>
+                      <path d="M13.9 6.1l4 4"/>
+                    </svg>
+                  </button>
+                  <button class="card-act act-img" data-tip="上传参考图（优先展示）"
+                          @pointerdown.stop @click.stop="openUploadRef(file)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="4.5" width="18" height="15" rx="2.5"/>
+                      <path d="M12 15.6V9"/>
+                      <path d="M9.1 11.9L12 9l2.9 2.9"/>
+                    </svg>
+                  </button>
+                </div>
+                <!-- 底部压暗渐变 + 名字叠于图上 -->
+                <div class="card-caption">
+                  <span class="card-name" :data-tip="file.name">{{ file.name }}</span>
+                  <span class="thumb-count" v-if="file.images && file.images.length">{{ getImgIdx(file) + 1 }}/{{ file.images.length }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -850,6 +888,37 @@ export default {
         await load(true);
       } finally {
         addingCard.value = false;
+      }
+    };
+
+    // ============ 静音开关（mute） ============
+    // 语义：mute=1（静音）的词条在遍历模式、随机模式、单次随机等自动选词流程被跳过，
+    // 只有用户手动点选卡片时才参与。与删除（isdel）不同：卡片照常显示、参考图不动，
+    // 随时可一键恢复；已选区里已手选的标签也不受影响。
+    const muteBusy = ref(false);
+    const toggleMute = async (file) => {
+      if (!file || !file.id || muteBusy.value) return;
+      const target = !file.mute;
+      muteBusy.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/mute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: file.id, mute: target }),
+        });
+        const json = await resp.json();
+        if (json.error) {
+          showToast('设置失败：' + json.error, 'error');
+          return;
+        }
+        // 原地改：bankData 是 ref，深层对象为响应式代理，卡片样式立即刷新
+        file.mute = json.mute;
+        showToast((json.mute ? '已静音：' : '已取消静音：') + file.name
+          + (json.mute ? '（自动选词跳过它，手动点选仍可用）' : ''), 'success', 2600);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        muteBusy.value = false;
       }
     };
 
@@ -1868,6 +1937,8 @@ const submitAddTab = async () => {
 
     // 随机池语义：每个右键选中的 tab / chip 各为一个独立子池。
     // 随机/遍历时从每个子池各取 1 条再组合（如角色/神态/身材/姿势各抽一）。
+    // 静音（mute=1）：被标记的词条不进入任何自动选词流程——单次随机、随机模式、
+    // 遍历模式全部跳过；用户手动点选卡片时走 data.selected，不经过本函数，故不受影响。
     const poolCandidates = (item) => {
       const files = bankData.value[item.tab] || [];
       if (!files.length && tabs.value.includes(item.tab)) {
@@ -1876,12 +1947,16 @@ const submitAddTab = async () => {
         zhuleLog('poolCandidates: 懒加载补拉', item.kind, 'tab=', item.tab, 'path=', item.path || []);
         return null;
       }
-      if (item.kind === 'tab') { zhuleLog('poolCandidates: tab池候选', item.tab, 'count=', files.length); return files; }
+      const alive = files.filter(f => !f.mute);
+      if (alive.length !== files.length) {
+        zhuleLog('poolCandidates: 静音过滤', item.tab, '静音跳过=', files.length - alive.length, '可用=', alive.length);
+      }
+      if (item.kind === 'tab') { zhuleLog('poolCandidates: tab池候选', item.tab, 'count=', alive.length); return alive; }
       // chip 池候选 = 按节点 DB id 递归收集：该 chip 下所有后代卡片（chipIds 祖先链含本 id 的叶子）即为候选，
       // 与路径/前后缀匹配完全无关；词条改名、移动、换父级后 id 不变，候选恒稳定。
       const id = item.chipId;
       if (!id) { zhuleLog('poolCandidates: chip池缺chipId（旧存档未迁移，请重新右键加入随机池）', 'tab=', item.tab, 'path=', item.path || []); return []; }
-      const out = files.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(id));
+      const out = alive.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(id));
       zhuleLog('poolCandidates: chip池', 'tab=', item.tab, 'chipId=', id, 'count=', out.length, 'total=', files.length, 'sampleChipIds=', files.slice(0, 3).map(f => f.chipIds));
       return out;
     };
@@ -1995,15 +2070,17 @@ const submitAddTab = async () => {
       }
       // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
       normalizePoolIds();
-      // 补拉完仍为空 = 该 tab 真的没有词条
-      const ready = data.randomPools.every(it => (bankData.value[it.tab] || []).length > 0);
-      zhuleLog('ensurePoolData: ready=', ready, '各池词条数=', data.randomPools.map(p => p.tab + ':' + (bankData.value[p.tab] || []).length));
+      // 补拉完仍为空 = 该 tab 真的没有词条；有词条但全被静音同样视为不可用（自动选词取不到）
+      const alive = (it) => (bankData.value[it.tab] || []).filter(f => !f.mute);
+      const ready = data.randomPools.every(it => alive(it).length > 0);
+      zhuleLog('ensurePoolData: ready=', ready,
+        '各池可用词条数=', data.randomPools.map(p => p.tab + ':' + alive(p).length + '/' + (bankData.value[p.tab] || []).length));
       return ready;
     };
 
     const singleRandom = async () => {
       const ready = await ensurePoolData();
-      if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条），请检查随机池', 'warn');
+      if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条，或词条已全部静音），请检查随机池', 'warn');
       const picked = pickFromEachPool();
       if (!picked) return showToast('随机池为空或含空分类，右键 tab 或 chip 加入随机池', 'warn');
       updateRandomResults(picked);
@@ -2120,7 +2197,7 @@ const submitAddTab = async () => {
       if (data.randomMode || data.traverseMode) {
         if (!data.randomPools.length) return showToast('随机池为空，右键 tab 或 chip 加入随机池', 'warn');
         const ready = await ensurePoolData();
-        if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条），请检查随机池', 'warn');
+        if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条，或词条已全部静音），请检查随机池', 'warn');
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
         let combos;
@@ -2131,7 +2208,7 @@ const submitAddTab = async () => {
           const rndCount = count || 1;
           for (let i = 0; i < rndCount; i++) {
             const picked = pickFromEachPool();
-            if (!picked) return showToast('随机池含空分类或数据未加载，请检查随机池', 'warn');
+            if (!picked) return showToast('随机池含空分类、词条已全部静音，或数据未加载，请检查随机池', 'warn');
             combos.push(arrangeBySelection(picked));
           }
         } else {
@@ -2399,7 +2476,7 @@ const submitAddTab = async () => {
 
     const onCardPointerDown = (e, file) => {
       if (e.button !== 0) return;
-      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-edit') || e.target.closest('.card-del-btn')) return;
+      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-act') || e.target.closest('.thumb-enter') || e.target.closest('.thumb-del')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
@@ -2642,7 +2719,7 @@ const submitAddTab = async () => {
     return {
       loaded, tabLoading, error, tabs, data, pref, drag, load,
       editTarget, editName, editContent, editContentCn, editIsTxt, editing,
-      openEdit, cancelEdit, submitEdit,
+      openEdit, cancelEdit, submitEdit, toggleMute,
       del, askDeleteWord, askDeleteRef,
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,

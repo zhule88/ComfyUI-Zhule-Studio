@@ -159,11 +159,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .main::-webkit-scrollbar-thumb { background: #2f3540; border-radius: 4px; }
 .grid { display: grid; gap: 10px; align-content: start; }
 
-/* 卡片 */
-.card { background: var(--card); border: 2px solid transparent; border-radius: 8px;
-  cursor: pointer; position: relative; transition: all 0.12s;
+/* 卡片：图片主导（作品集式），名字叠在图片底部，操作按钮左侧竖排 */
+.card { background: var(--card); border: 2px solid transparent; border-radius: 10px;
+  cursor: pointer; position: relative; transition: border-color 0.14s, background 0.14s, box-shadow 0.18s;
   display: flex; flex-direction: column; overflow: hidden; user-select: none; }
-.card:hover { background: var(--card-hover); border-color: var(--border); }
+.card:hover { background: var(--card-hover); border-color: var(--border);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
 .card-add { display: flex; align-items: center; justify-content: center;
   font-size: 34px; font-weight: 300; line-height: 1; color: var(--text-3);
   background: transparent; border: 2px dashed var(--border-2); border-radius: 8px;
@@ -176,10 +177,15 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: #0b0e13; overflow: hidden; }
 /* 图片与占位底板绝对铺满容器（容器高度由 padding-top 撑起，不依赖 aspect-ratio 兼容性），
    避免图标作为流内元素占位挤占图片空间 */
-.card-thumb, .card-thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.thumb-count { position: absolute; top: 6px; left: 6px;
-  padding: 2px 7px; border-radius: 10px; background: rgba(0,0,0,0.65); color: #fff;
-  font-size: 11px; font-weight: 600; z-index: 4; pointer-events: none; }
+.card-thumb, .card-thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  transition: transform 0.4s ease; }
+/* 悬停轻微推近，强化「图片是主角」的作品集手感 */
+.card.image:hover .card-thumb { transform: scale(1.045); }
+/* 缩略图序号：并入底部说明条，作为名字右侧的小徽标 */
+.thumb-count { flex-shrink: 0;
+  padding: 1px 6px; border-radius: 9px; background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.18); color: #e6edf7;
+  font-size: 10px; font-weight: 600; line-height: 1.5; pointer-events: none; }
 .card-thumb-wrap .thumb-enter { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;
   border-radius: 50%; background: rgba(0,0,0,0.6); color: #cfd7e3; font-size: 15px;
   cursor: pointer; border: 1px solid rgba(255,255,255,0.15); z-index: 5;
@@ -199,9 +205,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   opacity: 0; }
 .card-thumb-wrap .thumb-del:hover { background: rgba(214,69,69,0.9); color: #fff; }
 .card-thumb-wrap:hover .thumb-enter, .card-thumb-wrap:hover .thumb-zoom, .card-thumb-wrap:hover .thumb-del { opacity: 1; }
-.thumb-nav { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+.thumb-nav { position: absolute; bottom: 42px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 14px;
-  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 4;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 6;
   opacity: 0; transition: opacity 0.15s; }
 .card.image:hover .thumb-nav { opacity: 1; }
 .thumb-nav button { width: 22px; height: 22px; padding: 0; border: none;
@@ -209,46 +215,66 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .thumb-nav button:hover { background: rgba(255,255,255,0.15); color: #fff; }
 
-/* 名字行 + 齿轮 */
-.card-name-row {
-  display: flex; align-items: center; gap: 6px;
-  padding: 8px 8px 8px 10px;
-  background: rgba(0,0,0,0.2);
-  border-top: 1px solid rgba(255,255,255,0.05);
+/* 底部压暗渐变 + 名字：名字叠在图上，独占整行宽度，不再被图标挤到省略 */
+.card-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+  display: flex; align-items: flex-end; gap: 6px;
+  padding: 26px 9px 8px;
+  background: linear-gradient(to top,
+    rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.72) 32%, rgba(0,0,0,0.32) 68%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
 }
 .card-name {
   flex: 1; min-width: 0;
-  font-size: 12px; color: var(--text); font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12.5px; font-weight: 600; color: #fff; line-height: 1.3;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.9);
+  white-space: normal; overflow: hidden; word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  /* 仅名字恢复指针事件，便于悬停看完整名（点击仍冒泡到卡片，不打断选中/拖拽） */
+  pointer-events: auto;
 }
-.card-edit {
-  width: 22px; height: 22px; border-radius: 4px;
-  background: transparent; color: var(--text-3);
-  border: 1px solid transparent; cursor: pointer;
-  font-size: 12px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; transition: all 0.12s;
-  padding: 0;
+
+/* 左侧竖排操作区：静音 / 删除 / 编辑 / 上传参考图
+   悬停显现，位于图片左上，竖排不占用名字横向空间 */
+.card-actions {
+  position: absolute; left: 6px; top: 6px; z-index: 7;
+  display: flex; flex-direction: column; gap: 5px;
+  opacity: 0; transition: opacity 0.15s;
 }
-.card-edit:hover { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
-/* 词条上传参考图按钮（齿轮旁） */
-.card-img-btn {
-  width: 22px; height: 22px; border-radius: 4px;
-  background: transparent; color: var(--text-3);
-  border: 1px solid transparent; cursor: pointer;
-  font-size: 12px; line-height: 1;
+.card.image:hover .card-actions,
+.card.muted .card-actions { opacity: 1; }
+/* 触屏无 hover：操作常显，避免点不到 */
+@media (hover: none) { .card-actions { opacity: 1; } }
+.card-act {
+  width: 26px; height: 26px; padding: 0; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; transition: all 0.12s; padding: 0;
+  background: rgba(12, 16, 22, 0.62); color: #cfd7e3;
+  border: 1px solid rgba(255,255,255,0.14);
+  backdrop-filter: blur(6px);
+  cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.card-img-btn:hover { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
-/* 词条删除红叉（齿轮旁） */
-.card-del-btn { width: 22px; height: 22px; border-radius: 4px;
-  background: transparent; color: var(--text-3);
-  border: 1px solid transparent; cursor: pointer;
-  font-size: 12px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; transition: all 0.12s; padding: 0; }
-.card-del-btn:hover { background: rgba(229, 72, 77, 0.18); color: #ff6b6b; border-color: #e5484d; }
+.card-act svg { width: 14px; height: 14px; display: block; }
+.card-act:hover { background: rgba(30, 40, 55, 0.92); color: #fff; }
+.card-act.act-mute:hover { background: rgba(230, 160, 60, 0.9); border-color: #f0b429; color: #1a1200; }
+.card-act.act-mute.on { background: rgba(230, 160, 60, 0.92); border-color: #f0b429; color: #1a1200; }
+.card-act.act-del:hover { background: rgba(214, 69, 69, 0.92); border-color: #e5484d; color: #fff; }
+.card-act.act-edit:hover { background: var(--primary); border-color: var(--primary); color: #fff; }
+.card-act.act-img:hover { background: rgba(48, 164, 108, 0.92); border-color: #30a46c; color: #fff; }
+
+/* 旧版「名字行 + 右侧齿轮/叉」样式已废弃：名字改为叠在图片底部（.card-caption），
+   操作按钮改为图片左上竖排（.card-actions）。保留此处注释便于回溯。 */
+/* 已静音卡片：整体降饱和 + 缩略图盖角标，一眼可辨「自动选词不会用它」 */
+.card.muted:not(.selected) { border-color: rgba(217, 154, 43, 0.45); }
+.card.muted .card-thumb { filter: saturate(0.45) brightness(0.7); }
+.card.muted .card-name { color: #e3d8bd; text-decoration: line-through; text-decoration-color: rgba(240, 180, 41, 0.8); }
+.card.muted .card-thumb-wrap::after {
+  content: '🔇 静音';
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  padding: 3px 9px; border-radius: 10px;
+  background: rgba(0,0,0,0.62); border: 1px solid rgba(240, 180, 41, 0.7);
+  color: #f0b429; font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  z-index: 6; pointer-events: none; white-space: nowrap;
+}
 
 .empty { grid-column: 1 / -1; text-align: center; color: var(--text-3); padding: 40px; font-size: 13px; }
 
