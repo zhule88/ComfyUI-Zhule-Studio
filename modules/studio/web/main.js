@@ -7,6 +7,8 @@ import GalleryTopDown from './pages/GalleryTopDown.js';
 const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
   gallery: { showName: true, showTime: true, showModel: true, showTags: true, timeFmt: 'yyyy-MM-dd HH:mm',
+    // 详情界面标签右侧的关联图数角标（提示词标签 / 自定义标签通用），默认开启，可在设置里关掉
+    showTagCount: true,
     tagTheme: 'light', tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
@@ -414,6 +416,22 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
+                </div>
+              </div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-detail-tags') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-detail-tags')">
+                  <span>图库详情标签</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-detail-tags')">
+                <div class="settings-row">
+                  <span class="settings-label">标签关联图数角标</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="pref.gallery.showTagCount !== false" @change="toggleField('showTagCount')">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">开启后，图片详情里的提示词标签与自定义标签右侧显示「关联图数量」（该标签一共挂了多少张图）；关闭则只显示标签名。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-filters') }">

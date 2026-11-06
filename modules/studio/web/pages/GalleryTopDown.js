@@ -190,7 +190,7 @@ export default {
                         @click.stop="addDetailTagToFilter(t)"
                         @contextmenu.prevent="editDetailTag(t)"
                         :data-tip="'提示词标签（运行时注入，只读）左键放入筛选区并启用，右键编辑词条'">
-                    {{ t.name }}
+                    {{ t.name }}<span class="zhg-tag-count" v-if="showTagCount">{{ tagCount(t) }}</span>
                   </span>
                   <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
                   <span class="zhg-tag hl-custom" :class="[tagThemeClass]"
@@ -198,7 +198,7 @@ export default {
                         :data-tip="'自定义标签，左键编辑词条，右键删除'"
                         v-for="t in customFlatTags" :key="'dtc' + tagKey(t)"
                         @click.stop="editDetailTag(t)" @contextmenu.prevent="askDeleteTag(t)">
-                    {{ t.display }}
+                    {{ t.display }}<span class="zhg-tag-count" v-if="showTagCount">{{ tagCount(t) }}</span>
                   </span>
                   <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
                 </div>

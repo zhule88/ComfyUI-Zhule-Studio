@@ -1450,16 +1450,27 @@ async def get_gallery_detail(request):
     if rec is None:
         return web.json_response({"error": "文件不存在"}, status=404)
     # 词条标签（prompt 类）在前、自定义标签（custom 类）在后；名字均取 DB 当前值
+    # 关联图数（count）：一次统计 gallery_tag 全量，按标签 id 命中；
+    # 前端「标签关联数角标」开关关闭时不渲染，后端仍返回，切开关无需重新请求。
+    _counts = db.gallery_tag_counts()
     tags = []
     for n in rec.get("tags") or []:
-        tags.append({"id": rec.get("tagIds", {}).get(n) or "", "name": n,
-                     "prompt": True, "custom": False,
+        _pid = rec.get("tagIds", {}).get(n) or ""
+        _cnt = 0
+        if str(_pid).strip().isdigit():
+            _cnt = _counts["prompt"].get(int(_pid), 0)
+        tags.append({"id": _pid, "name": n,
+                     "prompt": True, "custom": False, "count": _cnt,
                      "cn": _tag_cn(n), "en": _tag_en(n)})
     for full in rec.get("customTags") or []:
         # 展示层只需叶子名（完整路径供删除/筛选兜底；有 id 时前端优先用 id）
         leaf = (re.split(r"[/\\:\-]", full)[-1] or full).strip()
-        tags.append({"id": rec.get("customIds", {}).get(full) or "", "name": leaf,
-                     "prompt": False, "custom": True, "path": full,
+        _cid = rec.get("customIds", {}).get(full) or ""
+        _ccnt = 0
+        if str(_cid).strip().isdigit():
+            _ccnt = _counts["custom"].get(int(_cid), 0)
+        tags.append({"id": _cid, "name": leaf,
+                     "prompt": False, "custom": True, "path": full, "count": _ccnt,
                      "cn": _tag_cn(leaf), "en": _tag_en(leaf)})
     pt = rec.get("prompt") or ""
     data = {

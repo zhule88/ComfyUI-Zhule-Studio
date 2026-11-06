@@ -1584,6 +1584,38 @@ def gallery_query_tag_gids(prompt_groups=None, custom_ids=None, mode="and"):
     return out
 
 
+def gallery_tag_counts():
+    """统计每个标签关联的图片数（详情页标签右侧角标用）。
+
+    返回 {"prompt": {prompt_id(int): 图数}, "custom": {custom_id(int): 图数}}。
+    计数按 gallery_tag 行去重 gallery_id，同一张图同一标签只算一次。
+    自定义标签只算叶子自身的挂接（图片只挂叶子），父级不汇总子级。
+    读取失败返回空映射（调用方按 0 处理，不影响详情展示）。
+    """
+    out = {"prompt": {}, "custom": {}}
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_gallery_schema(conn)
+            prow = conn.execute(
+                "SELECT prompt_id AS id, COUNT(DISTINCT gallery_id) AS n FROM {0} "
+                "WHERE prompt_id IS NOT NULL GROUP BY prompt_id".format(GAL_TAG_TABLE)
+            ).fetchall()
+            crow = conn.execute(
+                "SELECT custom_id AS id, COUNT(DISTINCT gallery_id) AS n FROM {0} "
+                "WHERE custom_id IS NOT NULL GROUP BY custom_id".format(GAL_TAG_TABLE)
+            ).fetchall()
+        except Exception:
+            return out
+        finally:
+            conn.close()
+    for r in prow:
+        out["prompt"][int(r["id"])] = int(r["n"] or 0)
+    for r in crow:
+        out["custom"][int(r["id"])] = int(r["n"] or 0)
+    return out
+
+
 def gallery_save_records(records):
     """全量写回图库：替换 gallery_image / gallery_tag 两表（单事务）。
 

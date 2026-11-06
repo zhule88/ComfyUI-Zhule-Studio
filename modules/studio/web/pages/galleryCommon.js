@@ -148,7 +148,7 @@ const OutNode = {
       <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node), off: !isActive(node), leaf: !hasKids() }]" :style="chipStyle()"
             :data-tip="(isActive(node) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
-        {{ leafName(node.name) }}<span v-if="hasKids()" class="zhg-out-arrow">▸</span>
+        {{ leafName(node.name) }}
       </span>
       <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
         <out-node v-for="c in kids()" :key="c.rel || c.name" :node="c" :depth="depth + 1"
@@ -212,6 +212,8 @@ const DEFAULT_PREF = {
     showTime: true,
     showModel: true,
     showTags: true,
+    // 详情界面标签右侧的关联图数角标（提示词标签 / 自定义标签通用），默认开启
+    showTagCount: true,
     showModelFilter: true,
     showLoraFilter: true,
     timeFmt: 'yyyy-MM-dd HH:mm',
@@ -978,6 +980,13 @@ export function useGalleryCommon(opts = {}) {
   function tagStyle(t) {
     const c = tagColorMap.value[t.name] || colorFor('detail', t.name) || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
     return c ? { '--tag-bg': c } : null;
+  }
+  // 详情标签右侧「关联图数量」角标：数量由详情接口按标签 id 统计后随 tags 一并返回
+  // （count 字段）；设置页「标签关联图数」开关关闭时不渲染。
+  const showTagCount = computed(() => pref.gallery.showTagCount !== false);
+  function tagCount(t) {
+    const n = t && t.count;
+    return (typeof n === 'number' && isFinite(n)) ? n : 0;
   }
   // 外部过滤区标签配色（filter 区域）：内存缓存色优先（保留给详情算色复用的旧映射）；
   // 其余按该区域配置取色（简单模式=全局规则，分区模式=filter 区域规则）。
@@ -1835,7 +1844,7 @@ export function useGalleryCommon(opts = {}) {
     addTagFilter, clearTagFilter, toggleTagMode, visibleTags,
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden,
-    openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf,
+    openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
