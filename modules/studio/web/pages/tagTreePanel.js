@@ -77,6 +77,9 @@ const TagNode = {
     colorOf: { type: Function, default: null },
     // 是否显示管理按钮（自定义标签区专用）
     manage: { type: Boolean, default: false },
+    // 关联图数角标：显示开关（设置页可关）+ 取数函数（rel|name → 图数，由树数据带下来）
+    showCount: { type: Boolean, default: true },
+    countOf: { type: Function, default: null },
   },
   emits: ['add', 'remove', 'toggle', 'menu'],
   setup(props, { emit }) {
@@ -133,13 +136,13 @@ const TagNode = {
     <span class="zhg-ttp-chip" v-if="!expanded" :class="[themeCls, { leaf: !hasKids(), mgr: canManage }]" :style="chipStyle()"
           :data-tip="hasKids() ? '左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起' : '左键：放到外部过滤区'"
           @click="onLeft" @contextmenu.prevent="onCtx">
-      {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="node.count != null">{{ node.count }}</span>
+      {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf && countOf(node) != null">{{ countOf(node) }}</span>
       <span class="zhg-ttp-arrow" v-if="hasKids()">▸</span>
       <i class="zhg-ttp-more" v-if="canManage" data-tip="管理这个标签" @click.stop="onMore">⋯</i>
     </span>
     <div class="zhg-ttp-open" v-else :style="chipStyle()" @contextmenu.prevent="onCtx">
       <tag-node v-for="c in node.children" :key="c.rel" :node="c" :depth="depth + 1" :theme-cls="themeCls" :color-of="colorOf"
-                :manage="manage"
+                :manage="manage" :show-count="showCount" :count-of="countOf"
                 @add="$emit('add', $event)" @remove="$emit('remove', $event)" @toggle="$emit('toggle', $event)"
                 @menu="$emit('menu', $event)"></tag-node>
     </div>
@@ -160,6 +163,8 @@ export default {
     themeCls: { type: String, default: '' },
     // 标签颜色函数（与详情区同套散列配色，用于外部过滤区条与面板 chip 随机色）
     colorOf: { type: Function, default: null },
+    // 关联图数角标开关（设置页「标签关联图数」关闭后不渲染数字）
+    showCount: { type: Boolean, default: true },
   },
   emits: ['close', 'add', 'remove', 'clear', 'toggle', 'refresh'],
   setup(props, { emit }) {
@@ -175,6 +180,17 @@ export default {
       toastTimer = setTimeout(() => { toast.value = ''; }, 2400);
     }
 
+    // 关联图数：/gallery/tagtree 每个节点已带 count，这里按 rel|name 建表，
+    // 供 chip 取数——含按当前图片路径重建出的中间分组节点（它们没有 id/count）。
+    const countMap = ref({});
+    function countOf(n) {
+      if (!n) return null;
+      if (typeof n.count === 'number') return n.count;
+      const k = n.rel || n.name;
+      const v = k ? countMap.value[k] : null;
+      return (typeof v === 'number') ? v : null;
+    }
+
     async function loadTree(force = false) {
       if (tree.value.length && !force) return;
       loading.value = !tree.value.length;
@@ -182,8 +198,18 @@ export default {
       try {
         const r = await fetch(API.tagtree, { headers: { 'Cache-Control': 'no-cache' } });
         const d = await r.json();
-        if (Array.isArray(d.tree)) tree.value = d.tree;
-        else err.value = d.error || '加载失败';
+        if (Array.isArray(d.tree)) {
+          tree.value = d.tree;
+          const cm = {};
+          (function walk(ns) {
+            for (const n of ns) {
+              const k = n.rel || n.name;
+              if (k && typeof n.count === 'number') cm[k] = n.count;
+              walk(n.children || []);
+            }
+          })(d.tree);
+          countMap.value = cm;
+        } else err.value = d.error || '加载失败';
       } catch (e) {
         err.value = '加载失败：' + (e.message || e);
       } finally {
@@ -396,7 +422,7 @@ export default {
     }
 
     return {
-      tree, wbTree, csTree, wbCount, csCount, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close,
+      tree, wbTree, csTree, wbCount, csCount, countOf, leafName, tagKey, loading, err, setFilter, removeFilter, clearAll, close,
       selTagStyle, visibleSelected, wbPct, zoneStyle, startSplitDrag,
       toast, menu, dlg, dlgInput, openMenu, closeMenu, startCreate, startRename, closeDlg, submitDlg, doDelete,
     };
@@ -416,7 +442,7 @@ export default {
           <span class="zhg-sel-tag zhg-out-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
                 :style="selTagStyle(t.name)"
                 v-for="t in visibleSelected" :key="tagKey(t)" @click="removeFilter(t)">
-            {{ leafName(t.name) }}<span class="zhg-sel-tag-x">✕</span>
+            {{ leafName(t.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf(t) != null">{{ countOf(t) }}</span><span class="zhg-sel-tag-x">✕</span>
           </span>
           <a class="zhg-ttp-reset" @click="clearAll">清空</a>
         </div>
@@ -428,6 +454,7 @@ export default {
             </div>
             <div class="zhg-ttp-tree">
               <tag-node v-for="n in wbTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf"
+                        :show-count="showCount" :count-of="countOf"
                         @add="setFilter($event)" @remove="removeFilter($event)" @toggle="setFilter($event)"></tag-node>
             </div>
           </div>
@@ -441,6 +468,7 @@ export default {
             </div>
             <div class="zhg-ttp-tree">
               <tag-node v-for="n in csTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf" :manage="true"
+                        :show-count="showCount" :count-of="countOf"
                         @add="setFilter($event)" @remove="removeFilter($event)" @toggle="setFilter($event)"
                         @menu="openMenu"></tag-node>
             </div>

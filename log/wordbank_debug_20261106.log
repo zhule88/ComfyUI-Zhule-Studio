@@ -1,0 +1,256 @@
+09:50:36 [Wordbank] 09:50:01.380 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["优菈","PH[tab:发型]"]
+09:50:36 [Wordbank] 09:50:03.859 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["PH[tab:发型]"]
+09:50:36 [Wordbank] 09:50:24.804 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["PH[tab:发型]","仆人"]
+09:50:36 [Wordbank] 09:50:36.768 ensurePoolData: 池= | ["tab:发型/"] | missing= | []
+09:50:36 [Wordbank] 09:50:36.768 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["仆人","PH[tab:发型]"]
+09:50:36 [Wordbank] 09:50:36.768 ensurePoolData: ready= | true | 各池词条数= | ["发型:82"]
+09:50:36 [Wordbank] 09:50:36.770 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.770 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 脏辫 | relPath= | 07_发型/04_扎发／编发/26_脏辫 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.771 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.771 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单眼遮发 | relPath= | 07_发型/01_刘海／侧发/07_单眼遮发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.771 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.771 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双丸子头 | relPath= | 07_发型/04_扎发／编发/14_双丸子头 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.771 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.771 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 分缝发型 | relPath= | 07_发型/02_发质／状态/02_分缝发型 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.771 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.771 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短马尾 | relPath= | 07_发型/04_扎发／编发/24_短马尾 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.771 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.771 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧扫刘海 | relPath= | 07_发型/01_刘海／侧发/03_侧扫刘海 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.772 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.772 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单侧进气口刘海 | relPath= | 07_发型/01_刘海／侧发/05_单侧进气口刘海 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.772 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.772 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 极短发 | relPath= | 07_发型/03_基础发型/04_极短发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.772 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.772 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 凌乱发 | relPath= | 07_发型/02_发质／状态/01_凌乱发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.772 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.773 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 超长发 | relPath= | 07_发型/03_基础发型/11_超长发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.773 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.773 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.773 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.773 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 散开发型 | relPath= | 07_发型/02_发质／状态/16_散开发型 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.774 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.774 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 编辫双马尾 | relPath= | 07_发型/04_扎发／编发/25_编辫双马尾 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.774 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.774 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短发 | relPath= | 07_发型/03_基础发型/08_短发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.774 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.774 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 环状发髻 | relPath= | 07_发型/04_扎发／编发/21_环状发髻 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.774 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.774 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低扎长发 | relPath= | 07_发型/04_扎发／编发/04_低扎长发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.775 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.775 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短马尾 | relPath= | 07_发型/04_扎发／编发/24_短马尾 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.775 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.775 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 卷发 | relPath= | 07_发型/02_发质／状态/05_卷发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.775 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.775 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 发髻 ／ 丸子头 | relPath= | 07_发型/04_扎发／编发/17_发髻 ／ 丸子头 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.775 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.775 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发别到耳后 | relPath= | 07_发型/01_刘海／侧发/10_头发别到耳后 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.775 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短侧马尾 | relPath= | 07_发型/04_扎发／编发/23_短侧马尾 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 齐刘海 | relPath= | 07_发型/01_刘海／侧发/21_齐刘海 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发向后束起 | relPath= | 07_发型/02_发质／状态/11_头发向后束起 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单环发 | relPath= | 07_发型/04_扎发／编发/12_单环发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发别到耳后 | relPath= | 07_发型/01_刘海／侧发/10_头发别到耳后 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.776 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 极短发 | relPath= | 07_发型/03_基础发型/04_极短发 | 候选数= | 82
+09:50:36 [Wordbank] 09:50:36.776 poolCandidates: tab池候选 | 发型 | count= | 82
+09:50:36 [Wordbank] 09:50:36.777 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 高侧马尾 | relPath= | 07_发型/04_扎发／编发/31_高侧马尾 | 候选数= | 82
+09:53:59 [Wordbank] 09:50:36.777 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:50:36.777 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单侧进气口刘海 | relPath= | 07_发型/01_刘海／侧发/05_单侧进气口刘海 | 候选数= | 82
+09:53:59 [Wordbank] 09:50:36.777 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:50:36.777 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单辫 | relPath= | 07_发型/04_扎发／编发/13_单辫 | 候选数= | 82
+09:53:59 [Wordbank] 09:50:36.777 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:50:36.777 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 鬓发 ／ 侧发束 | relPath= | 07_发型/01_刘海／侧发/20_鬓发 ／ 侧发束 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.865 ensurePoolData: 池= | ["tab:发型/"] | missing= | []
+09:53:59 [Wordbank] 09:53:58.865 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["仆人","PH[tab:发型]"]
+09:53:59 [Wordbank] 09:53:58.866 ensurePoolData: ready= | true | 各池词条数= | ["发型:82"]
+09:53:59 [Wordbank] 09:53:58.867 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.868 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 甜甜圈发髻 | relPath= | 07_发型/04_扎发／编发/22_甜甜圈发髻 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.868 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.868 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 后梳油头 | relPath= | 07_发型/02_发质／状态/08_后梳油头 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.868 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.868 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发别到耳后 | relPath= | 07_发型/01_刘海／侧发/10_头发别到耳后 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.868 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.868 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 鬓发 ／ 侧发束 | relPath= | 07_发型/01_刘海／侧发/20_鬓发 ／ 侧发束 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.868 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.869 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发向后束起 | relPath= | 07_发型/02_发质／状态/11_头发向后束起 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.869 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.869 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.869 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.869 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 半扎发 | relPath= | 07_发型/04_扎发／编发/09_半扎发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.869 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.869 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 斜切刘海 | relPath= | 07_发型/01_刘海／侧发/12_斜切刘海 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.869 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.869 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单侧扎发 | relPath= | 07_发型/04_扎发／编发/11_单侧扎发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.869 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.870 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 蓬大头发 | relPath= | 07_发型/03_基础发型/10_蓬大头发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.870 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.870 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 极短发 | relPath= | 07_发型/03_基础发型/04_极短发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.871 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.871 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单眼遮发 | relPath= | 07_发型/01_刘海／侧发/07_单眼遮发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.871 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.871 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低位双辫 | relPath= | 07_发型/04_扎发／编发/01_低位双辫 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.871 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.871 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 披发 | relPath= | 07_发型/02_发质／状态/15_披发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.871 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.871 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单侧鬓发 | relPath= | 07_发型/01_刘海／侧发/06_单侧鬓发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.871 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.871 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双眼遮发 | relPath= | 07_发型/01_刘海／侧发/09_双眼遮发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.872 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.872 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长鬓发 | relPath= | 07_发型/01_刘海／侧发/19_长鬓发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.872 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.872 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 半扎发 | relPath= | 07_发型/04_扎发／编发/09_半扎发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.872 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.872 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 蓬松发 | relPath= | 07_发型/02_发质／状态/22_蓬松发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.872 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.872 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长发 | relPath= | 07_发型/03_基础发型/13_长发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.872 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.872 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 螺旋鬓发 | relPath= | 07_发型/01_刘海／侧发/15_螺旋鬓发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.873 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.873 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 齐刘海 | relPath= | 07_发型/01_刘海／侧发/21_齐刘海 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.873 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.873 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 环状发髻 | relPath= | 07_发型/04_扎发／编发/21_环状发髻 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.873 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.873 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单丸子头 | relPath= | 07_发型/04_扎发／编发/10_单丸子头 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.873 poolCandidates: tab池候选 | 发型 | count= | 82
+09:53:59 [Wordbank] 09:53:58.873 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 多段扎发 | relPath= | 07_发型/04_扎发／编发/18_多段扎发 | 候选数= | 82
+09:53:59 [Wordbank] 09:53:58.873 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:53:58.874 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低位编辫长发 | relPath= | 07_发型/04_扎发／编发/02_低位编辫长发 | 候选数= | 82
+09:54:02 [Wordbank] 09:53:58.874 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:53:58.874 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双丸子头 | relPath= | 07_发型/04_扎发／编发/14_双丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:53:58.874 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:53:58.874 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双丸子头 | relPath= | 07_发型/04_扎发／编发/14_双丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:53:58.874 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:53:58.874 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双辫子 | relPath= | 07_发型/04_扎发／编发/16_双辫子 | 候选数= | 82
+09:54:02 [Wordbank] 09:53:58.874 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:53:58.874 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双侧半扎发 | relPath= | 07_发型/04_扎发／编发/15_双侧半扎发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.878 ensurePoolData: 池= | ["tab:发型/"] | missing= | []
+09:54:02 [Wordbank] 09:54:02.879 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["仆人","PH[tab:发型]"]
+09:54:02 [Wordbank] 09:54:02.879 ensurePoolData: ready= | true | 各池词条数= | ["发型:82"]
+09:54:02 [Wordbank] 09:54:02.881 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.881 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单丸子头 | relPath= | 07_发型/04_扎发／编发/10_单丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.881 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.881 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短发 | relPath= | 07_发型/03_基础发型/08_短发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.881 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.881 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双分缝刘海 | relPath= | 07_发型/01_刘海／侧发/08_双分缝刘海 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.882 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.882 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 波波头 | relPath= | 07_发型/03_基础发型/07_波波头 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.882 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 编辫双马尾 | relPath= | 07_发型/04_扎发／编发/25_编辫双马尾 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.882 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧扫刘海 | relPath= | 07_发型/01_刘海／侧发/03_侧扫刘海 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.882 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低扎长发 | relPath= | 07_发型/04_扎发／编发/04_低扎长发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.882 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.883 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 帘式刘海 | relPath= | 07_发型/01_刘海／侧发/11_帘式刘海 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.883 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.883 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 盘起头发 | relPath= | 07_发型/02_发质／状态/20_盘起头发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双丸子头 | relPath= | 07_发型/04_扎发／编发/14_双丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 发髻 ／ 丸子头 | relPath= | 07_发型/04_扎发／编发/17_发髻 ／ 丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双侧半扎发 | relPath= | 07_发型/04_扎发／编发/15_双侧半扎发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长发 | relPath= | 07_发型/03_基础发型/13_长发 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 高马尾 | relPath= | 07_发型/04_扎发／编发/32_高马尾 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 分缝刘海 | relPath= | 07_发型/01_刘海／侧发/04_分缝刘海 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.884 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低侧马尾 | relPath= | 07_发型/04_扎发／编发/03_低侧马尾 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.884 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长眼间发束 | relPath= | 07_发型/01_刘海／侧发/18_长眼间发束 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单丸子头 | relPath= | 07_发型/04_扎发／编发/10_单丸子头 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 眼间发束 | relPath= | 07_发型/01_刘海／侧发/13_眼间发束 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 散开发型 | relPath= | 07_发型/02_发质／状态/16_散开发型 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 折叠发束 | relPath= | 07_发型/02_发质／状态/14_折叠发束 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+09:54:02 [Wordbank] 09:54:02.885 poolCandidates: tab池候选 | 发型 | count= | 82
+09:54:02 [Wordbank] 09:54:02.885 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 姬发式 | relPath= | 07_发型/03_基础发型/03_姬发式 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.886 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.886 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 单眼遮发 | relPath= | 07_发型/01_刘海／侧发/07_单眼遮发 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.886 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.886 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 卷发 | relPath= | 07_发型/02_发质／状态/05_卷发 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.886 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.886 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 低扎鬓发 | relPath= | 07_发型/01_刘海／侧发/02_低扎鬓发 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.886 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.886 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧扫刘海 | relPath= | 07_发型/01_刘海／侧发/03_侧扫刘海 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.887 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.887 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 双侧半扎发 | relPath= | 07_发型/04_扎发／编发/15_双侧半扎发 | 候选数= | 82
+10:22:32 [Wordbank] 09:54:02.887 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 09:54:02.887 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 极短发 | relPath= | 07_发型/03_基础发型/04_极短发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.634 ensurePoolData: 池= | ["tab:发型/"] | missing= | []
+10:22:32 [Wordbank] 10:22:32.634 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["仆人","PH[tab:发型]"]
+10:22:32 [Wordbank] 10:22:32.635 ensurePoolData: ready= | true | 各池词条数= | ["发型:82"]
+10:22:32 [Wordbank] 10:22:32.637 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.637 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧辫 | relPath= | 07_发型/04_扎发／编发/06_侧辫 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.637 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.637 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 环状发髻 | relPath= | 07_发型/04_扎发／编发/21_环状发髻 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.637 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.637 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 短马尾 | relPath= | 07_发型/04_扎发／编发/24_短马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.638 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.638 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 半扎发 | relPath= | 07_发型/04_扎发／编发/09_半扎发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.638 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.638 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 姬发式 | relPath= | 07_发型/03_基础发型/03_姬发式 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.638 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.638 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 发髻 ／ 丸子头 | relPath= | 07_发型/04_扎发／编发/17_发髻 ／ 丸子头 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.638 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.638 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧马尾 | relPath= | 07_发型/04_扎发／编发/07_侧马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.638 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.639 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧马尾 | relPath= | 07_发型/04_扎发／编发/07_侧马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.639 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.639 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 披发 | relPath= | 07_发型/02_发质／状态/15_披发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.639 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.639 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 侧马尾 | relPath= | 07_发型/04_扎发／编发/07_侧马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.639 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.639 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 齐刘海 | relPath= | 07_发型/01_刘海／侧发/21_齐刘海 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.639 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.639 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 马尾 | relPath= | 07_发型/04_扎发／编发/30_马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.640 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.640 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 交叉刘海 | relPath= | 07_发型/01_刘海／侧发/01_交叉刘海 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.640 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.640 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 半散开发型 | relPath= | 07_发型/02_发质／状态/04_半散开发型 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.640 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.640 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长发 | relPath= | 07_发型/03_基础发型/13_长发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.640 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 马尾 | relPath= | 07_发型/04_扎发／编发/30_马尾 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 锅盖头 | relPath= | 07_发型/03_基础发型/12_锅盖头 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 多段扎发 | relPath= | 07_发型/04_扎发／编发/18_多段扎发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 蓬松发 | relPath= | 07_发型/02_发质／状态/22_蓬松发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 外翘发 | relPath= | 07_发型/02_发质／状态/10_外翘发 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.641 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:32 [Wordbank] 10:22:32.641 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 长刘海 | relPath= | 07_发型/01_刘海／侧发/17_长刘海 | 候选数= | 82
+10:22:32 [Wordbank] 10:22:32.642 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.642 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 凌乱发 | relPath= | 07_发型/02_发质／状态/01_凌乱发 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.642 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.642 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 头发散开 | relPath= | 07_发型/02_发质／状态/12_头发散开 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.642 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.642 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 尖角感头发 | relPath= | 07_发型/02_发质／状态/13_尖角感头发 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.643 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.643 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 散开发型 | relPath= | 07_发型/02_发质／状态/16_散开发型 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.643 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.643 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 凌乱发 | relPath= | 07_发型/02_发质／状态/01_凌乱发 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.643 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.643 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 散开发型 | relPath= | 07_发型/02_发质／状态/16_散开发型 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.643 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.643 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 中长发 ／ 齐肩发 | relPath= | 07_发型/03_基础发型/01_中长发 ／ 齐肩发 | 候选数= | 82
+10:22:34 [Wordbank] 10:22:32.643 poolCandidates: tab池候选 | 发型 | count= | 82
+10:22:34 [Wordbank] 10:22:32.643 pickFromEachPool: 抽中 | tab | tab= | 发型 | name= | 环状发髻 | relPath= | 07_发型/04_扎发／编发/21_环状发髻 | 候选数= | 82
+10:41:22 [Wordbank] 10:22:35.659 syncPlaceholders | poolKeys= | ["tab:发型"] | selected= | ["仆人","PH[tab:发型]"]

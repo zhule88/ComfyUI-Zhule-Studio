@@ -44,7 +44,7 @@ export default {
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
 
-    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="editColorOf"
+    <tag-tree-panel :show="tagPanelOpen" :selected="filters.tags" :current-tags="detail ? detail.tags : []" :theme-cls="tagThemeClass" :color-of="editColorOf" :show-count="showTagCount"
                     @close="tagPanelOpen = false" @add="addTagFilter" @remove="removeTag" @clear="clearTagFilter" @toggle="toggleTagActive" @refresh="refreshAfterTagEdit"></tag-tree-panel>
 
     <!-- 上下结构：筛选区置顶 -->
@@ -96,6 +96,7 @@ export default {
           <div class="zhg-sel-tags" v-if="visibleTags.length">
             <out-node v-for="t in visibleTags" :key="tagKey(t)" :node="t" :depth="0"
                       :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"
+                      :show-count="showTagCount" :count-of="tagCount"
                       @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
           </div>
         </div>
@@ -190,7 +191,7 @@ export default {
                         @click.stop="addDetailTagToFilter(t)"
                         @contextmenu.prevent="editDetailTag(t)"
                         :data-tip="'提示词标签（运行时注入，只读）左键放入筛选区并启用，右键编辑词条'">
-                    {{ t.name }}<span class="zhg-tag-count" v-if="showTagCount">{{ tagCount(t) }}</span>
+                    {{ t.name }}
                   </span>
                   <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
                   <span class="zhg-tag hl-custom" :class="[tagThemeClass]"
@@ -198,7 +199,7 @@ export default {
                         :data-tip="'自定义标签，左键编辑词条，右键删除'"
                         v-for="t in customFlatTags" :key="'dtc' + tagKey(t)"
                         @click.stop="editDetailTag(t)" @contextmenu.prevent="askDeleteTag(t)">
-                    {{ t.display }}<span class="zhg-tag-count" v-if="showTagCount">{{ tagCount(t) }}</span>
+                    {{ t.display }}
                   </span>
                   <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
                 </div>

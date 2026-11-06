@@ -628,11 +628,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-sel-tag.zhg-out-tag.on:hover { border-color: var(--tag-bg, var(--primary)); }
 .zhg-sel-tag.zhg-out-tag.off { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 45%, transparent); border-style: dashed; }
 .zhg-sel-tag.zhg-out-tag.off:hover { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 62%, transparent); }
-/* 详情标签右侧「关联图数量」角标（提示词标签 / 自定义标签通用，设置页可关）：
-   半透明胶囊，颜色跟随标签自身色（--tag-bg），不抢标签名的视觉权重 */
-.zhg-tag-count { margin-left: 5px; padding: 0 5px; border-radius: 8px; font-size: 10px;
-  font-weight: 500; line-height: 1.5; opacity: 0.85;
-  background: color-mix(in srgb, currentColor 16%, transparent); }
+/* 关联图数量角标样式见 .zhg-ttp-count（与 .zhg-tag-count 同一套胶囊规则，统一定义在中段） */
 @keyframes zhg-kids-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 
 .zhg-tag-panel { border-top: 1px dashed var(--border-2); padding-top: 8px;
@@ -1220,7 +1216,11 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-chip:hover .zhg-ttp-more { opacity: 0.95; }
 .zhg-ttp-more:hover { opacity: 1; background: rgba(0, 0, 0, 0.24); }
 /* 颜色一律由主题类（zhg-tag-theme-* + --tag-bg）统一接管，不再区分自定义/提示词/叶子 */
-.zhg-ttp-count { font-size: 0.82em; color: var(--text-3); }
+/* 关联图数角标：外部过滤区与编辑面板的标签共用（图片详情不显示）。
+   半透明胶囊，颜色跟随标签自身 currentColor / --tag-bg，不抢标签名的视觉权重 */
+.zhg-ttp-count, .zhg-tag-count { margin-left: 5px; padding: 0 5px; border-radius: 8px; font-size: 0.82em;
+  font-weight: 500; line-height: 1.5; opacity: 0.9;
+  background: color-mix(in srgb, currentColor 14%, transparent); }
 .zhg-ttp-arrow { font-size: 0.9em; color: var(--text-3); }
 /* 俄罗斯套娃展开容器：外层大、内层小，子标签被包裹在容器内部，宽高随内容一起增长 */
 .zhg-ttp-open {

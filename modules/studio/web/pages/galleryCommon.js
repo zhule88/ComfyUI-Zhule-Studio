@@ -80,6 +80,9 @@ const OutNode = {
     themeCls: { type: String, default: '' },
     // 标签颜色函数（输入完整标签名 → 颜色字符串，同详情区散列配色）；缺失时 CSS 走默认色
     colorOf: { type: Function, default: null },
+    // 关联图数角标：显示开关 + 取数函数（父组件传入，入参为节点对象；返回 null 表示不展示）
+    showCount: { type: Boolean, default: true },
+    countOf: { type: Function, default: null },
   },
   emits: ['toggle', 'add', 'hide'],
   setup(props, { emit }) {
@@ -148,11 +151,12 @@ const OutNode = {
       <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node), off: !isActive(node), leaf: !hasKids() }]" :style="chipStyle()"
             :data-tip="(isActive(node) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
-        {{ leafName(node.name) }}
+        {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf && countOf(node) != null">{{ countOf(node) }}</span>
       </span>
       <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
         <out-node v-for="c in kids()" :key="c.rel || c.name" :node="c" :depth="depth + 1"
                   :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls" :color-of="colorOf"
+                  :show-count="showCount" :count-of="countOf"
                   @toggle="fwdToggle" @add="fwdAdd" @hide="fwdHide"></out-node>
       </div>
     </div>
@@ -667,9 +671,17 @@ export function useGalleryCommon(opts = {}) {
               rel: c.rel,
               isCustom: !!c.isCustom,
               children: c.children || [],
+              count: (typeof c.count === 'number') ? c.count : null,
             }));
             if (n.id != null && n.id !== '') idMap[String(n.id)] = n.name;
-            kidMeta[key] = { id: (n.id != null && n.id !== '') ? String(n.id) : '', isCustom: !!n.isCustom, rel: n.rel || '', name: n.name };
+            // count：该标签的关联图数（外部过滤区标签角标的数据源，详情页不显示）
+            kidMeta[key] = {
+              id: (n.id != null && n.id !== '') ? String(n.id) : '',
+              isCustom: !!n.isCustom,
+              rel: n.rel || '',
+              name: n.name,
+              count: (typeof n.count === 'number') ? n.count : null,
+            };
             walk(n.children || []);
           }
         })(d.tree);
@@ -981,12 +993,19 @@ export function useGalleryCommon(opts = {}) {
     const c = tagColorMap.value[t.name] || colorFor('detail', t.name) || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
     return c ? { '--tag-bg': c } : null;
   }
-  // 详情标签右侧「关联图数量」角标：数量由详情接口按标签 id 统计后随 tags 一并返回
-  // （count 字段）；设置页「标签关联图数」开关关闭时不渲染。
+  // 标签「关联图数」角标：**只在外部过滤区与编辑面板的标签上显示**（图片详情里的标签不显示）。
+  // 数据来自 /gallery/tagtree 每个节点的 count（后端一次统计 gallery_tag，按 id 分域命中）；
+  // 设置页「标签关联图数」开关关闭时整体不渲染。
   const showTagCount = computed(() => pref.gallery.showTagCount !== false);
+  // 取数：先认节点自带 count（树节点/点击放入的条目），再按 rel|name 查树元信息兜底
+  // （老 localStorage 状态、URL 直达只有名字没有 id 的情况）。
   function tagCount(t) {
-    const n = t && t.count;
-    return (typeof n === 'number' && isFinite(n)) ? n : 0;
+    if (t == null) return null;
+    const item = (typeof t === 'object') ? t : { name: String(t) };
+    if (typeof item.count === 'number') return item.count;
+    const key = item.rel || item.name;
+    const meta = key ? tagKidMeta.value[key] : null;
+    return (meta && typeof meta.count === 'number') ? meta.count : null;
   }
   // 外部过滤区标签配色（filter 区域）：内存缓存色优先（保留给详情算色复用的旧映射）；
   // 其余按该区域配置取色（简单模式=全局规则，分区模式=filter 区域规则）。

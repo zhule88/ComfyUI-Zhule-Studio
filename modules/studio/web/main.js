@@ -7,7 +7,7 @@ import GalleryTopDown from './pages/GalleryTopDown.js';
 const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
   gallery: { showName: true, showTime: true, showModel: true, showTags: true, timeFmt: 'yyyy-MM-dd HH:mm',
-    // 详情界面标签右侧的关联图数角标（提示词标签 / 自定义标签通用），默认开启，可在设置里关掉
+    // 外部过滤区与标签编辑面板标签右侧的关联图数角标（图片详情不显示），默认开启，可在设置里关掉
     showTagCount: true,
     tagTheme: 'light', tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
@@ -431,7 +431,7 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
-                <div class="settings-hint">开启后，图片详情里的提示词标签与自定义标签右侧显示「关联图数量」（该标签一共挂了多少张图）；关闭则只显示标签名。</div>
+                <div class="settings-hint">开启后，外部过滤区与标签编辑面板里的标签右侧显示「关联图数量」（该标签一共挂了多少张图）；图片详情里的标签不显示数字，关闭开关则筛选区也不显示。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-filters') }">
