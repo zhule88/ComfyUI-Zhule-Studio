@@ -518,6 +518,47 @@ export function useGalleryCommon(opts = {}) {
       return !(tr && tr !== er && tr.startsWith(er + '/'));
     });
   }
+  // 标签条目查找（全链路唯一入口）：先按唯一键（有 id 用 id）精确匹配，未命中再按 name(+rel) 兜底。
+  // 兜底的必要性：老 localStorage / URL 直达条目没有 id，键为 'n:name|rel'，树加载回填 id 前
+  // 点同一个标签会算成另一个键 → 重复入列；统一走本函数后同一标签永远只有一条。
+  // 传字符串（裸标签名）时只按 name 匹配，忽略 rel。
+  function findTagEntry(t) {
+    if (!t) return null;
+    const isStr = typeof t === 'string';
+    if (!isStr) {
+      const k = tagKey(t);
+      if (k) {
+        const hit = filters.tags.find((x) => tagKey(x) === k);
+        if (hit) return hit;
+      }
+    }
+    const nm = isStr ? t : (t.name || '');
+    const rl = isStr ? null : (t.rel || '');
+    return filters.tags.find((x) => String(x.name || '') === String(nm || '')
+      && (rl === null || String(x.rel || '') === String(rl || ''))) || null;
+  }
+  // 按键去重合并：历史状态里同一标签可能同时存在「有 id」与「无 id」两条，backfillTagIds 回填 id 后
+  // 两条键相同 → 筛选区出现两个同名标签（如两个「单眼遮发」），且点一个另一个也亮
+  // （渲染按下标各画一条、高亮按 key 查首条）。合并规则：active 任一为真即真；
+  // hidden 全部为真才隐藏；inner 全部为真才算内层。返回是否有合并。
+  function dedupeTagFilters() {
+    const seen = new Map();
+    const out = [];
+    for (const t of filters.tags) {
+      const k = tagKey(t);
+      if (!k) { out.push(t); continue; }
+      const prev = seen.get(k);
+      if (!prev) { seen.set(k, t); out.push(t); continue; }
+      prev.active = !!(prev.active || t.active);
+      prev.hidden = !!(prev.hidden && t.hidden);
+      prev.inner = !!(prev.inner && t.inner);
+      if (!prev.id && t.id) { prev.id = t.id; prev.kind = t.kind || prev.kind; }
+      if (!prev.rel && t.rel) prev.rel = t.rel;
+    }
+    const changed = out.length !== filters.tags.length;
+    if (changed) filters.tags = out;
+    return changed;
+  }
   function addTagFilter(item) {
     // 编辑面板左键点击 emit 的是完整 node 对象（tagTreePanel setFilter emit('add', node)），
     // 这里统一提取 name 字符串：避免把整个 node 对象当 name 存入外部过滤区，
@@ -533,18 +574,17 @@ export function useGalleryCommon(opts = {}) {
     const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
     // 放到外部过滤区（编辑面板左键点击触发）：按唯一键（id 优先，无 id 回退 name|rel）判定；
     // 同名但 id 不同（如 '测试/喜欢' 与顶层 '喜欢'）视为不同标签，互不覆盖
-    const k = tagKey({ name, rel, id, kind });
-    const i = k ? filters.tags.findIndex((t) => tagKey(t) === k) : -1;
-    if (i >= 0) {
-      if (filters.tags[i].hidden) {
-        filters.tags[i].hidden = false;
-        filters.tags[i].active = true;
-        filters.tags[i].rel = rel;
-        if (id) { filters.tags[i].id = id; filters.tags[i].kind = kind; }
+    const existed = findTagEntry({ name, rel, id, kind });
+    if (existed) {
+      if (existed.hidden) {
+        existed.hidden = false;
+        existed.active = true;
+        existed.rel = rel || existed.rel;
+        if (id) { existed.id = id; existed.kind = kind; }
       } else {
-        const removed = filters.tags[i];
-        filters.tags.splice(i, 1);
-        pruneInnerDescendants(removed);
+        const si = filters.tags.indexOf(existed);
+        if (si >= 0) filters.tags.splice(si, 1);
+        pruneInnerDescendants(existed);
       }
     } else {
       filters.tags.push({ name, rel, id, kind, active: false, hidden: false });
@@ -571,14 +611,15 @@ export function useGalleryCommon(opts = {}) {
         if (m && String(m.id) === id && (!!m.isCustom) === (kind === 'custom')) { rel = m.rel || ''; break; }
       }
     }
-    const k = tagKey({ name, rel, id, kind });
-    const existed = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    const existed = findTagEntry({ name, rel, id, kind });
     if (existed) {
       existed.hidden = false;
       existed.inner = false; // 提升为显式条目，才能在顶层筛选区看到并可停用
       existed.active = true;
+      // 老状态条目缺 id / 键不一致时一并以本次点击的 id 修正，避免同标签两条并存
       if (rel) existed.rel = rel;
       if (id) { existed.id = id; existed.kind = kind; }
+      dedupeTagFilters(); // 回填 id 后可能与另一条「已有 id」的同名条目同键：立即合并
     } else {
       filters.tags.push({ name, rel, id, kind, active: true, hidden: false });
     }
@@ -599,8 +640,7 @@ export function useGalleryCommon(opts = {}) {
     // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
     // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
     const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
-    const k = tagKey({ name, rel, id, kind });
-    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    const t = findTagEntry({ name, rel, id, kind });
     if (!t) {
       // 首次放置：优先用节点自带 id；老状态/无 id 节点用树元信息兜底回填
       const metaKey = rel || name;
@@ -616,6 +656,7 @@ export function useGalleryCommon(opts = {}) {
       if (meta && meta.id) { t.id = meta.id; t.kind = meta.isCustom ? 'custom' : 'prompt'; }
     }
     t.active = !t.active;
+    dedupeTagFilters(); // 回填 id 后可能与另一条同名同 id 条目合并，避免两条各自开合
     applyFilter();
     saveTagPref();
   }
@@ -630,8 +671,7 @@ export function useGalleryCommon(opts = {}) {
     // 缺了这层，外部过滤区顶层标签（filters 项，无 isCustom）会被误判成 prompt 域，
     // tagKey 前缀错（c:5→p:5）→ 匹配不上已入列项：点击不高亮、重复入列、自定义 id 发去提示词域查空
     const kind = (typeof item !== 'string' && item) ? (item.kind || (item.isCustom ? 'custom' : 'prompt')) : 'prompt';
-    const k = tagKey({ name, rel, id, kind });
-    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    const t = findTagEntry({ name, rel, id, kind });
     if (t) { t.hidden = true; t.active = false; pruneInnerDescendants(t); }
     else filters.tags.push({ name, rel, id, kind, active: false, hidden: true, inner: true });
     applyFilter();
@@ -648,13 +688,21 @@ export function useGalleryCommon(opts = {}) {
   // 显式条目之间仍按最深选中链取代：选"角色"显示角色；编辑面板再放入"璃月"后只显示璃月；删掉璃月角色自动回归。
   // 隐藏 = 完全移除（等价 v-if=false）
   const visibleTags = computed(() => {
-    const list = filters.tags.filter((t) => !t.hidden && !t.inner);
+    const base = filters.tags.filter((t) => !t.hidden && !t.inner);
+    // 防御性按键去重：同一标签（同 id 域）只出现一次，避免历史重复条目在筛选区渲染成两个同名标签
+    const seen = new Set();
+    const list = base.filter((t) => {
+      const k = tagKey(t);
+      if (!k) return true;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     return list.filter((t) => !list.some((u) => u !== t && tagAncestorOf(t, u)));
   });
   // 树内递归渲染判断隐藏态：隐藏 = 完全移除，渲染时按此过滤（等价 v-if=false），隐藏大标签时整棵子树随之消失
   function isTagHidden(name) {
-    const k = tagKey(typeof name === 'object' && name ? name : { name });
-    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    const t = findTagEntry(name);
     return !!(t && t.hidden);
   }
   // 外部过滤区：右键展开子标签需要的树数据（name -> children）
@@ -715,6 +763,9 @@ export function useGalleryCommon(opts = {}) {
       // 域错则 tagKey 前缀错——高亮匹配不上、buildQuery 把自定义 id 发去提示词域查空
       if (t.id) t.kind = meta.isCustom ? 'custom' : 'prompt';
     }
+    // 回填后同一标签可能出现「带 id / 不带 id」两条同键记录 → 合并成一条并落盘，
+    // 否则筛选区会同时显示两个同名标签，点一个另一个也跟着亮
+    if (dedupeTagFilters()) saveTagPref();
   }
   function treeKids(item) {
     const key = (typeof item === 'object' && item) ? (item.rel || item.name) : String(item || '');
@@ -727,13 +778,11 @@ export function useGalleryCommon(opts = {}) {
     expandedTags.value = s;
   }
   function isTagActive(name) {
-    const k = tagKey(typeof name === 'object' && name ? name : { name });
-    const t = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    const t = findTagEntry(name);
     return !!(t && t.active);
   }
   function inTagFilter(name) {
-    const k = tagKey(typeof name === 'object' && name ? name : { name });
-    return k ? filters.tags.some((x) => tagKey(x) === k) : false;
+    return !!findTagEntry(name);
   }
   function clearTagFilter() {
     if (filters.tags.length) {
@@ -1102,6 +1151,9 @@ export function useGalleryCommon(opts = {}) {
   }
   let _detailReqSeq = 0;
   let _hitIdsPromise = null;
+  let _hitIdsPromiseKey = '';
+  let _hitIdsSeq = 0;
+  let _posRepairKey = '';
   async function openDetail(item) {
     // 顺手预载命中池 ids（不阻塞详情打开），位置与导航后续即用
     ensureHitIds();
@@ -1128,40 +1180,60 @@ export function useGalleryCommon(opts = {}) {
     if (!d || !d.path) { detailPos.value = 0; return; }
     const i = hitIds.value.indexOf(d.path);
     detailPos.value = i >= 0 ? i + 1 : 0;
+    if (i >= 0) { _posRepairKey = ''; return; }
+    // 池与当前图不匹配（页面显示「— / N」）：多为筛选刚变更、池还是上一套筛选的结果。
+    // 同一「池版本 + 图片」只自愈一次，避免反复请求；修复后位置与左右键导航恢复正常。
+    const rk = hitIdsKey.value + '|' + d.path;
+    if (hitIds.value.length && _posRepairKey !== rk) {
+      _posRepairKey = rk;
+      ensureHitIds(true);
+    }
   }
-  async function ensureHitIds() {
+  // 命中池（当前筛选下全部图的 key 列表）：force=true 强制重拉。
+  // 关键点：请求发出时不改动 hitIds/hitIdsKey（旧池在新结果回来前仍然可用），
+  // 结果按请求序号落地 —— 期间又有新的筛选请求，则丢弃本次结果，绝不让旧池覆盖新池。
+  async function ensureHitIds(force) {
     const key = buildQuery(true).toString();
-    if (hitIdsKey.value === key && hitIds.value.length) return;
-    if (_hitIdsPromise) return _hitIdsPromise;
+    if (!force && hitIdsKey.value === key && hitIds.value.length) return;
+    if (!force && _hitIdsPromise && _hitIdsPromiseKey === key) return _hitIdsPromise;
+    const seq = ++_hitIdsSeq;
+    _hitIdsPromiseKey = key;
     _hitIdsPromise = (async () => {
-      hitIdsKey.value = key;
-      hitIds.value = [];
-      hitTotal.value = 0;
       try {
         const d = await jfetch(API.ids + '?' + key);
+        if (seq !== _hitIdsSeq) return; // 已有更新的请求，丢弃过期结果
         hitIds.value = d.ids || [];
         hitTotal.value = d.total || 0;
+        hitIdsKey.value = key;
         updateDetailPos();
       } catch (e) {
-        hitIds.value = [];
-        hitTotal.value = 0;
+        if (seq !== _hitIdsSeq) return;
+        hitIdsKey.value = ''; // 失败不落地无效池，下次调用会重试
+        updateDetailPos();
       } finally {
-        _hitIdsPromise = null;
+        if (seq === _hitIdsSeq) _hitIdsPromise = null;
       }
     })();
     return _hitIdsPromise;
   }
   async function detailNav(delta) {
-    await ensureHitIds();
-    const arr = hitIds.value;
-    if (!arr.length) { showToast('命中池为空', 'warning'); return; }
     const cur = detail.value ? detail.value.path : null;
-    let idx = cur ? arr.indexOf(cur) : -1;
-    if (idx < 0) idx = delta > 0 ? 0 : arr.length - 1;
-    else idx += delta;
-    if (idx < 0) { showToast('已是第一张', 'info'); return; }
-    if (idx >= arr.length) { showToast('已是最后一张', 'info'); return; }
-    await openDetailByPath(arr[idx]);
+    if (!cur) return;
+    let arr = hitIds.value;
+    let idx = arr.indexOf(cur);
+    if (idx < 0) {
+      // 位置未知（池缺失 / 筛选刚变更 / 图不在池内）：先强刷一次再定位。
+      // 绝不能按方向盲跳到首尾 —— 历史 bug：左箭头跳最末图、右箭头跳第一张。
+      await ensureHitIds(true);
+      arr = hitIds.value;
+      idx = arr.indexOf(cur);
+    }
+    if (!arr.length) { showToast('命中池为空', 'warning'); return; }
+    if (idx < 0) { showToast('当前图片不在筛选结果内，无法按筛选翻页', 'info'); return; }
+    const ni = idx + delta;
+    if (ni < 0) { showToast('已是第一张', 'info'); return; }
+    if (ni >= arr.length) { showToast('已是最后一张', 'info'); return; }
+    await openDetailByPath(arr[ni]);
   }
   async function detailNavRandom() {
     await ensureHitIds();
@@ -1678,12 +1750,11 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
   }
   function removeTag(item) {
-    const k = tagKey(typeof item === 'object' && item ? item : { name: item });
-    const i = k ? filters.tags.findIndex((t) => tagKey(t) === k) : -1;
-    if (i >= 0) {
-      const removed = filters.tags[i];
-      filters.tags.splice(i, 1);
+    const removed = findTagEntry(item);
+    if (removed) {
+      const i = filters.tags.indexOf(removed);
       // 同步清掉其 inner 后代：父条目移除后它们顶层不可见、无入口关闭，只能静默参与过滤
+      if (i >= 0) filters.tags.splice(i, 1);
       pruneInnerDescendants(removed);
     }
     applyFilter();
@@ -1717,7 +1788,11 @@ export function useGalleryCommon(opts = {}) {
     return params;
   }
   async function applyFilter() {
+    // 筛选变更即让命中池失效：否则详情弹层仍拿上一套筛选的池做定位，出现「— / N」
+    // 并在左右键时跳到旧池的首/末图；顺带后台预热，打开详情即可直接显示位置
+    hitIdsKey.value = '';
     loadItems(true);
+    ensureHitIds();
   }
   async function loadMeta() {
     try {
@@ -1825,12 +1900,33 @@ export function useGalleryCommon(opts = {}) {
         // 词库跳转：不覆盖已有标签，新标签追加到最前并取消其它标签的选中状态（仅新标签生效）。
         // 纯数字 = 词条 id（词库箭头跳转）：按 id 筛选；名字待标签树加载后回显
         filters.tags.forEach((t) => { t.active = false; });
+        // 必须查重后再注入：本地已存同一条标签时（先手点过、再被词库跳转带进来），
+        // 盲目 unshift 会产生两条同键记录 → 筛选区出现两个同名标签、点一个另一个也亮（历史 bug）。
+        // 命中已有条目就复用并激活，取不到才新建。
         if (/^\d+$/.test(first)) {
           pendingTagId = first;
-          filters.tags.unshift({ id: first, name: first, rel: '', active: true, hidden: false });
+          const exist = findTagEntry({ id: first, name: first, rel: '', kind: 'prompt' });
+          if (exist) {
+            if (!exist.id) exist.id = first;
+            if (!exist.kind) exist.kind = 'prompt';
+            exist.active = true;
+            exist.hidden = false;
+            exist.inner = false;
+          } else {
+            filters.tags.unshift({ id: first, name: first, rel: '', kind: 'prompt', active: true, hidden: false });
+          }
         } else {
-          filters.tags.unshift({ name: first, rel: '', active: true, hidden: false });
+          const exist = filters.tags.find((x) => String(x.name || '') === first)
+            || findTagEntry({ name: first, rel: '', kind: 'prompt' });
+          if (exist) {
+            exist.active = true;
+            exist.hidden = false;
+            exist.inner = false;
+          } else {
+            filters.tags.unshift({ name: first, rel: '', kind: 'prompt', active: true, hidden: false });
+          }
         }
+        dedupeTagFilters();
       }
     }
     const qm = String(route.query.mode || 'and').toLowerCase();
@@ -1839,7 +1935,15 @@ export function useGalleryCommon(opts = {}) {
       if (pendingTagId) {
         const nm = tagIdNameMap.value[pendingTagId];
         const t = filters.tags.find((x) => x.id === pendingTagId);
-        if (nm && t) t.name = nm;
+        if (t) {
+          if (nm) t.name = nm;
+          // 跳转只带 id，rel/域信息缺失；用标签树 meta 补齐，否则父子祖先判断（tagAncestorOf）对这条失效
+          const m = tagKidMeta.value[t.rel || t.name || nm] || (nm ? tagKidMeta.value[nm] : null);
+          if (m) {
+            if (!t.rel && m.rel) t.rel = m.rel;
+            if (!t.kind) t.kind = m.isCustom ? 'custom' : 'prompt';
+          }
+        }
       }
     });
     // 首次进入立即加载列表与元数据；不做自动探活/自动刷新，需要最新数据时手动刷新页面
