@@ -1,7 +1,7 @@
 // galleryCommon.js —— 图库双布局公共逻辑（方案A：抽取 composable）
 // 说明：GalleryTopDown.js（/gallery 上下布局）与 Gallery.js（/gallery-side 侧边布局）
 // 除布局模板与筛选区拖拽参数外完全一致，公共逻辑统一收拢到本模块：
-// 列表加载/筛选/删除/导出、详情弹层（tag 随机色 + 提示词高亮 + 右键改色）、
+// 列表加载/筛选/删除/导出、详情弹层（tag 随机色 + 提示词高亮 + 左键入筛选/右键编辑词条）、
 // 框选多选、外部过滤区（隐藏=完全移除，不可逆语义统一）、标签状态持久化。
 // 布局差异通过 useGalleryCommon(opts) 参数化：
 //   opts.side = { initW, initH, wMin, wMax, hMin, hMax }  侧边/筛选区尺寸初始值与拖拽范围
@@ -534,6 +534,40 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
     saveTagPref();
   }
+  // 详情页提示词标签左键：放入外部过滤区并立即启用（与编辑面板「放入后待点蓝」不同，这里一步到位生效）。
+  // 语义为幂等放置：已入列则强制 active=true、取消 hidden/inner，不会像 addTagFilter 那样再点一次就移除，
+  // 避免"点一下就消失"的误操作；移除/停用仍由筛选区自身的左键/✕ 负责。
+  // rel 缺失：详情标签只带叶子名（自定义带完整 path），用树元信息按 id + 域回填 rel，
+  // 保证套娃层级、父子取代（visibleTags 的 tagAncestorOf）与编辑面板放入的条目完全一致。
+  async function addDetailTagToFilter(item) {
+    if (!item || !item.name) return;
+    const name = item.name;
+    const kind = item.custom ? 'custom' : 'prompt';
+    const id = (item.id != null && item.id !== '') ? String(item.id) : '';
+    await ensureTagTree(); // 已有缓存直接返回，仅首点拉一次树
+    let rel = '';
+    if (item.custom && item.path) rel = String(item.path);
+    if (!rel && id) {
+      for (const k of Object.keys(tagKidMeta.value)) {
+        const m = tagKidMeta.value[k];
+        if (m && String(m.id) === id && (!!m.isCustom) === (kind === 'custom')) { rel = m.rel || ''; break; }
+      }
+    }
+    const k = tagKey({ name, rel, id, kind });
+    const existed = k ? filters.tags.find((x) => tagKey(x) === k) : null;
+    if (existed) {
+      existed.hidden = false;
+      existed.inner = false; // 提升为显式条目，才能在顶层筛选区看到并可停用
+      existed.active = true;
+      if (rel) existed.rel = rel;
+      if (id) { existed.id = id; existed.kind = kind; }
+    } else {
+      filters.tags.push({ name, rel, id, kind, active: true, hidden: false });
+    }
+    applyFilter();
+    saveTagPref();
+    showToast('已加入筛选并启用：' + name, 'success');
+  }
   // 外部过滤区：左键点击直接启用/禁用（红=待生效 / 蓝=生效）
   // 未入列（套娃内子标签首次点击）：直接启用并以 inner 标记入列，顶层 visibleTags 过滤 inner 不产生外部独立标签
   // 隐藏不可逆（Ctrl+左键完全移除），恢复靠编辑面板重新放置，故这里不再处理 hidden
@@ -833,7 +867,7 @@ export function useGalleryCommon(opts = {}) {
     return buildCustomTagTree(d.tags || [], tagColorMap.value);
   });
   // 自定义标签平铺叶子（定稿：叶子才是标签，父级仅分组容器，展示界面一律直接平铺叶子名）。
-  // 返回原始标签对象 + display 叶子名 + 临时色，保留左键编辑/右键改色/✕取消关联所需的完整字段。
+  // 返回原始标签对象 + display 叶子名 + 临时色，保留左键入筛选/右键编辑/✕取消关联所需的完整字段。
   const customFlatTags = computed(() => {
     const d = detail.value;
     if (!d) return [];
@@ -842,7 +876,7 @@ export function useGalleryCommon(opts = {}) {
       .map((t) => ({ ...t, display: leafName(t.name), style: tagStyle(t) }));
   });
   // ---- 标签颜色（基于全局种子 + 标签名的确定性散列）：同一标签恒定同色，
-  // 设置页「随机颜色种子」换种子整套换色；右键改色仅本次查看内存覆盖 ----
+  // 设置页「随机颜色种子」换种子整套换色；不再支持单标签手动改色 ----
   const tagColorMap = ref({});
   function seedHash(name, seed) {
     const s = String(seed || pref.gallery.tagSeed || '') + '|' + String(name);
@@ -874,23 +908,8 @@ export function useGalleryCommon(opts = {}) {
     uniqueDetailTags.value.forEach((t) => { map[t.name] = colorFor('detail', t.name); });
     tagColorMap.value = map;
   }
-  // 右键临时改色：弹系统取色器，仅改内存映射，不落盘
-  function pickTagColor(t, ev) {
-    const input = document.createElement('input');
-    input.type = 'color';
-    input.value = tagColorMap.value[t.name] || '#2a9d8f';
-    input.style.position = 'fixed';
-    input.style.opacity = '0';
-    input.style.pointerEvents = 'none';
-    document.body.appendChild(input);
-    input.addEventListener('input', () => {
-      tagColorMap.value = Object.assign({}, tagColorMap.value, { [t.name]: input.value });
-    });
-    const done = () => { input.remove(); };
-    input.addEventListener('change', done);
-    input.addEventListener('blur', done);
-    input.click();
-  }
+  // 注：详情标签的「右键选颜色」入口已移除（改色只走设置页标签配色分区），
+  // tagColorMap 仅保留为全局规则算色的缓存，不再接受手动覆盖。
   // 英文提示词高亮：按 tag 的英文词条文本在提示词原文中做不区分大小写的整体子串匹配（带词边界）。
   // 词条名是中文目录名（zhule_prompt_tags 存中文名），中文名匹配英文提示词永不命中；
   // 后端 detail 已为每个 tag 附带 en 字段（词库词条目录 prompt.txt 全文），按 en 匹配即可整段着色。
@@ -960,7 +979,7 @@ export function useGalleryCommon(opts = {}) {
     const c = tagColorMap.value[t.name] || colorFor('detail', t.name) || TAG_FALLBACK[t.prompt ? 'prompt' : 'custom'] || '';
     return c ? { '--tag-bg': c } : null;
   }
-  // 外部过滤区标签配色（filter 区域）：右键临时改色过的标签优先用内存覆盖色；
+  // 外部过滤区标签配色（filter 区域）：内存缓存色优先（保留给详情算色复用的旧映射）；
   // 其余按该区域配置取色（简单模式=全局规则，分区模式=filter 区域规则）。
   function tagColorOf(name) {
     return tagColorMap.value[name] || colorFor('filter', name);
@@ -1799,7 +1818,7 @@ export function useGalleryCommon(opts = {}) {
     quickTag, toast, toastType, toastIcon, del, mainEl, gridEl,
     leafName, cardTags,
     tagKey,
-    hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, pickTagColor, tagThemeClass,
+    hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, tagThemeClass, addDetailTagToFilter,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,

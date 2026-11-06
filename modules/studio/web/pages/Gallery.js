@@ -174,14 +174,14 @@ export default {
               <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span></div>
               <div class="zhg-detail-row">
                 <div class="zhg-detail-tags">
-                  <!-- 提示词标签（词库词条）在前：只读，左键查看词条、右键临时改色 -->
+                  <!-- 提示词标签（词库词条）在前：只读，左键放入筛选区并启用、右键编辑词条 -->
                   <span class="zhg-tag readonly hl-prompt"
                         :class="tagThemeClass"
                         :style="tagStyle(t)"
                         v-for="t in promptDetailTags" :key="'dtp'+t.name"
-                        @click.stop="editDetailTag(t)"
-                        @contextmenu.prevent="pickTagColor(t, $event)"
-                        :data-tip="'提示词标签（运行时注入，只读）左键查看词条，右键临时改色'">
+                        @click.stop="addDetailTagToFilter(t)"
+                        @contextmenu.prevent="editDetailTag(t)"
+                        :data-tip="'提示词标签（运行时注入，只读）左键放入筛选区并启用，右键编辑词条'">
                     {{ t.name }}
                   </span>
                   <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
