@@ -259,12 +259,19 @@ export default {
                    placeholder="请输入词条名称" spellcheck="false"
                    @keydown.enter="submitAddCard" @keydown.esc="closeAddCard">
           </div>
-          <div class="field">
-            <label>提示词（英）</label>
+          <div class="field en">
+            <div class="field-head">
+              <label>提示词（英）</label>
+              <span class="count">{{ (addCardContent || '').length }} 字</span>
+            </div>
             <textarea v-model="addCardContent" rows="4" spellcheck="false" @keydown.ctrl.enter="submitAddCard"></textarea>
           </div>
-          <div class="field">
-            <label>提示词（中）</label>
+          <div class="sep"></div>
+          <div class="field cn">
+            <div class="field-head">
+              <label>提示词（中）</label>
+              <span class="count">{{ (addCardContentCn || '').length }} 字</span>
+            </div>
             <textarea v-model="addCardContentCn" rows="3" spellcheck="false" @keydown.ctrl.enter="submitAddCard"></textarea>
             <span v-if="addCardIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
           </div>
@@ -310,12 +317,19 @@ export default {
             <label>名字</label>
             <input type="text" v-model="editName" @keydown.enter="submitEdit">
           </div>
-          <div class="field">
-            <label>提示词（英）</label>
+          <div class="field en">
+            <div class="field-head">
+              <label>提示词（英）</label>
+              <span class="count">{{ (editContent || '').length }} 字</span>
+            </div>
             <textarea v-model="editContent" rows="4" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
           </div>
-          <div class="field">
-            <label>提示词（中）</label>
+          <div class="sep"></div>
+          <div class="field cn">
+            <div class="field-head">
+              <label>提示词（中）</label>
+              <span class="count">{{ (editContentCn || '').length }} 字</span>
+            </div>
             <textarea v-model="editContentCn" rows="3" spellcheck="false" @keydown.ctrl.enter="submitEdit"></textarea>
             <span v-if="editIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
           </div>
@@ -1065,8 +1079,6 @@ export default {
           }
         }
         await load();
-        // 全屏查看器内发起的删除：保持全屏不中断，自动接续同位置的下一张词条（见 resumeZoomAfterDelete）
-        if (!json.error && zoomDelCtx) resumeZoomAfterDelete();
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
       } finally {
@@ -1113,6 +1125,11 @@ export default {
         // 若删除发生在详情弹层，同步修正弹层索引
         if (viewer.open && viewer.file && viewer.file.id === file.id) {
           if (viewer.idx >= n) viewer.idx = n ? n - 1 : 0;
+        }
+        // 若删除发生在全屏查看器：保持全屏不中断，直接接续显示同一词条接上来的那张图
+        // （imgIdx 已收到同位置，删末张则退到前一张；该词条已无参考图则回退默认图并标注）
+        if (fullViewer && fullViewer.isOpen && zoomCtx.file && zoomCtx.file.id === file.id) {
+          openZoomedFile(zoomCtx.file);
         }
         showToast('已删除参考图', 'success');
       } catch (e) {
@@ -1893,34 +1910,13 @@ const submitAddTab = async () => {
     // 放大查看器当前展示的词条（供底部按钮回调读取）
     let zoomCtx = { file: null };
 
-    // 全屏删除上下文：记录被删词条在「当前筛选结果」中的位置，
-    // 删除完成后按原位置接续下一张，避免在整理词条时被弹回列表、每删一张都要重新放大。
-    // 结构与详情弹层/图库全屏一致：删除后从命中池移除当前项并跳到下一张，池空则关闭。
-    let zoomDelCtx = null;
-
-    // 全屏底部「删除」按钮：走全站唯一删除确认（del.ask），先记账再交给通用删除流程
-    const zoomAskDelete = () => {
+    // 全屏底部「删除」按钮：删的是当前正在看的那一张参考图，而不是整条词条。
+    // 语义必须跟随所见图：全屏里只显示一张图，删它就该删这张图；
+    // 删整条词条的入口保留在卡片左侧竖排 🗑 与详情弹层右上角 🗑（各自标注「删除词条」），三处语义不混用。
+    const zoomAskDeleteRef = () => {
       const file = zoomCtx.file;
-      if (!file) return;
-      const list = filteredFiles.value || [];
-      const idx = list.findIndex(f => f && f.id != null && f.id === file.id);
-      zoomDelCtx = { id: (file.id != null ? file.id : null), idx };
-      askDeleteWord(file);
-    };
-
-    // 删除成功后由 deleteWordNow 调用：同位置 → 末位 → 关闭
-    const resumeZoomAfterDelete = () => {
-      const c = zoomDelCtx;
-      zoomDelCtx = null;
-      if (!fullViewer || !fullViewer.isOpen) return;
-      const list = (filteredFiles.value || []).filter(f => f && !(c && c.id != null && f.id === c.id));
-      const target = (c && c.idx >= 0) ? (list[c.idx] || list[list.length - 1]) : null;
-      if (target) {
-        zoomCtx.file = target;
-        openZoomedFile(target);
-      } else {
-        fullViewer.close();
-      }
+      if (!file || !file.images || !file.images.length) return;
+      askDeleteRef(file);
     };
 
     // 在放大查看器中展示某词条的当前参考图；无参考图时回退默认图
@@ -1973,9 +1969,9 @@ const submitAddTab = async () => {
             { label: '🎲', tip: '随机提示词（当前范围）', dice: true, onClick: zoomRandomWord },
             { label: '›', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
             { label: '›', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
-            // 分隔线右侧放破坏性操作，与详情弹层右上角 🗑 保持同一语义（删除整条词条）
+            // 分隔线右侧放破坏性操作：删除「当前正在看的这张参考图」（不是整条词条）
             { sep: true },
-            { label: '🗑', tip: '删除当前词条', onClick: () => zoomAskDelete() },
+            { label: '🗑', tip: '删除当前参考图', onClick: () => zoomAskDeleteRef() },
           ],
         });
       }

@@ -337,21 +337,46 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card.drop-target { border-color: var(--danger) !important; background: #2a1a20 !important;
   box-shadow: 0 0 0 2px var(--danger); }
 
-/* 编辑弹窗 */
+/* 编辑弹窗（视觉方案 A · 霓虹描边） */
 .edit-overlay {
   position: fixed; inset: 0; z-index: 10000;
-  background: rgba(0,0,0,0.7);
+  background: rgba(0,0,0,0.72);
   display: flex; align-items: center; justify-content: center;
 }
-.edit-dialog {
-  width: 420px; max-width: 90vw;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 10px; padding: 20px 22px;
-  display: flex; flex-direction: column; gap: 14px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+/* 遮罩层细网格，压住纯黑的沉闷感 */
+.edit-overlay::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px);
+  background-size: 28px 28px;
 }
-.edit-dialog .title { font-size: 14px; font-weight: 600; color: var(--text);
-  display: flex; align-items: center; gap: 8px; }
+/* 渐变描边用 background 双层实现（padding-box + border-box），无需额外 DOM */
+.edit-dialog {
+  position: relative;
+  width: 560px; max-width: 92vw;
+  border: 1px solid transparent; border-radius: 16px;
+  padding: 22px 24px 20px;
+  display: flex; flex-direction: column; gap: 16px;
+  background:
+    linear-gradient(180deg, #262b34, #1e222a 70%) padding-box,
+    linear-gradient(140deg, rgba(79,143,247,0.85), rgba(167,139,250,0.55) 42%, rgba(34,211,238,0.7)) border-box;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.62), 0 0 26px rgba(79,143,247,0.14);
+  animation: zh-dialog-glow 4.5s ease-in-out infinite;
+}
+@keyframes zh-dialog-glow {
+  0%, 100% { box-shadow: 0 24px 70px rgba(0,0,0,0.62), 0 0 26px rgba(79,143,247,0.14); }
+  50%      { box-shadow: 0 24px 70px rgba(0,0,0,0.62), 0 0 40px rgba(167,139,250,0.26); }
+}
+@media (prefers-reduced-motion: reduce) { .edit-dialog { animation: none; } }
+/* 标题左侧渐变光条 */
+.edit-dialog .title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; color: var(--text);
+  display: flex; align-items: center; gap: 11px; }
+.edit-dialog .title::before {
+  content: ""; width: 4px; height: 20px; border-radius: 3px; flex-shrink: 0;
+  background: linear-gradient(180deg, #22d3ee, var(--primary) 55%, var(--purple));
+  box-shadow: 0 0 12px rgba(79,143,247,0.7);
+}
 /* 编辑弹窗标题右侧删除红叉（复用卡片删除红叉风格） */
 .edit-dialog .title .edit-del { width: 22px; height: 22px; border-radius: 4px;
   background: transparent; color: var(--text-3);
@@ -360,24 +385,81 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; transition: all 0.12s; padding: 0; margin-left: auto; }
 .edit-dialog .title .edit-del:hover { background: rgba(229, 72, 77, 0.18); color: #ff6b6b; border-color: #e5484d; }
-.edit-dialog .field { display: flex; flex-direction: column; gap: 6px; }
-.edit-dialog .field label { color: var(--text-3); font-size: 12px; }
+/* 字段：斜切色块标签 + 右侧实时计数 */
+.edit-dialog .field { display: flex; flex-direction: column; gap: 7px; }
+.edit-dialog .field-head { display: flex; align-items: center; gap: 8px; }
+.edit-dialog .field-head .count { margin-left: auto; font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; }
+.edit-dialog .field > label,
+.edit-dialog .field-head > label {
+  align-self: flex-start;
+  color: #cfe1ff; font-size: 11px; letter-spacing: 1.2px;
+  padding: 3px 10px 3px 9px; border-radius: 3px 8px 8px 3px;
+  background: linear-gradient(90deg, rgba(79,143,247,0.28), rgba(79,143,247,0.06));
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+}
+.edit-dialog .field.cn > label,
+.edit-dialog .field.cn .field-head > label { color: #ddcffd;
+  background: linear-gradient(90deg, rgba(167,139,250,0.28), rgba(167,139,250,0.06)); }
 .edit-dialog input[type="number"],
-.edit-dialog input[type="text"] {
-  padding: 8px 10px; font-size: 13px;
-  background: #0b0e13; color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px; outline: none;
-}
+.edit-dialog input[type="text"],
 .edit-dialog textarea {
-  padding: 8px 10px; font-size: 13px;
-  background: #0b0e13; color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px; outline: none;
-  resize: vertical; font-family: inherit; line-height: 1.5;
+  width: 100%; padding: 10px 12px; font-size: 13px;
+  background: #0c1016; color: var(--text);
+  border: 1px solid #263141; border-radius: 9px; outline: none;
+  font-family: inherit; line-height: 1.62;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
 }
-.edit-dialog input:focus { border-color: var(--primary); }
-.edit-dialog textarea:focus { border-color: var(--primary); }
+.edit-dialog textarea { resize: vertical; }
+.edit-dialog input[type="text"] { font-weight: 600; letter-spacing: 0.2px; }
+/* 英文提示词走等宽，方便数逗号分段 */
+.edit-dialog .field.en textarea { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 12.5px; line-height: 1.72; }
+.edit-dialog input:hover, .edit-dialog textarea:hover { border-color: #33425a; }
+.edit-dialog input:focus, .edit-dialog textarea:focus {
+  border-color: transparent; background: #0b1018;
+  box-shadow: 0 0 0 1.5px rgba(79,143,247,0.9), 0 0 22px rgba(79,143,247,0.24),
+              inset 0 0 22px rgba(79,143,247,0.07);
+}
+.edit-dialog .field.cn textarea:focus {
+  box-shadow: 0 0 0 1.5px rgba(167,139,250,0.9), 0 0 22px rgba(167,139,250,0.24),
+              inset 0 0 22px rgba(167,139,250,0.07);
+}
 .edit-dialog .hint { color: var(--text-3); font-size: 11px; }
-.edit-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.edit-dialog .hint b { color: #cfe1ff; font-weight: 600; }
+/* 英/中之间的渐变分隔线 */
+.edit-dialog .sep { height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(79,143,247,0.28), rgba(167,139,250,0.2), transparent); }
+.edit-dialog .actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 4px; }
+.edit-dialog .actions .btn,
+.edit-dialog .actions button {
+  font-family: inherit; font-size: 12.5px; cursor: pointer;
+  padding: 8px 16px; border-radius: 8px;
+  color: var(--text-2); background: #1a1f28; border: 1px solid #303c4d;
+  transition: all 0.16s;
+}
+.edit-dialog .actions .btn:hover,
+.edit-dialog .actions button:hover { color: var(--text); background: #202733; border-color: #3d4c63; }
+.edit-dialog .actions .btn:disabled,
+.edit-dialog .actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 保存/确认：渐变主按钮 */
+.edit-dialog .actions .primary,
+.edit-dialog .actions .zhg-rename-confirm {
+  color: #fff; font-weight: 600; border-color: transparent;
+  background: linear-gradient(135deg, #4f8ff7, #6f6bf5 55%, #a78bfa);
+  box-shadow: 0 6px 18px rgba(79,143,247,0.34), inset 0 1px 0 rgba(255,255,255,0.28);
+}
+.edit-dialog .actions .primary:hover,
+.edit-dialog .actions .zhg-rename-confirm:hover { filter: brightness(1.08);
+  box-shadow: 0 8px 24px rgba(79,143,247,0.46), inset 0 1px 0 rgba(255,255,255,0.3); }
+/* 删除：靠左的危险操作 */
+.edit-dialog .actions .danger {
+  margin-right: auto; color: #ff8fae;
+  border-color: rgba(255,92,138,0.32); background: rgba(255,92,138,0.07);
+}
+.edit-dialog .actions .danger:hover { color: var(--danger);
+  border-color: rgba(255,92,138,0.62); background: rgba(255,92,138,0.14); }
 .edit-dialog .path { color: var(--text-3); font-size: 11px; word-break: break-all;
   font-family: ui-monospace, Consolas, monospace; }
 

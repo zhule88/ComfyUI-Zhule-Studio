@@ -413,7 +413,6 @@ const App = {
                             @click="setIconSize(opt.size)">{{ opt.label }}</button>
                   </div>
                 </div>
-                <div class="settings-hint">调节卡片图片上操作图标（图库：右上竖排选择 / 放大 / 删除；词库：左上竖排选择 / 放大 / 静音 / 删除 / 编辑 / 上传；右上圆钮：进入详情 / 放大预览 / 删除参考图）的大小，档位点选后即时生效。</div>
                 <div class="settings-row">
                   <span class="settings-label">隐藏被静音的提示词</span>
                   <label class="settings-switch">
@@ -421,7 +420,6 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
-                <div class="settings-hint">开启后，已静音（Mute）的提示词在词库卡片列表和标签编辑面板里都不再展示；关闭则照常显示（仍不参与自动选词）。</div>
                 <div class="settings-subgroup-title"><span>标签</span></div>
                 <div class="settings-row">
                   <span class="settings-label">主题</span>

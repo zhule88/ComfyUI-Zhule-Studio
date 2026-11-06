@@ -293,13 +293,20 @@ export default {
           <input type="text" v-model="editWbName" spellcheck="false"
                  @keydown.enter="submitEditWb" @keydown.esc="cancelEditWb">
         </div>
-        <div class="field">
-          <label>提示词（英）</label>
+        <div class="field en">
+          <div class="field-head">
+            <label>提示词（英）</label>
+            <span class="count">{{ (editWbContent || '').length }} 字</span>
+          </div>
           <textarea v-model="editWbContent" rows="4" spellcheck="false"
                     @keydown.ctrl.enter="submitEditWb" @keydown.esc="cancelEditWb"></textarea>
         </div>
-        <div class="field">
-          <label>提示词（中）</label>
+        <div class="sep"></div>
+        <div class="field cn">
+          <div class="field-head">
+            <label>提示词（中）</label>
+            <span class="count">{{ (editWbContentCn || '').length }} 字</span>
+          </div>
           <textarea v-model="editWbContentCn" rows="3" spellcheck="false"
                     @keydown.ctrl.enter="submitEditWb" @keydown.esc="cancelEditWb"></textarea>
           <span v-if="editWbIsTxt" class="hint">散 txt 卡片暂不支持中文提示词</span>
