@@ -2421,7 +2421,10 @@ const submitAddTab = async () => {
       for (const item of pools) {
         const c = poolCandidates(item);
         if (!c || !c.length) return null;
-        lists.push([...c].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')).map(file => ({ tab: item.tab, file, _poolKey: poolKeyFor(item) })));
+        // 顺序一律沿用池内原始顺序（后端 ORDER BY sort_order, name, id，与词库卡片顺序、
+        // 用户拖拽排序一致）。绝不能在这里按 name 拼音重排，否则遍历/填充会以「拼音顺序」
+        // 而非池子可见顺序推进，表现为「不按分类顺序、跳来跳去」。
+        lists.push(c.map(file => ({ tab: item.tab, file, _poolKey: poolKeyFor(item) })));
       }
       const total = lists.reduce((n, l) => n * l.length, 1);
       if (total > limit) return { tooMany: total };
@@ -2625,8 +2628,12 @@ const submitAddTab = async () => {
         let traverseInfo = null;
         if (data.traverseMode) {
           // 遍历模式（单次平等）：遍历池 ∞ 的词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条；
-          // 「次数」= 最外层大 for —— 整套组合重复跑 rounds 轮（0 按 1 轮），
-          // 没有任何遍历池时单轮只有一条空组合，等效于「每轮把随机池各抽一条」。
+          // 「次数」= 最外层大 for —— 整套组合重复跑 rounds 轮（0 按 1 轮）。
+          // 必须至少有一个 ∞ 遍历池：否则单轮只有一条空组合，等效于「每轮把随机池各抽一条」，
+          // 跑起来就是完全乱序（与用户「先做完这一类再下一类」的预期相反），这里直接拦截说明。
+          if (!traversePoolItems().length) {
+            return showToast('遍历模式需要至少一个遍历池 ∞：右键池子把 🎲 改成 ∞ 才会按顺序穷举，否则每条都是现抽、顺序会全乱', 'warn', 4600);
+          }
           const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
           if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
           if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
@@ -2643,6 +2650,8 @@ const submitAddTab = async () => {
           zhuleLog('runGenerate: 遍历模式全组合', '遍历池=', traversePoolItems().map(p => p.tab),
             '随机池=', randomPoolItems().map(p => p.tab),
             '单轮组合数=', built.length, '次数(外层轮数)=', rounds, '总任务数=', combos.length);
+          // 顺序自检：打印单轮前 10 条组合的词条名，方便一眼核对是否按池内顺序推进
+          zhuleLog('runGenerate: 遍历顺序抽样', built.slice(0, 10).map(c => c.map(e => e.name || e.relPath).join(' + ')));
         } else {
           if (!traversePoolItems().length) return showToast('填充模式需要至少一个遍历池 ∞：右键可把随机池 🎲 改成遍历池', 'warn', 4200);
           const built = buildTraverseCombos();
@@ -2686,8 +2695,14 @@ const submitAddTab = async () => {
         runBusy = true;
         if (data.traverseMode) {
           const info = traverseInfo || { rounds: 1, oneRound: runTotal };
-          showToast('遍历模式：' + data.randomPools.length + ' 个池子，单轮 ' + info.oneRound + ' 个组合 × 次数 '
-            + info.rounds + ' 轮 = ' + runTotal + ' 条任务，逐条提交', 'success', 3600);
+          // 池名一律打出来：跑之前一眼看清哪个池被当成「穷举」、哪个被当成「随机」，
+          // 避免"我以为角色是 ∞ 实际却是 🎲"的误判（角色随机出图就是这里错了）。
+          const poolName = (p) => (p.display || p.tab) + (p.kind === 'chip' && p.path && p.path.length ? '/' + p.path[p.path.length - 1] : '');
+          const tNames = traversePoolItems().map(poolName);
+          const rNames = randomPoolItems().map(poolName);
+          showToast('遍历模式｜穷举池 ∞：' + (tNames.join('、') || '（无）')
+            + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
+            + '｜单轮 ' + info.oneRound + ' 组合 × ' + info.rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
         }
         runNextInQueue();
         return;
