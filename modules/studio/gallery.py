@@ -1311,7 +1311,13 @@ def _gallery_ids_key(query):
         v = query.get(k)
         if v:
             parts.append(f"{k}={v}")
-    return "|".join(parts) + "|built=" + str(_index_built_at) + "|bld=" + str(_index_building)
+    # 版本号必须用 _index_rev（新增入库/删除/改名/打标都会 +1），不能只挂 _index_built_at。
+    # 历史 bug：_index_built_at 仅在「重建索引」时更新，新图入库后本缓存永不失效 →
+    # /gallery/ids 命中池停留在旧快照（缺新图、多已删图），而 /gallery 列表读的是实时 _index。
+    # 于是点开刚生成的图，命中池里找不到它 → 详情位置恒显示「— / N」，
+    # 左右箭头提示「当前图片不在筛选结果内，无法按筛选翻页」。
+    return ("|".join(parts) + "|rev=" + str(_index_rev)
+            + "|built=" + str(_index_built_at) + "|bld=" + str(_index_building))
 
 
 def _gallery_ids(query):

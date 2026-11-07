@@ -374,7 +374,6 @@ export default {
             </div>
             <div v-show="acc.override" class="acc-body">
               <textarea v-model="editOverride" rows="2" spellcheck="false" placeholder="只删「别的词条」里命中的逗号段，不删自己。多条用逗号分隔；段内任一词命中即排除" @keydown.ctrl.enter="submitEdit"></textarea>
-              <span class="hint">例：发型词条写 hair → 角色词条自带的 long green hair 段被删，发型自己的 long hair 保留</span>
             </div>
           </div>
           </div>
@@ -2086,16 +2085,20 @@ const submitAddTab = async () => {
       zoomCtx.file = target;
       openZoomedFile(target);
     };
-    // 随机提示词：随机范围 = 当前提示词所在的筛选结果集合（非全部词条）
-    const zoomRandomWord = () => {
-      const cur = zoomCtx.file;
-      const list = filteredFiles.value;
-      if (!list.length) return;
-      let i = Math.floor(Math.random() * list.length);
-      if (list.length > 1 && list[i] === cur) i = (i + 1) % list.length;
-      const target = list[i];
-      zoomCtx.file = target;
-      openZoomedFile(target);
+    // 随机参考图：随机范围 = **当前提示词自己的参考图**，绝不跨提示词。
+    // 跨提示词切换只保留给大图标左右箭头（zoomWordAt），骰子不再换词条。
+    // 抽法：n 张里取 (n-1) 张均匀随机，跳过当前索引 —— 保证必然换一张且分布均匀。
+    const zoomRandomRef = () => {
+      const file = zoomCtx.file;
+      const imgs = (file && file.images) || [];
+      const n = imgs.length;
+      if (!n) return;
+      if (n === 1) { openZoomedFile(file); return; }
+      const cur = getImgIdx(file);
+      let i = Math.floor(Math.random() * (n - 1));
+      if (i >= cur) i += 1;
+      setImgIdx(file, i);
+      if (fullViewer) fullViewer.open(imageUrl(imgs[i]), file.name || '');
     };
     // 切换参考图：基于当前词条 file.images，dir=±1 上一张/下一张
     const zoomRefAt = (dir) => {
@@ -2117,7 +2120,7 @@ const submitAddTab = async () => {
             // 对称图标栏：大图标（外圈）切换提示词，小图标（内圈）切换参考图，骰子随机居中
             { label: '‹', tip: '上一提示词', size: 'lg', onClick: () => zoomWordAt(-1) },
             { label: '‹', tip: '上一张参考图', size: 'sm', onClick: () => zoomRefAt(-1) },
-            { label: '🎲', tip: '随机提示词（当前范围）', dice: true, onClick: zoomRandomWord },
+            { label: '🎲', tip: '随机参考图（当前提示词）', dice: true, onClick: zoomRandomRef },
             { label: '›', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
             { label: '›', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
             // 分隔线右侧放破坏性操作：删除「当前正在看的这张参考图」（不是整条词条）
@@ -2142,11 +2145,16 @@ const submitAddTab = async () => {
       setImgIdx(viewer.file, viewer.idx);
     };
     const viewerRandom = () => {
-      if (!viewer.file || !viewer.file.images || !viewer.file.images.length) return;
-      const n = viewer.file.images.length;
-      if (n > 1 && viewer.idx === getImgIdx(viewer.file)) viewer.idx = (viewer.idx + 1) % n;
-      else viewer.idx = getImgIdx(viewer.file);
-      setImgIdx(viewer.file, viewer.idx);
+      const f = viewer.file;
+      const n = (f && f.images && f.images.length) || 0;
+      if (!n) return;
+      if (n === 1) { viewer.idx = 0; setImgIdx(f, 0); return; }
+      // 真随机且必然换一张（旧实现 n>1 时只是 +1，等于「下一张」）
+      const cur = viewer.idx;
+      let i = Math.floor(Math.random() * (n - 1));
+      if (i >= cur) i += 1;
+      viewer.idx = i;
+      setImgIdx(f, i);
     };
 
     const removeSelected = (idx) => {
