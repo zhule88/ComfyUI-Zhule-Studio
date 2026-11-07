@@ -20,7 +20,29 @@ export function useMarqueeSelect(options = {}) {
   let curX = 0, curY = 0;
   let startScrollTop = 0, startScrollLeft = 0;
   let scrollEl = null;
+  let clipEl = null;
   let rafLoopId = 0;
+
+  // 视觉裁剪矩形（视口坐标）= 容器矩形 ∩ 滚动容器可视矩形。
+  // 只裁到容器矩形不够：网格向上滚出视口后 container 的 top 变负，clamp 形同失效，
+  // 选框会一路画到视口顶部盖住顶部导航（词库/图库 tab）、工具栏等未被遮挡的区域。
+  // 因此必须再与滚动容器（.zhg-td-main 等）的可视矩形求交，保证选框永不越出图片区。
+  function getClipRect() {
+    const c = getContainer ? getContainer() : null;
+    if (!c) return null;
+    const cr = c.getBoundingClientRect();
+    let l = cr.left, t = cr.top, r = cr.right, b = cr.bottom;
+    if (clipEl && clipEl !== window) {
+      const vr = clipEl.getBoundingClientRect();
+      l = Math.max(l, vr.left);
+      t = Math.max(t, vr.top);
+      r = Math.min(r, vr.right);
+      b = Math.min(b, vr.bottom);
+    }
+    if (r < l) r = l;
+    if (b < t) b = t;
+    return { left: l, top: t, right: r, bottom: b };
+  }
 
   function findScrollEl(el) {
     if (!el || !el.parentElement) {
@@ -50,8 +72,9 @@ export function useMarqueeSelect(options = {}) {
   // 视觉框使用视口坐标系（position:fixed 挂 body）+ 滚动补偿：
   // 起点 = 按下时视口坐标减去滚动增量（滚动后仍钉在按下时的视口位置），终点 = 鼠标当前视口坐标。
   // 滚动时视觉框保持钉在起点/鼠标位置，不会随内容跑走（修复长按后滚动导致框错位、滚到底出现空白假区域）。
-  // 框边界 clamp 到容器视口矩形；滚动后容器顶部滚出视口时框允许画到负坐标（视口外自动不可见），
-  // 与筛选区重叠的部分由 .zhg-td-filters（z-index 100）盖住，视觉上不会覆盖筛选区。
+  // 框边界裁剪到「容器矩形 ∩ 滚动容器可视矩形」（getClipRect）；
+  // 只裁容器矩形会在网格滚出视口（container.top 变负）时失效，框会一路画到视口顶部盖住导航。
+  // 重叠部分另有 .zhg-td-filters / .zhg-toolbar（z-index 100）与 .navbar 兜底遮挡。
   // 该视口矩形与 computeHits 的容器内容矩形在数学上等价（都减去当前滚动偏移），视觉与命中保持一致。
   function draw() {
     if (!marqueeEl) return;
@@ -62,13 +85,12 @@ export function useMarqueeSelect(options = {}) {
     let t = Math.min(vy0, curY);
     let r = Math.max(vx0, curX);
     let b = Math.max(vy0, curY);
-    const c = getContainer ? getContainer() : null;
-    if (c) {
-      const cr = c.getBoundingClientRect();
-      l = Math.max(l, cr.left);
-      t = Math.max(t, cr.top);
-      r = Math.min(r, cr.right);
-      b = Math.min(b, cr.bottom);
+    const clip = getClipRect();
+    if (clip) {
+      l = Math.max(l, clip.left);
+      t = Math.max(t, clip.top);
+      r = Math.min(r, clip.right);
+      b = Math.min(b, clip.bottom);
       if (r < l) r = l;
       if (b < t) b = t;
     }
@@ -105,19 +127,19 @@ export function useMarqueeSelect(options = {}) {
     let t = Math.min(sy, ey);
     let r = Math.max(sx, ex);
     let b = Math.max(sy, ey);
-    const _cr = c.getBoundingClientRect();
-    // 命中框同样 clamp 到容器内容坐标，与视觉框（容器视口坐标）严格一致：
-    // 拖拽越出图片区域时，不把容器外的区域计入命中。
-    const cl = _cr.left + cur.left;
-    const ct = _cr.top + cur.top;
-    const crr = _cr.right + cur.left;
-    const cbb = _cr.bottom + cur.top;
-    l = Math.max(l, cl);
-    t = Math.max(t, ct);
-    r = Math.min(r, crr);
-    b = Math.min(b, cbb);
-    if (r < l) r = l;
-    if (b < t) b = t;
+    const _clip = getClipRect();
+    if (_clip) {
+      const cl = _clip.left + cur.left;
+      const ct = _clip.top + cur.top;
+      const crr = _clip.right + cur.left;
+      const cbb = _clip.bottom + cur.top;
+      l = Math.max(l, cl);
+      t = Math.max(t, ct);
+      r = Math.min(r, crr);
+      b = Math.min(b, cbb);
+      if (r < l) r = l;
+      if (b < t) b = t;
+    }
     c.querySelectorAll(selector).forEach((el) => {
       const rc = el.getBoundingClientRect();
       const k = getKey(el);
@@ -153,6 +175,7 @@ export function useMarqueeSelect(options = {}) {
     curY = startY;
 
     scrollEl = findScrollEl(gridEl);
+    clipEl = (scrollEl && scrollEl !== window) ? scrollEl : null;
     const sc = readScroll();
     startScrollTop = sc.top;
     startScrollLeft = sc.left;
@@ -165,6 +188,7 @@ export function useMarqueeSelect(options = {}) {
       if (ev.key === 'Escape' && active) {
         cancelled = true;
         active = false;
+        clipEl = null;
         destroy();
       }
     };
@@ -220,6 +244,7 @@ export function useMarqueeSelect(options = {}) {
         });
       }
       active = false;
+      clipEl = null;
       destroy();
     };
 

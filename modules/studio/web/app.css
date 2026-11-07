@@ -37,6 +37,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 
 /* 导航 */
 .navbar { display: flex; align-items: center; gap: 16px;
+  /* 层级高于框选 marquee（z-index 50）：即使选框因滚动越界到视口顶部，也不会盖住词库/图库导航 */
+  position: relative;
+  z-index: 200;
   padding: 10px 18px; border-bottom: 1px solid var(--border-2);
   background: var(--bg-2); flex-shrink: 0; }
 .logo { font-size: 14px; font-weight: 700; color: var(--primary);
