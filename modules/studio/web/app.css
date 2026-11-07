@@ -104,7 +104,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
 .tab.dragging { opacity: 0.4; }
 .tab.drag-over { border-left: 2px solid var(--primary); }
-.tab.in-pool { color: var(--purple); }
+.tab.in-pool { color: var(--purple); font-weight: 600; }
 .tab.in-pool.active { color: var(--purple); border-bottom-color: var(--purple); }
 .tab.has-selected { color: var(--accent); }
 .tab.has-selected::before { content: '●'; margin-right: 6px; font-size: 7px;
@@ -112,10 +112,20 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tab.active.has-selected { border-bottom-color: var(--accent); }
 .tab.in-pool.has-selected { color: var(--purple); }
 .tab.in-pool.has-selected::before { color: var(--purple); }
+/* 池子类型徽章：∞ 遍历池 = 紫色实线 + ∞（所有词条参与全组合）；🎲 随机池 = 淡蓝虚线 + 🎲（每次现抽 1 条） */
 .tab.in-pool::after {
-  content: "♻"; position: absolute; top: 4px; right: 4px; font-size: 9px;
+  content: "∞"; position: absolute; top: 4px; right: 4px; font-size: 9px;
   color: var(--purple); background: var(--bg-2); border-radius: 50%;
   width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
+}
+.tab.in-pool-random { color: var(--accent); }
+.tab.in-pool-random.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab.in-pool-random.has-selected { color: var(--accent); }
+.tab.in-pool-random.has-selected::before { color: var(--accent); }
+.tab.in-pool-random::after {
+  content: "🎲"; position: absolute; top: 3px; right: 3px; font-size: 8px;
+  background: var(--bg-2); border: 1px dashed var(--accent); border-radius: 50%;
+  width: 13px; height: 13px; display: flex; align-items: center; justify-content: center;
 }
 
 /* Chips */
@@ -146,13 +156,22 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .chip:hover { background: var(--card-hover); color: var(--text); }
 .chip.active { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
 .chip.clear { color: var(--text-3); font-style: italic; }
-.chip.in-pool { border-color: var(--purple); color: var(--purple);
+.chip.in-pool { border-color: var(--purple); color: var(--purple); font-weight: 600;
   box-shadow: inset 3px 0 0 0 var(--purple); padding-left: 14px; }
 .chip.in-pool.active { background: var(--purple-dim); border-color: var(--purple); color: #fff; }
 .chip.in-pool::after {
-  content: "♻"; position: absolute; top: -6px; right: -4px; font-size: 9px;
+  content: "∞"; position: absolute; top: -6px; right: -4px; font-size: 9px;
   color: var(--purple); background: var(--bg); border-radius: 50%;
   width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
+}
+/* 🎲 随机池：虚线框 + 左侧虚线，与 ∞ 遍历池（实线加粗）一眼区分 */
+.chip.in-pool-random { border-color: var(--accent); border-style: dashed; color: var(--accent);
+  border-left-width: 3px; padding-left: 12px; }
+.chip.in-pool-random.active { background: var(--primary-dim); border-color: var(--accent); color: #fff; }
+.chip.in-pool-random::after {
+  content: "🎲"; position: absolute; top: -8px; right: -5px; font-size: 8px;
+  background: var(--bg); border: 1px dashed var(--accent); border-radius: 50%;
+  width: 13px; height: 13px; display: flex; align-items: center; justify-content: center;
 }
 
 /* 网格 */

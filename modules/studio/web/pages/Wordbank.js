@@ -15,11 +15,10 @@ export default {
           <button class="btn" :class="{active: pref.translate}" @click="toggleTranslate">
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
-          <button class="btn" @click="singleRandom" data-tip="从每个随机池各抽一条">🎲</button>
-          <button class="btn" :class="{active: data.randomMode}" @click="toggleRandomMode" data-tip="随机模式：每个池子各抽一条，逐条出图">🔄</button>
-          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式：以当前参考图最多的提示词为基准，设置0把不足的补到基准数，设置N补到（基准+N）；集中填充倒满一桶再下一桶，直到全部达标">⏩</button>
-          <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：把右键选中的每个池子的所有词条全部组合跑一遍（每个组合 1 张）；「次数」是最外层大 for，即整套组合重复跑几轮（0 按 1 轮）">🔁</button>
-          <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空随机池">🗑</button>
+          <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
+          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式：遍历池内每条提示词的参考图补到同一数量（以最多的为基准，设 0 补到基准、设 N 补到基准+N），集中倒满一桶再下一桶；随机池照常每组现抽 1 条">⏩</button>
+          <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：遍历池 ∞ 的词条做全组合各跑一遍，随机池 🎲 每个组合现抽 1 条；次数 = 整套组合重复几轮">🔁</button>
+          <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空所有池子">🗑</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
@@ -34,7 +33,7 @@ export default {
           <button class="tab-add" data-tip="新增分类" @click="openAddTab">＋</button>
           <div v-for="name in tabs" :key="name"
                class="tab"
-               :class="{active: data.activeTab === name, 'in-pool': isTabInPool(name), 'has-selected': tabHasSelected(name)}"
+               :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'has-selected': tabHasSelected(name)}"
                draggable="true"
                @click="switchTab(name)"
                @contextmenu.prevent="togglePoolForTab(name)"
@@ -63,7 +62,7 @@ export default {
                    @click="clearChip(depth)">全部</div>
               <div v-for="name in line" :key="name"
                    class="chip"
-                   :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipInPool(depth, name)}]"
+                   :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipTraversePool(depth, name), 'in-pool-random': isChipInPool(depth, name) && !isChipTraversePool(depth, name)}]"
                    :style="chipStyle(name)"
                    draggable="true"
                    @click="toggleChip(depth, name)"
@@ -177,7 +176,7 @@ export default {
         <div class="bottom">
           <div class="selected-header">
             <span>已选 <span class="selected-count">{{ data.selected.length }}</span> 项</span>
-            <span style="color:var(--text-3);font-size:11px;">右键 tab 或 chip 加入随机池 ♻ ｜ 拖动 tab / chip / 已选标签排序</span>
+            <span style="color:var(--text-3);font-size:11px;">右键 tab / chip 循环切换：🎲 随机池 → ∞ 遍历池 → 移出 ｜ 拖动 tab / chip / 已选标签排序</span>
             <div class="header-actions">
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :data-tip="selectedCollapsed ? '展开已选区' : '收起已选区'"
@@ -214,7 +213,7 @@ export default {
               <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
             </div>
           </div>
-          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.randomMode}">{{ previewText }}</div>
+          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">{{ previewText }}</div>
         </div>
       </template>
 
@@ -481,10 +480,13 @@ export default {
       selected: [],
       imgIndices: {},
       randomPools: [],
+      // 池子只有两种类型（由每个池自己的 traverse 字段标记，不再是全局模式）：
+      // 🎲 随机池：traverse=false，每次现抽 1 条；∞ 遍历池：traverse=true，所有词条参与全组合。
+      // randomMode 仅为旧存档兼容字段，不再有界面入口，读档时会被迁移成池类型
       randomMode: false,
-      // fillMode：填充模式（原「遍历模式」，把各池提示词的参考图补到统一目标数量，集中倒满一桶再下一桶）
+      // fillMode：填充模式（结果平等，把遍历池提示词的参考图补到统一目标数量，集中倒满一桶再下一桶）
       fillMode: false,
-      // traverseMode：遍历模式（把各池所有词条做笛卡尔积全跑一遍，「次数」= 最外层大 for，整套组合重复几轮）
+      // traverseMode：遍历模式（单次平等，遍历池所有词条做笛卡尔积全跑，「次数」是最外层大 for，整套组合重复几轮）
       traverseMode: false,
     });
 
@@ -555,10 +557,10 @@ export default {
         selections: data.selections,
         selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
         randomPools: data.randomPools,
-        randomMode: data.randomMode,
-        // 模式存档版本：2 起区分 fillMode（填充）/traverseMode（遍历）；旧存档无 modeVer，
+        // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
+        // 2 起区分 fillMode（填充）/traverseMode（遍历）；旧存档无 modeVer。
         // 其 traverseMode 字段是旧的「填充」语义，恢复时需迁移到 fillMode
-        modeVer: 2,
+        modeVer: 3,
         fillMode: data.fillMode,
         traverseMode: data.traverseMode,
         imgIndices: data.imgIndices,
@@ -670,17 +672,27 @@ export default {
           }
           data.randomPools = clean;
         }
+        // 池类型：旧存档的池没有 traverse 字段 → 一律视为随机池 🎲（与旧行为一致）
+        data.randomPools.forEach(it => { it.traverse = !!it.traverse; });
         if (typeof state.randomMode === 'boolean') data.randomMode = state.randomMode;
-        if (state.modeVer === 2) {
+        if (state.modeVer >= 2) {
           if (typeof state.fillMode === 'boolean') data.fillMode = state.fillMode;
           if (typeof state.traverseMode === 'boolean') data.traverseMode = state.traverseMode;
         } else if (typeof state.traverseMode === 'boolean') {
           // 旧存档（modeVer < 2）：traverseMode 是旧的「填充」语义，迁移为 fillMode
           data.fillMode = state.traverseMode;
         }
-        // 三模式互斥兜底：旧存档或手改存档可能同时为 true，随机优先，其次填充，最后遍历
-        if (data.randomMode) { data.fillMode = false; data.traverseMode = false; }
-        else if (data.fillMode) { data.traverseMode = false; }
+        // modeVer < 3 迁移：旧「随机模式 🔄」= 各池各抽一条逐条出图，
+        // 在新模型里等价于「所有池都是随机池 🎲 + 遍历跑法（没有遍历池时每轮各抽一条）」。
+        if (!(state.modeVer >= 3) && data.randomMode) {
+          data.randomMode = false;
+          data.fillMode = false;
+          data.traverseMode = true;
+          data.randomPools.forEach(it => { it.traverse = false; });
+        }
+        data.randomMode = false;
+        // 两模式互斥兜底：旧存档或手改存档可能同时为 true，填充优先
+        if (data.fillMode) data.traverseMode = false;
         if (state.imgIndices && typeof state.imgIndices === 'object') data.imgIndices = state.imgIndices;
         if (state.selections && typeof state.selections === 'object') {
           Object.keys(state.selections).forEach(t => {
@@ -1699,28 +1711,31 @@ export default {
     const withRemoved = (ph) => (ph.removed ? '（排除 ' + ph.removed + ' 段）' + (ph.text || '（空）') : (ph.text || '（空）'));
 
     const previewText = computed(() => {
-      if (data.randomMode || data.fillMode || data.traverseMode) {
-        const modeName = data.traverseMode ? '遍历' : (data.fillMode ? '填充' : '随机');
+      if (data.fillMode || data.traverseMode) {
+        const modeName = data.traverseMode ? '遍历' : '填充';
         const filled = data.selected.filter(s => !s._ph || s._filled);
         if (filled.length) {
           return modeName + '抽取：' + withRemoved(composePreview(filled));
         }
         if (data.randomPools.length) {
-          const display = data.randomPools.map(p => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display));
-          let perPool = '每池抽 1 条';
+          const lab = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
+          const trav = data.randomPools.filter(it => it.traverse).map(lab);
+          const rnd = data.randomPools.filter(it => !it.traverse).map(lab);
+          const parts = [];
+          if (trav.length) parts.push('∞ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
+          if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
+          const rndNote = rnd.length ? '；随机池每组合现抽 1 条' : '';
           let extra = '';
           if (data.traverseMode) {
-            // 遍历模式：次数是最外层大 for —— 整套组合重复跑 rounds 轮
+            // 遍历模式：次数是最外层大 for —— 整套遍历组合重复跑 rounds 轮
             const rounds = Math.max(1, Number(pref.genCount) || 0);
-            perPool = '各池全部组合';
-            extra = '；组合顺序外层 = 靠前的池「' + display[0]
-              + '」；次数 ' + rounds + ' 是最外层大 for，整套组合重复跑 ' + rounds + ' 轮';
-          } else if (data.fillMode) {
-            extra = '，目标 = 当前最多数量 + ' + pref.genCount + '（0 则补到最多数量），集中填充';
+            extra = (trav.length ? '；遍历池做全组合，次数 ' + rounds + ' = 整套组合重复 ' + rounds + ' 轮' : '；无遍历池，次数 ' + rounds + ' = 每轮各抽 1 条') + rndNote;
+          } else {
+            extra = '；目标 = 遍历池当前最多参考图数 + ' + pref.genCount + '（设 0 则补到最多那个的数量），集中填充' + rndNote;
           }
-          return modeName + '模式：' + display.length + ' 个池子 [' + display.join(' | ') + ']，' + perPool + extra;
+          return modeName + '模式：' + parts.join(' → ') + extra;
         }
-        return modeName + '模式已开，但随机池为空。右键 tab 或 chip 加入';
+        return modeName + '模式已开，但池子为空。右键 tab / chip 加入随机池，再右键可改成遍历池 ∞';
       }
       const picked = data.selected.filter(s => !s._ph || s._filled);
       if (!picked.length) return '（空）';
@@ -1849,6 +1864,9 @@ export default {
     const selSummary = () => data.selected.map(s => (s._ph ? 'PH[' + s._poolKey + ']' : (s._poolKey ? 'R[' + s._poolKey + ']' + s.name : s.name)));
 
     const isTabInPool = (tab) => data.randomPools.some(it => it.kind === 'tab' && it.tab === tab);
+    // 池类型（池级标记）：traverse=true 为遍历池 ∞（参与笛卡尔积全量穷举），
+    // traverse=false 为随机池 🎲（每个组合现抽 1 条）。右键在「无 → 随机 → 遍历 → 无」三态间循环
+    const isTabTraversePool = (tab) => data.randomPools.some(it => it.kind === 'tab' && it.tab === tab && !!it.traverse);
     // 大类下有任意提示词被选中时高亮该 tab
     const tabHasSelected = (name) => {
       const cards = bankData.value[name] || [];
@@ -1860,6 +1878,11 @@ export default {
       const tab = data.activeTab;
       const chipId = chipIdFor(tab, depth, name);
       return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, chipPathFor(depth, name))));
+    };
+    const isChipTraversePool = (depth, name) => {
+      const tab = data.activeTab;
+      const chipId = chipIdFor(tab, depth, name);
+      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && !!it.traverse && (it.chipId ? it.chipId === chipId : samePath(it.path, chipPathFor(depth, name))));
     };
 
     // ============ 交互 ============
@@ -1936,26 +1959,71 @@ const submitAddTab = async () => {
       sel[depth] = [];
       for (let i = depth + 1; i < maxDepth.value; i++) sel[i] = [];
     };
+    // 池类型变了（🎲↔∞）之后：该池占位符的名字前缀要跟着换，
+    // 之前的「已抽定」结果同步作废（池语义已变，旧抽定不再代表这个池），回到未填充占位符
+    const refreshPoolPlaceholder = (item) => {
+      const k = poolKeyFor(item);
+      const want = placeholderFor(item).name;
+      for (const s of data.selected) {
+        if (!s._ph || s._poolKey !== k) continue;
+        if (s.name === want && !s._filled) continue;
+        s.name = want;
+        s._filled = false;
+        delete s.relPath; delete s.id; delete s.content; delete s.content_cn;
+        delete s.neg; delete s.override;
+      }
+    };
+
+    // 右键 = 池类型三态循环：不在池 → 🎲 随机池 → ∞ 遍历池 → 移出池
     const togglePoolForTab = (tab) => {
       const idx = data.randomPools.findIndex(it => it.kind === 'tab' && it.tab === tab);
-      if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForTab: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
+      if (idx >= 0) {
+        const cur = data.randomPools[idx];
+        if (!cur.traverse) {
+          cur.traverse = true;
+          zhuleLog('togglePoolForTab: 🎲→∞ 改为遍历池', { kind: 'tab', tab }, 'selected=', selSummary());
+          refreshPoolPlaceholder(cur);
+          syncPlaceholders();
+          return showToast('「' + tabLabel(tab) + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
+        }
+        data.randomPools.splice(idx, 1);
+        zhuleLog('togglePoolForTab: 移出池', cur, 'selected=', selSummary());
+        syncPlaceholders();
+        return showToast('「' + tabLabel(tab) + '」已移出池', 'warn', 2000);
+      }
       const chk = hasPoolConflict(tab, '');
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'tab', tab, path: [], display: tab });
-      zhuleLog('togglePoolForTab: 加入池', { kind: 'tab', tab }, 'selected=', selSummary());
+      data.randomPools.push({ kind: 'tab', tab, path: [], display: tab, traverse: false });
+      zhuleLog('togglePoolForTab: 加入随机池', { kind: 'tab', tab }, 'selected=', selSummary());
       syncPlaceholders();
+      showToast('「' + tabLabel(tab) + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
     const togglePoolForChip = (depth, name) => {
       const path = chipPathFor(depth, name);
       const tab = data.activeTab;
       const chipId = chipIdFor(tab, depth, name);
       const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, path)));
-      if (idx >= 0) { const rm = data.randomPools[idx]; data.randomPools.splice(idx, 1); zhuleLog('togglePoolForChip: 移出池', rm, 'selected=', selSummary()); syncPlaceholders(); return; }
+      const label = path.map(dispKey).join('/');
+      if (idx >= 0) {
+        const cur = data.randomPools[idx];
+        if (!cur.traverse) {
+          cur.traverse = true;
+          zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId, display: label }, 'selected=', selSummary());
+          refreshPoolPlaceholder(cur);
+          syncPlaceholders();
+          return showToast('「' + label + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
+        }
+        data.randomPools.splice(idx, 1);
+        zhuleLog('togglePoolForChip: 移出池', cur, 'selected=', selSummary());
+        syncPlaceholders();
+        return showToast('「' + label + '」已移出池', 'warn', 2000);
+      }
       const chk = hasPoolConflict(tab, chipId);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') });
-      zhuleLog('togglePoolForChip: 加入池', { kind: 'chip', tab, path, chipId, display: path.map(dispKey).join('/') }, 'selected=', selSummary());
+      data.randomPools.push({ kind: 'chip', tab, path, chipId, display: label, traverse: false });
+      zhuleLog('togglePoolForChip: 加入随机池', { kind: 'chip', tab, path, chipId, display: label }, 'selected=', selSummary());
       syncPlaceholders();
+      showToast('「' + label + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
     const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
 
@@ -1965,7 +2033,7 @@ const submitAddTab = async () => {
       _ph: true,
       _poolKey: poolKeyFor(item),
       tab: item.tab,
-      name: item.kind === 'tab' ? tabLabel(item.tab) : dispKey(item.display || (item.path || []).map(dispKey).join('/') || ''),
+      name: (item.traverse ? '∞ ' : '🎲 ') + (item.kind === 'tab' ? tabLabel(item.tab) : dispKey(item.display || (item.path || []).map(dispKey).join('/') || '')),
     });
     // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:tab|逐层路径），用于「分类：抽中词条名」拼接
     const placeholderBaseName = (s) => {
@@ -1989,7 +2057,11 @@ const submitAddTab = async () => {
       });
       for (const item of data.randomPools) {
         const k = poolKeyFor(item);
-        if (!data.selected.some(s => s._ph && s._poolKey === k)) data.selected.push(placeholderFor(item));
+        const want = placeholderFor(item).name;
+        const existed = data.selected.find(s => s._ph && s._poolKey === k);
+        if (!existed) data.selected.push(placeholderFor(item));
+        // 未填充的占位符名字始终跟着池类型走（旧存档里的 ♻ / 无前缀名在这里被纠正）
+        else if (!existed._filled && existed.name !== want) existed.name = want;
       }
       zhuleLog('syncPlaceholders', 'poolKeys=', keys, 'selected=', selSummary());
     };
@@ -2208,14 +2280,8 @@ const submitAddTab = async () => {
       pref.genCount = 0;
       zhuleLog('clearAll', '已清空已选 + 随机池，次数归零');
     };
-    const toggleRandomMode = () => {
-      data.randomMode = !data.randomMode;
-      if (data.randomMode) {
-        // 切模式前先掐断正在跑的其他批次（填充/遍历）队列，避免两套任务交叉堆积
-        stopPoolRun('上一批任务');
-        data.fillMode = false; data.traverseMode = false;
-      }
-    };
+    // 池子跑法只有两种，互斥：遍历 🔁（单次平等，每个词条增量相同）与填充 ⏩（结果平等，追平图数）；
+    // 「随机」不再是模式，而是池子类型（🎲 随机池每次现抽一条），可融入以上任一种跑法。
     // 关闭任一「批量跑池」模式（填充 ⏩ / 遍历 🔁）时，立即掐断正在运行的队列，避免「取消后又补上」
     const stopPoolRun = (label) => {
       if (!runBusy && traverseTarget <= 0 && !runQueue.length) return;
@@ -2224,22 +2290,24 @@ const submitAddTab = async () => {
       runQueue = [];
       showToast('已停止' + label + '，本轮共提交 ' + runTotal + ' 条任务', 'warn', 3000);
     };
-    // 填充模式（原遍历模式）：目标数量式补跑
+    // 填充模式：结果平等——遍历池内每条提示词的参考图补到统一目标数量
     const toggleFillMode = () => {
       data.fillMode = !data.fillMode;
       if (data.fillMode) {
         stopPoolRun('上一批任务');
-        data.randomMode = false; data.traverseMode = false;
+        data.traverseMode = false;
+        const trav = data.randomPools.filter(it => it.traverse).length;
+        if (data.randomPools.length && !trav) showToast('当前没有遍历池 ∞：填充需要至少一个遍历池，右键可把池子从 🎲 改成 ∞', 'warn', 4200);
         return;
       }
       stopPoolRun('填充');
     };
-    // 遍历模式：各池全组合逐条提交，「次数」为最外层大 for（整套组合重复轮数）
+    // 遍历模式：单次平等——遍历池 ∞ 的词条做全组合各跑一遍，随机池 🎲 每个组合现抽 1 条，「次数」为整套组合重复轮数
     const toggleTraverseMode = () => {
       data.traverseMode = !data.traverseMode;
       if (data.traverseMode) {
         stopPoolRun('上一批任务');
-        data.randomMode = false; data.fillMode = false;
+        data.fillMode = false;
         return;
       }
       stopPoolRun('遍历');
@@ -2271,18 +2339,11 @@ const submitAddTab = async () => {
       return out;
     };
 
-    // 每个池子各抽一条，返回组合（随机模式用）
+    // 骰子 🎲：把每个随机池 🎲 的当前答案抽定（遍历池 ∞ 本来就是全跑，不需要抽取）
     const pickFromEachPool = () => {
-      if (!data.randomPools.length) { zhuleLog('pickFromEachPool: 随机池为空'); return null; }
-      const picks = [];
-      for (const item of data.randomPools) {
-        const c = poolCandidates(item);
-        if (!c || !c.length) { zhuleLog('pickFromEachPool: 候选为空返回null', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
-        const file = c[Math.floor(Math.random() * c.length)];
-        zhuleLog('pickFromEachPool: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, 'relPath=', file.relPath, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', _poolKey: poolKeyFor(item) });
-      }
-      return picks;
+      const rnd = data.randomPools.filter(it => !it.traverse);
+      if (!rnd.length) { zhuleLog('pickFromEachPool: 没有随机池（可能全被改成遍历池）'); return null; }
+      return pickFromPools(rnd);
     };
 
     // 遍历组合数上限：超出时提示精简随机池，避免一次生成过多
@@ -2323,13 +2384,41 @@ const submitAddTab = async () => {
       return out;
     };
 
-    // 遍历组合列表（填充模式与遍历模式共用）：各池候选按名称排序，
-    // 组合按「第一个池子变化最慢、最后一个最快」依次排列——即 randomPools 里靠前的池做外层大 for，
-    // 靠后的池做内层小 for；组合只含池条目（_pool 标记供目标数量判定），手选项的顺序由 arrangeBySelection 按标签栏还原
+    // 池子按类型拆分：遍历池 ∞ 参与笛卡尔积穷举，随机池 🎲 每个组合现抽 1 条（不放大组合数）。
+    const traversePoolItems = () => data.randomPools.filter(it => !!it.traverse);
+    const randomPoolItems = () => data.randomPools.filter(it => !it.traverse);
+
+    // 从给定的一批池子里各抽 1 条（随机池专用）；任一池候选为空返回 null
+    const pickFromPools = (pools) => {
+      const picks = [];
+      for (const item of pools) {
+        const c = poolCandidates(item);
+        if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
+        const file = c[Math.floor(Math.random() * c.length)];
+        zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', _poolKey: poolKeyFor(item), _pool: true });
+      }
+      return picks;
+    };
+    // 给一条「遍历池组合」补上随机池的现抽结果；没有随机池则原样返回，随机池抽空返回 null
+    const withRandomPick = (combo) => {
+      const rnd = randomPoolItems();
+      if (!rnd.length) return combo;
+      const picks = pickFromPools(rnd);
+      if (!picks) return null;
+      return combo.concat(picks);
+    };
+
+    // 遍历组合列表（遍历 🔁 与填充 ⏩ 共用）：只对遍历池 ∞ 做笛卡尔积，
+    // 组合按「第一个池变化最慢、最后一个最快」排列——即 randomPools 里靠前的遍历池做外层大 for；
+    // 随机池 🎲 不参与乘积，由 withRandomPick 在提交前现抽。
+    // 没有任何遍历池时返回 [[]]（单个空组合），整套跑法退化为「每轮各抽一条」。
     const buildTraverseCombos = (limit = TRAVERSE_MAX_COMBOS) => {
       if (!data.randomPools.length) return null;
+      const pools = traversePoolItems();
+      if (!pools.length) return [[]];
       const lists = [];
-      for (const item of data.randomPools) {
+      for (const item of pools) {
         const c = poolCandidates(item);
         if (!c || !c.length) return null;
         lists.push([...c].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')).map(file => ({ tab: item.tab, file, _poolKey: poolKeyFor(item) })));
@@ -2344,7 +2433,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _poolKey: e.file.content_cn, _pool: true, _poolKey: e._poolKey })));
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey })));
     };
 
     // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
@@ -2394,11 +2483,14 @@ const submitAddTab = async () => {
 
     const singleRandom = async () => {
       const ready = await ensurePoolData();
-      if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条，或词条已全部静音），请检查随机池', 'warn');
+      if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
+      if (!data.randomPools.filter(it => !it.traverse).length) {
+        return showToast('没有随机池 🎲 可抽：遍历池 ∞ 本来就是全跑，右键池子可在 🎲/∞ 切换', 'warn', 3600);
+      }
       const picked = pickFromEachPool();
-      if (!picked) return showToast('随机池为空或含空分类，右键 tab 或 chip 加入随机池', 'warn');
+      if (!picked) return showToast('随机池含空分类（该 tab 下暂无词条，或已全部静音），请检查池子', 'warn');
       updateRandomResults(picked);
-      showToast('已抽取：' + picked.map(s => s.name || s.content).join(' / ') + '，已填入黄色分类标签', 'success', 3200);
+      showToast('已抽定：' + picked.map(s => s.name || s.content).join(' / ') + '，已填入黄色分类标签（再点重抽）', 'success', 3200);
     };
 
     // ============ 池子模式逐条出图：驱动画布逐条运行，等 ack 再下一条 ============
@@ -2453,8 +2545,23 @@ const submitAddTab = async () => {
           if (built && !built.tooMany) {
             const pending = filterTraversePending(built, traverseTarget);
             if (pending.length) {
-              runQueue = pending.map(combo => arrangeBySelection(combo));
-              runTotal += pending.length;
+              // 遍历组合只含遍历池条目，提交前给每条补上随机池 🎲 的现抽结果
+              const arr = [];
+              let pickFail = false;
+              for (const combo of pending) {
+                const full = withRandomPick(combo);
+                if (!full) { pickFail = true; break; }
+                arr.push(arrangeBySelection(full));
+              }
+              if (pickFail) {
+                resetTraverseTarget();
+                runBusy = false;
+                runQueue = [];
+                showToast('随机池 🎲 抽不出词条（该分类下暂无可用词条），已停止填充', 'warn', 4000);
+                return;
+              }
+              runQueue = arr;
+              runTotal += arr.length;
               runBusy = true;
               runNextInQueue();
               return;
@@ -2508,43 +2615,39 @@ const submitAddTab = async () => {
 
     const runGenerate = async () => {
       const count = pref.genCount;
-      if (data.randomMode || data.fillMode || data.traverseMode) {
-        if (!data.randomPools.length) return showToast('随机池为空，右键 tab 或 chip 加入随机池', 'warn');
+      if (data.fillMode || data.traverseMode) {
+        if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
         const ready = await ensurePoolData();
-        if (!ready) return showToast('随机池含空分类（该 tab 下暂无词条，或词条已全部静音），请检查随机池', 'warn');
-        if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
+        if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
+      if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
         let combos;
         let traverseInfo = null;
-        if (data.randomMode) {
-          combos = [];
-          // 手选项（如已选角色「宵宫」）不丢，且顺序按标签栏 data.selected 原样保留：
-          // 占位符原位替换为本次抽中的池词条，因此随机项可以夹在手选项中间
-          const rndCount = count || 1;
-          for (let i = 0; i < rndCount; i++) {
-            const picked = pickFromEachPool();
-            if (!picked) return showToast('随机池含空分类、词条已全部静音，或数据未加载，请检查随机池', 'warn');
-            combos.push(arrangeBySelection(picked));
-          }
-        } else if (data.traverseMode) {
-          // 遍历模式：把各池所有词条做笛卡尔积全跑一遍；
+        if (data.traverseMode) {
+          // 遍历模式（单次平等）：遍历池 ∞ 的词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条；
           // 「次数」= 最外层大 for —— 整套组合重复跑 rounds 轮（0 按 1 轮），
-          // 每个组合 1 张，即第 r 轮把整套组合顺序再走一遍。
+          // 没有任何遍历池时单轮只有一条空组合，等效于「每轮把随机池各抽一条」。
           const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
-          if (!built) return showToast('遍历池含空分类或数据未加载，请检查随机池', 'warn');
-          if (built.tooMany) return showToast('组合数过多（' + built.tooMany + '），请精简随机池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
+          if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
+          if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
           const rounds = Math.max(1, count || 0);
           combos = [];
           for (let r = 0; r < rounds; r++) {
-            for (const combo of built) combos.push(arrangeBySelection(combo));
+            for (const combo of built) {
+              const full = withRandomPick(combo);
+              if (!full) return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000);
+              combos.push(arrangeBySelection(full));
+            }
           }
           traverseInfo = { rounds, oneRound: built.length };
-          zhuleLog('runGenerate: 遍历模式全组合', '池=', data.randomPools.map(p => p.tab),
+          zhuleLog('runGenerate: 遍历模式全组合', '遍历池=', traversePoolItems().map(p => p.tab),
+            '随机池=', randomPoolItems().map(p => p.tab),
             '单轮组合数=', built.length, '次数(外层轮数)=', rounds, '总任务数=', combos.length);
         } else {
+          if (!traversePoolItems().length) return showToast('填充模式需要至少一个遍历池 ∞：右键可把随机池 🎲 改成遍历池', 'warn', 4200);
           const built = buildTraverseCombos();
-          if (!built) return showToast('填充池含空分类或数据未加载，请检查随机池', 'warn');
-          if (built.tooMany) return showToast('组合数过多（' + built.tooMany + '），请精简随机池（上限 ' + TRAVERSE_MAX_COMBOS + '）', 'warn', 4000);
+          if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
+          if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_MAX_COMBOS + '）', 'warn', 4000);
           // 目标数量：以当前池条目参考图数最多的为基准（maxGot），
           // 设置 0 时目标 = 基准，把不足的提示词全部补到当前最多那个的数量；
           // 设置自然数 N 时目标 = 基准 + N，所有提示词补到（最多数量 + N）。
@@ -2569,7 +2672,12 @@ const submitAddTab = async () => {
             resetTraverseTarget();
             return showToast('填充池提示词参考图均已达到目标数量 ' + traverseTarget + '，无需补跑', 'success', 3000);
           }
-          combos = pending.map(combo => arrangeBySelection(combo));
+          combos = [];
+          for (const combo of pending) {
+            const full = withRandomPick(combo);
+            if (!full) { resetTraverseTarget(); return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000); }
+            combos.push(arrangeBySelection(full));
+          }
         }
         // 遍历模式不做目标数量补跑，清掉可能残留的填充目标，避免队列跑完后又进入补跑循环
         if (data.traverseMode) resetTraverseTarget();
@@ -3069,7 +3177,7 @@ const submitAddTab = async () => {
       selectedCollapsed, toggleSelectedCollapsed,
       imageUrl, getImgIdx, displayContent, isFileSelected,
       defaultImageUrl,
-      isTabInPool, isChipInPool, tabHasSelected,
+      isTabInPool, isChipInPool, isTabTraversePool, isChipTraversePool, tabHasSelected,
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       canAddChip, chipParentLabel, canAddCard, addCardParentLabel, addCardIsTxt,
@@ -3079,7 +3187,7 @@ const submitAddTab = async () => {
       toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
-      removeSelected, clearAll, toggleRandomMode, toggleFillMode, toggleTraverseMode, singleRandom, runGenerate,
+      removeSelected, clearAll, toggleFillMode, toggleTraverseMode, singleRandom, runGenerate,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,
