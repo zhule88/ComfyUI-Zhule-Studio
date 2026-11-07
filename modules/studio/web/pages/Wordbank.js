@@ -27,6 +27,16 @@ export default {
           </div>
           <button class="btn" @click="saveBankOrder" :disabled="bankSaving"
                   data-tip="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
+          <button class="btn icon-btn" @click.stop="bankPrefOpen = !bankPrefOpen" data-tip="词库专属设置">⚙</button>
+          <!-- 词库专属设置（不是通用设置，只作用于本页） -->
+          <div v-if="bankPrefOpen" class="bank-pref">
+            <div class="bp-title">词库设置</div>
+            <label class="bp-row" @click.stop>
+              <input type="checkbox" v-model="pref.showNegPreview">
+              <span>预览框显示负面提示词</span>
+            </label>
+            <div class="bp-hint">关闭后预览框只留正向结果，运行不受影响。</div>
+          </div>
         </div>
 
         <div class="tabs">
@@ -36,7 +46,7 @@ export default {
                :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'has-selected': tabHasSelected(name)}"
                draggable="true"
                @click="switchTab(name)"
-               @contextmenu.prevent="togglePoolForTab(name)"
+               @contextmenu.prevent="openCatMenu($event, 'tab', name)"
                @dragstart="onTabDragStart($event, name)"
                @dragover="onTabDragOver($event, name)"
                @drop.prevent="onTabDrop"
@@ -55,18 +65,19 @@ export default {
           </div>
           <div class="chips-container" :style="{ height: chipsHeightCss }">
             <div v-for="(line, depth) in chipLines" :key="depth" class="chips-line">
-              <div class="chip-add-slot">
-                <button v-show="canAddChip(depth)" class="chip-add" :data-tip="'在「' + (depth > 0 ? chipParentLabel(depth) : tabLabel(data.activeTab)) + '」下新增分类'" @click="openAddChip(depth)">＋</button>
-              </div>
+              <div class="chip-depth" :data-tip="depth === 0 ? '一级分类（右键分类可新建 / 编辑）' : '第 ' + (depth + 1) + ' 级分类'">{{ depth === 0 ? '大类' : (depth + 1) + '级' }}</div>
               <div v-if="line.length" class="chip clear" :class="{active: !getSelections()[depth].length}"
                    @click="clearChip(depth)">全部</div>
+              <div v-else-if="canAddChip(depth)" class="chip chip-void"
+                   data-tip="这一层还没有分类，右键在此新建子分类"
+                   @contextmenu.prevent="openAddChip(depth)">（空）右键新建</div>
               <div v-for="name in line" :key="name"
                    class="chip"
                    :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipTraversePool(depth, name), 'in-pool-random': isChipInPool(depth, name) && !isChipTraversePool(depth, name)}]"
                    :style="chipStyle(name)"
                    draggable="true"
                    @click="toggleChip(depth, name)"
-                   @contextmenu.prevent="togglePoolForChip(depth, name)"
+                   @contextmenu.prevent="openCatMenu($event, 'chip', name, depth)"
                    @dragstart="onChipDragStart($event, depth, name)"
                    @dragover="onChipDragOver($event, depth, name)"
                    @drop.prevent
@@ -79,9 +90,7 @@ export default {
 
         <div class="main">
           <div class="grid" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }">
-            <div v-if="canAddCard" class="card card-add" data-tip="在「{{ addCardParentLabel }}」下新增词条"
-                 @click="openAddCard">＋</div>
-            <div v-if="!filteredFiles.length && !canAddCard" class="empty">没有匹配的提示词</div>
+            <div v-if="!filteredFiles.length" class="empty">没有匹配的提示词 —— 右键分类可新建词条 / 子分类</div>
             <div v-for="file in visibleFiles" :key="file.relPath"
                  class="card image" :data-rel="file.relPath"
                  :class="{
@@ -213,9 +222,89 @@ export default {
               <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
             </div>
           </div>
-          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">{{ previewText }}</div>
+          <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键展开（词库设置里可永久关闭） -->
+          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">
+            <span class="pv-label">正向</span>
+            <span class="pv-text">{{ previewText }}</span>
+            <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
+                    :data-tip="pref.showNegPreview ? '收起负面提示词预览（词库设置里可永久关闭）' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
+          </div>
+          <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
+               :class="{'random-mode': data.fillMode || data.traverseMode}">
+            <span class="pv-label neg">负向</span>
+            <span class="pv-text">{{ previewNegText || '（无）' }}</span>
+          </div>
         </div>
       </template>
+
+      <!-- 分类右键菜单：首项「编辑分类」，其余为池三态与新建 -->
+      <div v-if="catMenu.open" class="ctx-layer" @pointerdown.self="closeCatMenu" @contextmenu.prevent.self="closeCatMenu">
+        <div class="ctx-menu" :style="{ left: catMenu.x + 'px', top: catMenu.y + 'px' }">
+          <div class="ctx-title">{{ catMenu.title }}</div>
+          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCtxEditCategory">✎ 编辑分类</button>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'all' }"
+                  @pointerdown.stop @click="onCtxPool('all')">🚫 不进池</button>
+          <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'random' }"
+                  @pointerdown.stop @click="onCtxPool('random')">🎲 随机池</button>
+          <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
+                  @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
+          <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
+                  @pointerdown.stop @click="onCtxAddTab">＋ 新建大类</button>
+        </div>
+      </div>
+
+      <!-- 编辑分类弹窗：分类自己的 en/cn/neg/override，子级词条自动继承（前端临时拼接，不落库） -->
+      <div v-if="catEdit.open" class="edit-overlay">
+        <div class="edit-dialog">
+          <div class="title"><span class="title-text">编辑分类：{{ catEdit.pathLabel }}</span></div>
+          <div class="edit-body">
+            <div class="field">
+              <div class="field-head"><label>名字</label></div>
+              <input type="text" v-model="catEdit.name" @keydown.enter="submitCatEdit">
+            </div>
+            <div class="field en">
+              <div class="field-head">
+                <label>提示词（英）</label>
+                <span class="count">{{ (catEdit.en || '').length }} 字</span>
+              </div>
+              <textarea v-model="catEdit.en" rows="3" spellcheck="false" placeholder="填了就会继承给它下面的所有词条" @keydown.ctrl.enter="submitCatEdit"></textarea>
+            </div>
+            <div class="field cn">
+              <div class="field-head">
+                <label>提示词（中）</label>
+                <span class="count">{{ (catEdit.cn || '').length }} 字</span>
+              </div>
+              <textarea v-model="catEdit.cn" rows="2" spellcheck="false" @keydown.ctrl.enter="submitCatEdit"></textarea>
+            </div>
+            <div class="field neg" :class="{ filled: (catEdit.neg || '').trim() }">
+              <div class="field-head">
+                <label>负面提示词</label>
+                <span class="count">{{ (catEdit.neg || '').length }} 字</span>
+              </div>
+              <textarea v-model="catEdit.neg" rows="2" spellcheck="false" placeholder="该分类下任一提示词被选中时并入负面" @keydown.ctrl.enter="submitCatEdit"></textarea>
+            </div>
+            <div class="field override" :class="{ filled: (catEdit.override || '').trim() }">
+              <div class="field-head">
+                <label>排除</label>
+                <span class="count">{{ (catEdit.override || '').length }} 字</span>
+              </div>
+              <textarea v-model="catEdit.override" rows="2" spellcheck="false" placeholder="命中别的词条里的逗号段即删除该段（含子级）。多条用逗号分隔" @keydown.ctrl.enter="submitCatEdit"></textarea>
+            </div>
+            <label class="cat-provide" :class="{ on: catEdit.provide }">
+              <input type="checkbox" v-model="catEdit.provide">
+              <span>属性向下继承给这一层下面的所有词条</span>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn" @click="closeCatEdit">取消</button>
+            <button class="btn primary" @click="submitCatEdit" :disabled="catSaving">保存</button>
+          </div>
+        </div>
+      </div>
 
       <!-- 新增分类弹窗 -->
       <div v-if="addTabOpen" class="edit-overlay" @click.self="closeAddTab">
@@ -468,6 +557,9 @@ export default {
     // tab 目录名 -> .zhule_id 映射（切 tab 用 id 定位请求，展示/本地存储仍用目录名；旧目录名回退兼容）
     const tabIds = ref({});
     const bankData = ref({});
+    // 全树节点属性索引（后端 nodes）：分类/词条一律带 en/cn/neg/override，
+    // 供「编辑分类」弹层回填，以及继承展开时按 id 取节点属性。
+    const bankNodes = ref({});
     const maxDepth = ref(2);
     const addTabOpen = ref(false);
     const addTabName = ref('');
@@ -493,8 +585,12 @@ export default {
     // pref 单独持久化：整包 state 的 JSON.stringify 一旦因数据异常失败会被静默吞掉，
     // 连带偏好失效；这里让 pref 走自己的 key，与整包存档互不牵连。
     const PREF_KEY = 'zhule_wordbank_pref_v1';
+    // 词库专属设置面板开关（只作用于本页，不写进通用设置）
+    const bankPrefOpen = ref(false);
+
     function loadPref() {
-      const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true };
+      // showNegPreview 为词库专属设置（非通用设置）：预览框是否展开「负面提示词」一行，默认展开。
+      const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true, showNegPreview: true };
       try {
         const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
         if (raw && typeof raw === 'object') {
@@ -502,6 +598,7 @@ export default {
           if (typeof raw.translate === 'boolean') p.translate = raw.translate;
           if (typeof raw.genCount === 'number' && raw.genCount >= 0 && raw.genCount <= 99) p.genCount = raw.genCount;
           if (typeof raw.autoSelectParent === 'boolean') p.autoSelectParent = raw.autoSelectParent;
+          if (typeof raw.showNegPreview === 'boolean') p.showNegPreview = raw.showNegPreview;
         }
       } catch (e) { /* 存档损坏则用默认值 */ }
       return p;
@@ -634,6 +731,7 @@ export default {
           if (typeof srcPref.translate === 'boolean') pref.translate = srcPref.translate;
           if (typeof srcPref.genCount === 'number' && srcPref.genCount >= 0 && srcPref.genCount <= 99) pref.genCount = srcPref.genCount;
           if (typeof srcPref.autoSelectParent === 'boolean') pref.autoSelectParent = srcPref.autoSelectParent;
+          if (typeof srcPref.showNegPreview === 'boolean') pref.showNegPreview = srcPref.showNegPreview;
         }
         if (Array.isArray(state.tabOrder)) tabOrder.value = state.tabOrder.filter(n => typeof n === 'string');
         if (state.chipOrder && typeof state.chipOrder === 'object') {
@@ -951,8 +1049,7 @@ export default {
       return !!chipParentPath(depth);
     };
 
-    // 词条加号卡片：有活动 tab 即显示（tab 根或任意筛选层级下均可新增词条）
-    const canAddCard = computed(() => !!data.activeTab);
+    // 注：词条/分类的新增入口已统一收到「分类右键菜单」，不再有加号卡片
 
     const addCardIsTxt = computed(() => (addCardName.value || '').trim().toLowerCase().endsWith('.txt'));
 
@@ -963,16 +1060,7 @@ export default {
       return parentKey ? parentKey.split('/').map(dispKey).join('/') : '';
     };
 
-    // 词条加号卡片的父文件夹显示名
-    const addCardParentLabel = computed(() => {
-      const sel = getSelections();
-      const keys = [];
-      for (let i = 0; i < maxDepth.value; i++) {
-        if (Array.isArray(sel[i]) && sel[i].length) keys.push(sel[i][0]);
-      }
-      if (!keys.length) return tabLabel(data.activeTab);
-      return keys.map(k => k.split('/').map(dispKey).join('/')).join('/');
-    });
+
 
     const openAddChip = (depth) => {
       addChipDepth.value = depth;
@@ -1466,6 +1554,7 @@ export default {
         if (json.error) throw new Error(json.error);
         tabs.value = json.tabs || [];
         tabIds.value = json.tab_ids || {};
+        if (json.nodes && typeof json.nodes === 'object') bankNodes.value = json.nodes;
         orderTabs();
         if (tabName) {
           // 局部加载：只替换该 tab 数据，保留其它已加载 tab（切 tab 懒加载路径）
@@ -1696,12 +1785,75 @@ export default {
       });
       return { segments: kept, removed };
     };
+    // ============ 分类继承（沿 parent_id 向上，只在前端临时展开，不落库） ============
+    // 语义：子类自身属性照常生效；父类填了属性就继承下来一起拼接。
+    // 顺序 = 根 → 近 → 自身（父级修饰在前、子级内容在后），空值跳过，按小写去重。
+    const joinInherit = (vals) => {
+      const out = [];
+      const seen = new Set();
+      vals.forEach(v => {
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return;
+        const k = s.toLowerCase();
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push(s);
+      });
+      return out.join(', ');
+    };
+    // 取卡片的祖先属性链：优先用卡片自带的 anc（后端已按 Tab 根 → 父级顺序给好），
+    // 快照里没有时按 relPath 回查当前已加载的卡片。
+    const ancOf = (item) => {
+      if (item && Array.isArray(item.anc) && item.anc.length) return item.anc;
+      const rel = item && item.relPath;
+      if (!rel) return [];
+      const own = (item.tab && bankData.value[item.tab]) || [];
+      let f = own.find(c => c.relPath === rel);
+      if (!f) {
+        for (const t of Object.keys(bankData.value)) {
+          f = (bankData.value[t] || []).find(c => c.relPath === rel);
+          if (f) break;
+        }
+      }
+      return (f && Array.isArray(f.anc) && f.anc) || [];
+    };
+    const expandInherit = (item) => {
+      const chain = ancOf(item).concat([{
+        en: item.content || '',
+        cn: item.content_cn || '',
+        neg: item.neg || '',
+        override: item.override || '',
+      }]);
+      return {
+        // 中文缺省回落同一层的英文，保证父分类只填英文时中文预览也不会漏段
+        content: joinInherit(chain.map(n => n.en)),
+        content_cn: joinInherit(chain.map(n => n.cn || n.en)),
+        neg: joinInherit(chain.map(n => n.neg)),
+        override: joinInherit(chain.map(n => n.override)),
+      };
+    };
+    // 把选中项展开成「已继承」的最终字段（预览与运行出口共用同一套规则）
+    const expandItems = (items) => (items || []).map(it => {
+      const ex = expandInherit(it);
+      return {
+        id: it.id || '',
+        name: it.name || '',
+        relPath: it.relPath || '',
+        tab: it.tab || '',
+        content: ex.content,
+        content_cn: ex.content_cn,
+        neg: ex.neg,
+        override: ex.override,
+      };
+    });
+
     // 预览用：中文模式显示中文段，但删除判定与英文一致性各自独立计算
     const composePreview = (items) => {
-      const src = items.map(s => ({ id: s.id || '', content: s.content || '', override: s.override || '' }));
+      const list = expandItems(items);
+      const src = list.map(s => ({ id: s.id || '', content: s.content || '', override: s.override || '' }));
       const en = filterSegments(src);
       if (!pref.translate) return { text: en.segments.join(', '), removed: en.removed };
-      const cn = filterSegments(items.map(s => ({
+      const cn = filterSegments(list.map(s => ({
         id: s.id || '',
         content: (s.content_cn && s.content_cn.trim()) ? s.content_cn : s.content,
         override: s.override || '',
@@ -1741,6 +1893,20 @@ export default {
       if (!picked.length) return '（空）';
       return withRemoved(composePreview(picked));
     });
+
+    // 负面预览：同样是「自身 + 父级分类」拼完的最终结果，与正向一一对应
+    const previewNegText = computed(() => {
+      if (data.fillMode || data.traverseMode) {
+        const hasNeg = data.selected.some(s => String(s.neg || '').trim())
+          || data.randomPools.length > 0;
+        return hasNeg ? '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）' : '';
+      }
+      const picked = data.selected.filter(s => !s._ph || s._filled);
+      if (!picked.length) return '';
+      return joinInherit(expandItems(picked).map(s => s.neg));
+    });
+    // 预览框上的快捷开关，与词库设置里的开关共用同一个 pref 字段
+    const toggleNegPreview = () => { pref.showNegPreview = !pref.showNegPreview; };
 
     // ============ 工具 ============
     const defaultImageUrl = '/zhule_studio/默认图.png';
@@ -1972,6 +2138,169 @@ const submitAddTab = async () => {
         delete s.relPath; delete s.id; delete s.content; delete s.content_cn;
         delete s.neg; delete s.override;
       }
+    };
+
+    // ============ 分类右键菜单 + 编辑分类（统一入口） ============
+    // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
+    // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all' });
+
+    // 路径（带编号的原始目录名链路，与 chips key 同口径）→ 节点属性：
+    // 空分类目录还没生成任何词条卡片时，也能靠它精确定位分类节点。
+    const nodeByPath = computed(() => {
+      const m = {};
+      const all = bankNodes.value || {};
+      Object.keys(all).forEach(id => {
+        const n = all[id];
+        if (n && n.path) m[n.path] = n;
+      });
+      return m;
+    });
+    const nodeOfCat = (kind, key) => (kind === 'tab'
+      ? (bankNodes.value[tabIds.value[key] || ''] || null)
+      : (nodeByPath.value[key] || null));
+    const poolKindOf = (kind, key, depth) => {
+      const tab = data.activeTab;
+      if (kind === 'tab') {
+        const it = data.randomPools.find(p => p.kind === 'tab' && p.tab === key);
+        return it ? (it.traverse ? 'traverse' : 'random') : 'all';
+      }
+      const chipId = chipIdFor(tab, depth, key);
+      const path = chipPathFor(depth, key);
+      const it = data.randomPools.find(p => p.kind === 'chip' && p.tab === tab
+        && (p.chipId ? p.chipId === chipId : samePath(p.path, path)));
+      return it ? (it.traverse ? 'traverse' : 'random') : 'all';
+    };
+    const openCatMenu = (evt, kind, key, depth) => {
+      if (!data.activeTab) return;
+      catMenu.open = true;
+      catMenu.kind = kind;
+      catMenu.key = key;
+      catMenu.depth = depth;
+      catMenu.title = kind === 'tab' ? tabLabel(key) : String(key).split('/').slice(1).map(dispKey).join(' / ');
+      catMenu.pool = poolKindOf(kind, key, depth);
+      // 贴边翻转，避免菜单跑出窗口
+      catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
+      catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
+    };
+    const closeCatMenu = () => { catMenu.open = false; };
+    // 池三态：直接复用原有 toggle 逐级推进，校验（父子链冲突提示）与三态循环完全一致
+    const setPoolBy = (kind, key, depth, want) => {
+      for (let i = 0; i < 4; i++) {
+        const cur = poolKindOf(kind, key, depth);
+        if (cur === want) return;
+        if (kind === 'tab') togglePoolForTab(key);
+        else togglePoolForChip(depth, key);
+        if (poolKindOf(kind, key, depth) === cur) return; // 被冲突拦住，别空转
+      }
+    };
+    const onCtxPool = (want) => {
+      const m = { kind: catMenu.kind, key: catMenu.key, depth: catMenu.depth };
+      closeCatMenu();
+      setPoolBy(m.kind, m.key, m.depth, want);
+    };
+
+    // ---- 编辑分类弹层：分类自己的 en / cn / neg / 排除，子级词条自动继承 ----
+    const catEdit = reactive({
+      open: false, kind: 'tab', key: '', id: '', origName: '', pathLabel: '',
+      name: '', en: '', cn: '', neg: '', override: '', provide: true,
+    });
+    const catSaving = ref(false);
+    const openCatEdit = (kind, key) => {
+      const n = nodeOfCat(kind, key);
+      if (!n) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
+      catEdit.open = true;
+      catEdit.kind = kind;
+      catEdit.key = key;
+      catEdit.id = n.id;
+      catEdit.origName = n.name || '';
+      catEdit.name = n.name || '';
+      catEdit.en = n.en || '';
+      catEdit.cn = n.cn || '';
+      catEdit.neg = n.neg || '';
+      catEdit.override = n.override || '';
+      // provide 缺省视为可继承（后端默认 1，只有显式 0 才断链）
+      catEdit.provide = n.provide !== 0;
+      catEdit.pathLabel = kind === 'tab'
+        ? tabLabel(key)
+        : String(key).split('/').slice(1).map(dispKey).join(' / ');
+    };
+    const closeCatEdit = () => { if (!catSaving.value) catEdit.open = false; };
+    const submitCatEdit = async () => {
+      if (catSaving.value) return;
+      const name = (catEdit.name || '').trim();
+      if (!name) { showToast('分类名不能为空', 'warn'); return; }
+      catSaving.value = true;
+      try {
+        // 改名与属性一次提交（后端 post_rename 已放宽到分类节点）
+        const resp = await fetch('/zhule_studio/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: catEdit.id,
+            name,
+            content: catEdit.en || '',
+            content_cn: catEdit.cn || '',
+            neg: catEdit.neg || '',
+            override: catEdit.override || '',
+            provide: catEdit.provide ? 1 : 0,
+          }),
+        });
+        const json = await resp.json();
+        if (!resp.ok) { showToast(json.error || '保存失败', 'error'); return; }
+        const nid = catEdit.id;
+        if (bankNodes.value[nid]) {
+          Object.assign(bankNodes.value[nid], {
+            name,
+            en: catEdit.en || '',
+            cn: catEdit.cn || '',
+            neg: catEdit.neg || '',
+            override: catEdit.override || '',
+            provide: catEdit.provide ? 1 : 0,
+          });
+        }
+        catEdit.open = false;
+        showToast('分类已保存', 'success');
+        // 分类属性会影响其下所有词条的继承结果，强刷当前词库
+        await load(true);
+      } finally {
+        catSaving.value = false;
+      }
+    };
+
+    // ---- 菜单里的新建入口 ----
+    const onCtxEditCategory = () => {
+      const m = { kind: catMenu.kind, key: catMenu.key };
+      closeCatMenu();
+      openCatEdit(m.kind, m.key);
+    };
+    const onCtxAddChild = () => {
+      const m = { kind: catMenu.kind, depth: catMenu.depth };
+      closeCatMenu();
+      // tab 右键 → 建一级分类（depth 0）；chip 右键 → 建它的下一级
+      openAddChip(m.kind === 'tab' ? 0 : m.depth + 1);
+    };
+    const onCtxAddCard = () => {
+      const m = { kind: catMenu.kind, key: catMenu.key, depth: catMenu.depth };
+      closeCatMenu();
+      // 先把选区切到该分类，新建词条才会落在它下面
+      if (m.kind === 'chip') selectChipChain(m.key, m.depth);
+      else {
+        const sel = getSelections();
+        for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+      }
+      openAddCard();
+    };
+    const onCtxAddTab = () => { closeCatMenu(); openAddTab(); };
+    // 把选区设成某条分类链（新建词条的父目录由选区推导）
+    const selectChipChain = (key, depth) => {
+      const sel = getSelections();
+      for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+      const parts = String(key).split('/');
+      for (let i = 0; i <= depth && i < parts.length - 1; i++) {
+        sel[i] = [parts.slice(0, i + 2).join('/')];
+      }
+      pageIndex.value = 0;
     };
 
     // 右键 = 池类型三态循环：不在池 → 🎲 随机池 → ∞ 遍历池 → 移出池
@@ -2396,7 +2725,7 @@ const submitAddTab = async () => {
         if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', _poolKey: poolKeyFor(item), _pool: true });
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true });
       }
       return picks;
     };
@@ -2588,7 +2917,7 @@ const submitAddTab = async () => {
         type: 'zhule:run',
         bindId: linkParams.bind,
         seq: ++runSeq,
-        items: items.map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
+        items: expandItems(items).map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
         count: 1,
       });
       let done = false;
@@ -2714,7 +3043,9 @@ const submitAddTab = async () => {
       if (!linkParams.bind) {
         return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
       }
-      const text = readyItems.map(s => s.content).join(', ');
+      // 运行前统一展开继承：分类链上的 en/cn/neg/override 逐层拼到词条自己身上
+      const expanded = expandItems(readyItems);
+      const text = expanded.map(s => s.content).join(', ');
       // 通过 BroadcastChannel 广播运行指令，节点 _selected 直接承载词条。
       ensureRunChannel();
       runChannel.postMessage({
@@ -2722,7 +3053,7 @@ const submitAddTab = async () => {
         bindId: linkParams.bind,
         seq: ++runSeq,
         // 带 id（词条 id，提示词标签按 id 传递，词条改名/移动不脱钩）、name（词条名）与 content（提示词文本）
-        items: readyItems.map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
+        items: expanded.map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
         count,
       });
       let done = false;
@@ -2945,7 +3276,7 @@ const submitAddTab = async () => {
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
-        item: { tab: data.activeTab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '' },
+        item: { tab: data.activeTab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -3098,7 +3429,7 @@ const submitAddTab = async () => {
           else t = fromIdx < idx ? idx : idx + 1;
           data.selected.splice(t, 0, moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
           const existIdx = data.selected.findIndex(s => s.relPath === item.relPath);
           let targetIdx = idx;
           if (existIdx >= 0) {
@@ -3116,7 +3447,7 @@ const submitAddTab = async () => {
           const [moved] = data.selected.splice(p.sourceIdx, 1);
           data.selected.push(moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
           if (data.selected.some(s => s.relPath === item.relPath)) return;
           data.selected.push(item);
         }
@@ -3129,7 +3460,7 @@ const submitAddTab = async () => {
         const target = rel ? filteredFiles.value.find(x => x.relPath === rel) : null;
         if (!target) return;
         const targetIdx = data.selected.findIndex(s => s.relPath === target.relPath);
-        const item = { tab: p.item.tab, relPath: p.item.relPath, name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '' };
+        const item = { tab: p.item.tab, relPath: p.item.relPath, name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
@@ -3146,6 +3477,8 @@ const submitAddTab = async () => {
         tab: data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
         content: file.content, content_cn: file.content_cn,
         neg: file.neg || '', override: file.override || '',
+        // 父级分类属性链随选区一起存快照：运行/预览都按它递归继承，历史选区也能自解释
+        anc: file.anc || [],
       });
     };
 
@@ -3164,8 +3497,26 @@ const submitAddTab = async () => {
       window.addEventListener('zhule-wordbank-pref', onWordbankPref);
       window.addEventListener('zhule-pref-changed', onGlobalPrefChanged);
       window.addEventListener('zhule:wordbank-changed', onWordbankChanged);
+      // 右键菜单 / 词库设置面板：点空白、Esc、滚动、改变窗口大小都收起，避免残留
+      document.addEventListener('keydown', onBankKeydown);
+      document.addEventListener('click', onBankDismiss, true);
+      document.addEventListener('scroll', onBankDismiss, true);
+      window.addEventListener('resize', onBankDismiss);
       load(); // 首屏加载数据（加载遮罩已移除）
     });
+    const onBankKeydown = (e) => {
+      if (e.key !== 'Escape') return;
+      if (catMenu.open) { closeCatMenu(); return; }
+      if (catEdit.open) { closeCatEdit(); return; }
+      if (bankPrefOpen.value) bankPrefOpen.value = false;
+    };
+    const onBankDismiss = (e) => {
+      if (catMenu.open && !(e && e.target && e.target.closest && e.target.closest('.ctx-menu'))) closeCatMenu();
+      if (bankPrefOpen.value && e && e.target && e.target.closest
+        && !e.target.closest('.bank-pref') && !e.target.closest('[data-tip="词库专属设置"]')) {
+        bankPrefOpen.value = false;
+      }
+    };
     onBeforeUnmount(() => {
       if (clickBlocker) document.removeEventListener('click', clickBlocker, true);
       window.removeEventListener('zhule-wordbank-pref', onWordbankPref);
@@ -3195,7 +3546,11 @@ const submitAddTab = async () => {
       isTabInPool, isChipInPool, isTabTraversePool, isChipTraversePool, tabHasSelected,
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
-      canAddChip, chipParentLabel, canAddCard, addCardParentLabel, addCardIsTxt,
+      // 分类右键菜单 / 编辑分类
+      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab,
+      catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
+      previewNegText, toggleNegPreview, bankNodes, nodeOfCat, bankPrefOpen,
+      canAddChip, chipParentLabel, addCardIsTxt,
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
       addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard,

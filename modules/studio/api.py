@@ -1,4 +1,4 @@
-"""Zhule Studio 后端：词库读写、参考图管理、图片代理、Studio 页面静态服务。
+﻿"""Zhule Studio 后端：词库读写、参考图管理、图片代理、Studio 页面静态服务。
 
 数据源（SQLite 单库 modules/studio/zhule.db，数据层见 db.py）：
   - 词库：表 prompt（父子层级树；entry 叶子为词条：en 英文提示词 / cn 中文 / sort_order 排序）
@@ -251,16 +251,31 @@ def _cards_from_tree(tree):
     tabs = []
     data = {}
 
-    def collect(node, parts, ids, out):
+    def collect(node, parts, ids, out, anc=()):
         """按原 _folder_card/_txt_card 公式还原卡片字段。
 
         parts = 从 Tab 根到当前节点父级的原始目录名列表（不含当前节点）。
         ids   = 与 parts 同序的节点 DB id 列表（不含当前节点）。
         chips/chipKeys/chipIds 由 parts/ids 位置直接推导，与磁盘扫描结果逐字段一致。
+        anc   = 从 Tab 根到当前节点父级的分类属性链（含 Tab 根，不含当前节点），
+                每项 {id, name, en, cn, neg, override}。子类继承父类属性时前端直接用它拼接，
+                不再二次请求（继承结果只在前端临时展开，不落库）。
         """
         raw = _node_raw_name(node)
         children = node.get("children") or []
         nid = str(node.get("id") or "")
+        my_attr = {
+            "id": nid,
+            "name": node.get("name") or "",
+            "en": node.get("en") or "",
+            "cn": node.get("cn") or "",
+            "neg": node.get("neg") or "",
+            "override": node.get("override") or "",
+            # provide=1 表示本节点的属性可以向下继承；关掉则断链，下级不再拿到这一层
+            "provide": 1 if node.get("provide") else 0,
+        }
+        # 下钻时带下去的继承链：只有 provide 的节点才把自己的属性加进链里
+        child_anc = tuple(anc) + ((my_attr,) if my_attr["provide"] else ())
         if node.get("type") == "entry":
             rel = "/".join(parts + [raw]) if parts else raw
             if raw.lower().endswith(".txt"):
@@ -286,6 +301,7 @@ def _cards_from_tree(tree):
                     "content_cn": "",
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
+                    "anc": list(anc),
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
@@ -307,6 +323,7 @@ def _cards_from_tree(tree):
                     "content_cn": node.get("cn") or "",
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
+                    "anc": list(anc),
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
@@ -314,18 +331,58 @@ def _cards_from_tree(tree):
             # entry 带 children（含 prompt.txt 仍下钻，如 01_嘴部）：继续递归
             if children:
                 for child in children:
-                    collect(child, parts + [raw], ids + [nid], out)
+                    collect(child, parts + [raw], ids + [nid], out, child_anc)
             return
         for child in children:
-            collect(child, parts + [raw], ids + [nid], out)
+            collect(child, parts + [raw], ids + [nid], out, child_anc)
 
     for tab_node in tree:
         cards = []
-        collect(tab_node, [], [], cards)
+        # Tab 根的属性由 collect 自己在进入时累积（避免出现两次），这里传空链起点
+        collect(tab_node, [], [], cards, ())
         tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
         tabs.append(tab_disp)
         data[tab_disp] = cards
     return {"tabs": tabs, "data": data}
+
+
+def _nodes_index(tree):
+    """全树节点属性索引：{id: {id, parentId, type, name, path, en, cn, neg, override}}。
+
+    供前端「编辑分类」弹层直接按 chipId / 分类路径取当前属性（无需再发请求），
+    也让继承展开可以在任意节点上按 parentId 向上递归。分类/词条一律返回，
+    空值即空串，展示侧自然不显示。
+
+    path 为「tab 目录名/一级目录名/二级目录名...」形式的完整相对路径（与卡片的
+    chipKeys 同一口径，用带编号的原始目录名还原），这样即使某个分类目录下还没有
+    任何词条卡片，前端也能按路径精确定位到该分类节点。
+    """
+    out = {}
+
+    def walk(nodes, path):
+        for n in nodes or []:
+            nid = str(n.get("id") or "")
+            if not nid:
+                continue
+            name = n.get("name") or ""
+            raw = _node_raw_name(n)
+            cur = (path + "/" + raw) if path else raw
+            out[nid] = {
+                "id": nid,
+                "parentId": str(n.get("parentId") or ""),
+                "type": n.get("type") or "",
+                "name": name,
+                "path": cur,
+                "en": n.get("en") or "",
+                "cn": n.get("cn") or "",
+                "neg": n.get("neg") or "",
+                "override": n.get("override") or "",
+                # 1 = 本节点属性可向下继承（编辑分类弹层里的「向下继承」开关）
+                "provide": 1 if n.get("provide") else 0,
+            }
+            walk(n.get("children"), cur)
+    walk(tree, "")
+    return out
 
 
 # ============================================================
@@ -345,7 +402,7 @@ async def get_wordbank(request):
                                   "error": "词库数据读取失败"})
     payload = _cards_from_tree(tree)
     result = {"root": wb_root(), "tabs": payload["tabs"], "data": {},
-              "tab_ids": _wb_tab_ids(tree)}
+              "tab_ids": _wb_tab_ids(tree), "nodes": _nodes_index(tree)}
     tab = _wb_tab_name_by_id(tree, tab)
     if tab is not None:
         result["data"][tab] = payload["data"].get(tab, [])
@@ -388,16 +445,18 @@ async def post_rename(request):
     if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response({"error": "名字含非法字符"}, status=400)
     node = db.node_by_id(raw_id)
-    if node is None or node.get("type") != "entry":
-        return web.json_response({"error": "词条不存在"}, status=404)
+    if node is None:
+        return web.json_response({"error": "节点不存在"}, status=404)
     nid = int(node["id"])
     dup = db.sibling_dup(db.get_parent_id(nid), name, exclude_id=nid)
     if dup is not None and dup != name:
-        return web.json_response({"error": "词条已存在: " + dup}, status=409)
+        kind = "分类" if node.get("type") != "entry" else "词条"
+        return web.json_response({"error": kind + "已存在: " + dup}, status=409)
     content = body.get("content")
     content_cn = body.get("content_cn")
     neg = body.get("neg")
     override = body.get("override")
+    provide = body.get("provide")
     ok = db.update_node(
         nid,
         name=name,
@@ -405,6 +464,7 @@ async def post_rename(request):
         cn=(content_cn if isinstance(content_cn, str) else None),
         neg=(neg if isinstance(neg, str) else None),
         override=(override if isinstance(override, str) else None),
+        provide=(None if provide is None else (1 if provide else 0)),
     )
     if not ok:
         return web.json_response({"error": "更新失败"}, status=500)

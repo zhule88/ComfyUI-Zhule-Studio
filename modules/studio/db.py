@@ -1,4 +1,4 @@
-"""Zhule Studio 词库 SQLite 数据层（运行时唯一数据源）。
+﻿"""Zhule Studio 词库 SQLite 数据层（运行时唯一数据源）。
 
 自 DB 迁移后，词库的增删改查全部走 zhule.db（表 prompt），
 代码不再扫描 / 读写 modules/studio/prompt 文件夹与 wordbank_index.json。
@@ -86,15 +86,17 @@ def raw_name(node):
 def fetch_tree():
     """全树：顶层 tab（parent_id NULL）按 sort_order/名称排序。
 
-    返回 [{id, type, name, en?, cn?, neg?, override?, mute?, sortOrder?, updatedAt?, children?}]，
-    id 为 DB 自增 id（str）；updatedAt 为 updated_at 时间戳（卡片按时间排序用）；
-    mute 仅 entry 节点携带（1=静音（mute）：自动选词跳过，仅手动点选可用）。
+    返回 [{id, parentId, type, name, en, cn, neg, override, mute, provide?, sortOrder?, updatedAt?, children?}]，
+    id/parentId 为 DB 自增 id（str）；updatedAt 为 updated_at 时间戳（卡片按时间排序用）。
+
+    字段一律全量返回，不再按 type 挑拣：分类（tab/chip）同样携带 en/cn/neg/override，
+    供前端「子类继承父类属性」时直接取用（空值就是空串，展示侧自然不显示）。
     """
     with _lock:
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, provide, updated_at "
                 "FROM {0} WHERE isdel=0 ORDER BY id".format(TABLE)
             ).fetchall()
         finally:
@@ -106,13 +108,18 @@ def fetch_tree():
     def build(pid):
         kids = []
         for r in by_parent.get(pid, []):
-            node = {"id": str(r["id"]), "type": r["type"], "name": r["name"] or ""}
-            if r["type"] == "entry":
-                node["en"] = r["en"] or ""
-                node["cn"] = r["cn"] or ""
-                node["neg"] = r["neg"] or ""
-                node["override"] = r["override"] or ""
-                node["mute"] = r["mute"] or 0
+            node = {
+                "id": str(r["id"]),
+                "parentId": str(r["parent_id"]) if r["parent_id"] is not None else "",
+                "type": r["type"],
+                "name": r["name"] or "",
+                "en": r["en"] or "",
+                "cn": r["cn"] or "",
+                "neg": r["neg"] or "",
+                "override": r["override"] or "",
+                "mute": r["mute"] or 0,
+                "provide": r["provide"] or 0,
+            }
             if r["sort_order"]:
                 node["sortOrder"] = r["sort_order"]
             node["updatedAt"] = r["updated_at"] or 0
@@ -247,8 +254,9 @@ def insert_node(parent_id, type_, name, en="", cn="", so=None):
                 so = (cur.fetchone()[0] or 0) + 1
             now = _now()
             cur = conn.execute(
-                "INSERT INTO {0} (parent_id, type, name, en, cn, sort_order, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)".format(TABLE),
+                # provide 显式写 1：存量库的列默认值仍是早期的 0，不写死会默认「不下传」
+                "INSERT INTO {0} (parent_id, type, name, en, cn, sort_order, provide, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,1,?,?)".format(TABLE),
                 (parent_id, type_, name, en, cn, so, now, now),
             )
             conn.commit()
@@ -260,11 +268,12 @@ def insert_node(parent_id, type_, name, en="", cn="", so=None):
             conn.close()
 
 
-def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None):
-    """编辑节点：可选更新 name/en/cn/neg/override，并刷新 updated_at。
+def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None, provide=None):
+    """编辑节点：可选更新 name/en/cn/neg/override/provide，并刷新 updated_at。
 
     neg：该词条附带的负面提示词（选中时汇总进最终负面提示词）。
     override：排除词（命中其它词条产出的提示词段即删除该段，不含自身）。
+    provide：0/1，该分类的 en/cn/neg/override 是否沿 parent_id 下传给后代（默认 1）。
     """
     with _lock:
         conn = connect()
@@ -285,6 +294,9 @@ def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None):
             if override is not None:
                 sets.append("override=?")
                 vals.append(override)
+            if provide is not None:
+                sets.append("provide=?")
+                vals.append(1 if provide else 0)
             if not sets:
                 return False
             sets.append("updated_at=?")
@@ -610,6 +622,7 @@ def _ensure_prompt_schema(conn):
         "neg TEXT NOT NULL DEFAULT '',"
         "override TEXT NOT NULL DEFAULT '',"
         "mute INTEGER NOT NULL DEFAULT 0,"
+        "provide INTEGER NOT NULL DEFAULT 1,"
         "created_at INTEGER NOT NULL,"
         "updated_at INTEGER NOT NULL"
         ")".format(TABLE)
@@ -626,6 +639,21 @@ def _ensure_prompt_schema(conn):
     _ensure_column(conn, TABLE, "override", "TEXT NOT NULL DEFAULT ''")
     # 静音（mute）列：1 = 遍历/随机等自动选词流程跳过该词条（仅手动点选可用），与 isdel 硬删互不影响
     _ensure_column(conn, TABLE, "mute", "INTEGER NOT NULL DEFAULT 0")
+    # 下传（provide）列：1 = 该分类的 en/cn/neg/override 允许沿 parent_id 下传给后代词条，
+    # 由前端选中时临时拼接（不落库、不改子级 content）；默认 1 = 填了就往下传。
+    # 只决定「自己给不给」，不阻断祖先内容穿过本层。
+    _ensure_column(conn, TABLE, "provide", "INTEGER NOT NULL DEFAULT 1")
+    # 一次性升级：provide 早期默认 0（填了也不下传），改成默认下传后把存量行统一补成 1。
+    # 用 PRAGMA user_version 打一次标记，之后用户手动关掉的不会被反复覆盖。
+    try:
+        _uv = conn.execute("PRAGMA user_version").fetchone()[0]
+    except sqlite3.Error:
+        _uv = 1
+    if _uv < 1:
+        conn.execute("UPDATE {0} SET provide=1".format(TABLE))
+        conn.execute("PRAGMA user_version = 1")
+        # connect() 不做提交，此处必须自己落盘，否则下次连接又回到默认 0
+        conn.commit()
     # 依赖新列的索引必须放在补列之后，否则旧库会报 no such column
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_{0}_type_del ON {0}(type, isdel)".format(TABLE)
