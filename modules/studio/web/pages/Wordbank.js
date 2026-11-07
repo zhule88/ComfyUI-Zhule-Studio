@@ -99,7 +99,8 @@ export default {
                    'zhule-source': drag.active && drag.sourceType === 'card' && drag.sourceRelPath === file.relPath,
                    'drop-target': drag.hoverCardRelPath === file.relPath
                  }"
-                 @pointerdown="onCardPointerDown($event, file)">
+                 @pointerdown="onCardPointerDown($event, file)"
+                 @contextmenu.prevent="openCardMenu($event, file)">
               <div class="card-thumb-wrap">
                 <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
                 <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
@@ -113,16 +114,16 @@ export default {
                        :src="defaultImageUrl"
                        alt="">
                 </div>
-                <div class="thumb-enter" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
-                <div class="thumb-zoom" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
-                <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="file.images && file.images.length">🗑</div>
+                <div class="thumb-enter" v-if="!hideCardIcons" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
+                <div class="thumb-zoom" v-if="!hideCardIcons" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
+                <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="!hideCardIcons && file.images && file.images.length">🗑</div>
                 <div class="thumb-nav" @pointerdown.stop v-if="file.images && file.images.length > 1">
                   <button @click.stop="prevImage(file)">‹</button>
                   <button class="dice" @click.stop="randomImage(file)">🎲</button>
                   <button @click.stop="nextImage(file)">›</button>
                 </div>
                 <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
-                <div class="card-actions">
+                <div class="card-actions" v-if="!hideCardIcons">
                   <button class="card-act act-mute" :class="{on: !!file.mute}"
                           :data-tip="file.mute ? '已静音（Mute）：自动选词跳过它，手动点选仍可用（点击恢复）' : '静音（Mute）：不参与随机、填充与遍历等自动选词，仅手动点选时可用'"
                           @pointerdown.stop @click.stop="toggleMute(file)">
@@ -254,6 +255,24 @@ export default {
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
           <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
                   @pointerdown.stop @click="onCtxAddTab">＋ 新建大类</button>
+        </div>
+      </div>
+
+      <!-- 词库卡片右键菜单：卡片原图标功能的完整复制（左右切换与骰子仍留在卡片上） -->
+      <div v-if="cardMenu.open" class="ctx-layer" @pointerdown.self="closeCardMenu" @contextmenu.prevent.self="closeCardMenu">
+        <div class="ctx-menu" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px' }">
+          <div class="ctx-title">{{ cardMenu.title }}</div>
+          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
+            {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
+          </button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 进入详情页</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
+          <button type="button" class="ctx-item" v-if="cardMenu.hasImages"
+                  @pointerdown.stop @click="onCardDeleteRef">🗑 删除当前参考图</button>
         </div>
       </div>
 
@@ -996,10 +1015,20 @@ export default {
       } catch (e) { return false; }
     }
     const hideMuted = ref(readCommonHideMuted());
+    // 通用设置「隐藏卡片上的图标」：默认关闭；开启后卡片只留左右切换 + 骰子，
+    // 其余操作（详情/放大/删除图/静音/删除/编辑/上传）全部由右键菜单承担
+    function readCommonHideCardIcons() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || '{}');
+        return !!(raw && raw.common && raw.common.hideCardIcons === true);
+      } catch (e) { return false; }
+    }
+    const hideCardIcons = ref(readCommonHideCardIcons());
     function onGlobalPrefChanged(e) {
       const g = e && e.detail && e.detail.gallery;
       const cm = e && e.detail && e.detail.common;
       if (cm && typeof cm.hideMuted === 'boolean') hideMuted.value = cm.hideMuted;
+      if (cm && typeof cm.hideCardIcons === 'boolean') hideCardIcons.value = cm.hideCardIcons;
       if (g) {
         if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
         if (typeof g.tagRound === 'boolean') tagRound.value = g.tagRound;
@@ -2184,6 +2213,31 @@ const submitAddTab = async () => {
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
     };
     const closeCatMenu = () => { catMenu.open = false; };
+
+    // ============ 词库卡片右键菜单 ============
+    // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
+    // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
+    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false });
+    const openCardMenu = (evt, file) => {
+      if (!file) return;
+      closeCatMenu();
+      cardMenu.file = file;
+      cardMenu.title = file.name || '';
+      cardMenu.muted = !!file.mute;
+      cardMenu.hasImages = !!(file.images && file.images.length);
+      cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
+      cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 330));
+      cardMenu.open = true;
+    };
+    const closeCardMenu = () => { cardMenu.open = false; };
+    // 菜单项：先收起菜单再触发动作，避免遮罩层挡住后续弹窗与拖拽
+    const onCardEdit = () => { const f = cardMenu.file; closeCardMenu(); if (f) openEdit(f); };
+    const onCardMute = () => { const f = cardMenu.file; closeCardMenu(); if (f) toggleMute(f); };
+    const onCardUpload = () => { const f = cardMenu.file; closeCardMenu(); if (f) openUploadRef(f); };
+    const onCardDeleteWord = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteWord(f); };
+    const onCardGallery = () => { const f = cardMenu.file; closeCardMenu(); if (f) goToGallery(f); };
+    const onCardZoom = () => { const f = cardMenu.file; closeCardMenu(); if (f) zoomCardImage(f); };
+    const onCardDeleteRef = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteRef(f); };
     // 池三态：直接复用原有 toggle 逐级推进，校验（父子链冲突提示）与三态循环完全一致
     const setPoolBy = (kind, key, depth, want) => {
       for (let i = 0; i < 4; i++) {
@@ -3506,12 +3560,14 @@ const submitAddTab = async () => {
     });
     const onBankKeydown = (e) => {
       if (e.key !== 'Escape') return;
+      if (cardMenu.open) { closeCardMenu(); return; }
       if (catMenu.open) { closeCatMenu(); return; }
       if (catEdit.open) { closeCatEdit(); return; }
       if (bankPrefOpen.value) bankPrefOpen.value = false;
     };
     const onBankDismiss = (e) => {
       if (catMenu.open && !(e && e.target && e.target.closest && e.target.closest('.ctx-menu'))) closeCatMenu();
+      if (cardMenu.open && !(e && e.target && e.target.closest && e.target.closest('.ctx-menu'))) closeCardMenu();
       if (bankPrefOpen.value && e && e.target && e.target.closest
         && !e.target.closest('.bank-pref') && !e.target.closest('[data-tip="词库专属设置"]')) {
         bankPrefOpen.value = false;
@@ -3548,6 +3604,9 @@ const submitAddTab = async () => {
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab,
+      // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
+      cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
+      onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef,
       catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
       previewNegText, toggleNegPreview, bankNodes, nodeOfCat, bankPrefOpen,
       canAddChip, chipParentLabel, addCardIsTxt,

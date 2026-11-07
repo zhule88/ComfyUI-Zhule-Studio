@@ -30,8 +30,10 @@ const DEFAULT_PREF = {
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
   // iconSize：图库/词库卡片「图片左上竖排图标」的尺寸（按钮边长 px），写入 :root 的 --zh-act-size 供 CSS 取用
   // hideMuted：默认关闭；开启后被静音（mute=1）的提示词在词库卡片与标签编辑面板中隐藏不展示
+  // hideCardIcons：默认关闭；开启后词库卡片不再渲染操作图标（进入详情/放大/删除图/静音/删除/编辑/上传），
+  //   全部改由右键菜单承担；卡片上的左右切换与骰子属于高频操作，始终保留
   // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
-  common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, collapsedGroups: {} },
+  common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, hideCardIcons: false, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
 // 卡片图标尺寸档位：图片左上竖排操作图标（选择/放大/删除/静音/编辑/上传）的按钮边长（px），
@@ -102,6 +104,7 @@ function loadPref() {
       ? Math.min(ICON_SIZE_MAX, Math.max(ICON_SIZE_MIN, Math.round(sz)))
       : DEFAULT_PREF.common.iconSize;
     c.hideMuted = c.hideMuted === true;
+    c.hideCardIcons = c.hideCardIcons === true;
     return {
       gallery: g,
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
@@ -166,6 +169,11 @@ const App = {
     // 静音提示词隐藏：开启后词库卡片列表与标签编辑面板都不再展示 mute=1 的词条
     function toggleHideMuted() {
       pref.value.common.hideMuted = pref.value.common.hideMuted !== true;
+      savePref();
+    }
+    // 隐藏卡片上的图标：开启后词库卡片只剩左右切换 + 骰子，其余操作全部走右键菜单
+    function toggleHideCardIcons() {
+      pref.value.common.hideCardIcons = pref.value.common.hideCardIcons !== true;
       savePref();
     }
     watch(() => pref.value.common.iconSize, (v) => applyIconSize(v), { immediate: true });
@@ -340,7 +348,7 @@ const App = {
         });
     }
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
-      toggleNoDeleteConfirm, setIconSize, toggleHideMuted, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+      toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
@@ -420,7 +428,21 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
-                <div class="settings-subgroup-title"><span>标签</span></div>
+                <div class="settings-row">
+                  <span class="settings-label">隐藏卡片上的图标</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="pref.common.hideCardIcons === true" @change="toggleHideCardIcons">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">开启后词库卡片只保留左右切换与 🎲 骰子（高频操作），进入详情、放大、删除图、静音、编辑、上传参考图等全部收进卡片右键菜单。</div>
+                <!-- 通用设置下的子类：标签（可折叠，折叠状态与其它分组一起持久化） -->
+                <div class="settings-subgroup" :class="{ 'collapsed': isCollapsed('common-tag') }">
+                  <div class="settings-group-title settings-subgroup-head" @click="toggleCollapse('common-tag')">
+                    <span>标签</span>
+                    <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </div>
+                  <div class="settings-subgroup-body" v-show="!isCollapsed('common-tag')">
                 <div class="settings-row">
                   <span class="settings-label">主题</span>
                   <div class="settings-theme-pick">
@@ -451,6 +473,8 @@ const App = {
                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
                     </button>
                   </span>
+                </div>
+                  </div>
                 </div>
               </div>
             </div>
