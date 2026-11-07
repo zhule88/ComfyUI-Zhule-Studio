@@ -18,7 +18,7 @@ export default {
           <button class="btn" @click="singleRandom" data-tip="从每个随机池各抽一条">🎲</button>
           <button class="btn" :class="{active: data.randomMode}" @click="toggleRandomMode" data-tip="随机模式：每个池子各抽一条，逐条出图">🔄</button>
           <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式：以当前参考图最多的提示词为基准，设置0把不足的补到基准数，设置N补到（基准+N）；集中填充倒满一桶再下一桶，直到全部达标">⏩</button>
-          <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：把右键选中的每个池子的所有词条全部组合跑一遍，每个组合只出 1 次图（不受「次数」设置影响）">🔁</button>
+          <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：把右键选中的每个池子的所有词条全部组合跑一遍（每个组合 1 张）；「次数」是最外层大 for，即整套组合重复跑几轮（0 按 1 轮）">🔁</button>
           <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空随机池">🗑</button>
           <div class="col-ctrl">
             <label>每行</label>
@@ -484,7 +484,7 @@ export default {
       randomMode: false,
       // fillMode：填充模式（原「遍历模式」，把各池提示词的参考图补到统一目标数量，集中倒满一桶再下一桶）
       fillMode: false,
-      // traverseMode：遍历模式（把各池所有词条做笛卡尔积全部跑一遍，每个组合各提交 1 次）
+      // traverseMode：遍历模式（把各池所有词条做笛卡尔积全跑一遍，「次数」= 最外层大 for，整套组合重复几轮）
       traverseMode: false,
     });
 
@@ -1707,14 +1707,18 @@ export default {
         }
         if (data.randomPools.length) {
           const display = data.randomPools.map(p => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display));
+          let perPool = '每池抽 1 条';
           let extra = '';
           if (data.traverseMode) {
-            extra = '；全部组合依次各跑 1 次（外层 = 靠前的池，如「' + display[0]
-              + '」做外层大 for，靠后的池做内层小 for）';
+            // 遍历模式：次数是最外层大 for —— 整套组合重复跑 rounds 轮
+            const rounds = Math.max(1, Number(pref.genCount) || 0);
+            perPool = '各池全部组合';
+            extra = '；组合顺序外层 = 靠前的池「' + display[0]
+              + '」；次数 ' + rounds + ' 是最外层大 for，整套组合重复跑 ' + rounds + ' 轮';
           } else if (data.fillMode) {
             extra = '，目标 = 当前最多数量 + ' + pref.genCount + '（0 则补到最多数量），集中填充';
           }
-          return modeName + '模式：' + display.length + ' 个池子 [' + display.join(' | ') + ']，每池抽 1 条' + extra;
+          return modeName + '模式：' + display.length + ' 个池子 [' + display.join(' | ') + ']，' + perPool + extra;
         }
         return modeName + '模式已开，但随机池为空。右键 tab 或 chip 加入';
       }
@@ -2230,7 +2234,7 @@ const submitAddTab = async () => {
       }
       stopPoolRun('填充');
     };
-    // 遍历模式：各池全部组各提交 1 次
+    // 遍历模式：各池全组合逐条提交，「次数」为最外层大 for（整套组合重复轮数）
     const toggleTraverseMode = () => {
       data.traverseMode = !data.traverseMode;
       if (data.traverseMode) {
@@ -2511,6 +2515,7 @@ const submitAddTab = async () => {
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
         let combos;
+        let traverseInfo = null;
         if (data.randomMode) {
           combos = [];
           // 手选项（如已选角色「宵宫」）不丢，且顺序按标签栏 data.selected 原样保留：
@@ -2522,12 +2527,20 @@ const submitAddTab = async () => {
             combos.push(arrangeBySelection(picked));
           }
         } else if (data.traverseMode) {
-          // 遍历模式：不做目标数量补跑，把各池所有词条做笛卡尔积全跑一遍，每个组合各提交 1 次（忽略次数）
+          // 遍历模式：把各池所有词条做笛卡尔积全跑一遍；
+          // 「次数」= 最外层大 for —— 整套组合重复跑 rounds 轮（0 按 1 轮），
+          // 每个组合 1 张，即第 r 轮把整套组合顺序再走一遍。
           const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
           if (!built) return showToast('遍历池含空分类或数据未加载，请检查随机池', 'warn');
           if (built.tooMany) return showToast('组合数过多（' + built.tooMany + '），请精简随机池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
-          combos = built.map(combo => arrangeBySelection(combo));
-          zhuleLog('runGenerate: 遍历模式全组合', '池=', data.randomPools.map(p => p.tab), '组合数=', combos.length);
+          const rounds = Math.max(1, count || 0);
+          combos = [];
+          for (let r = 0; r < rounds; r++) {
+            for (const combo of built) combos.push(arrangeBySelection(combo));
+          }
+          traverseInfo = { rounds, oneRound: built.length };
+          zhuleLog('runGenerate: 遍历模式全组合', '池=', data.randomPools.map(p => p.tab),
+            '单轮组合数=', built.length, '次数(外层轮数)=', rounds, '总任务数=', combos.length);
         } else {
           const built = buildTraverseCombos();
           if (!built) return showToast('填充池含空分类或数据未加载，请检查随机池', 'warn');
@@ -2564,7 +2577,9 @@ const submitAddTab = async () => {
         runTotal = combos.length;
         runBusy = true;
         if (data.traverseMode) {
-          showToast('遍历模式：' + data.randomPools.length + ' 个池子共 ' + runTotal + ' 个组合，每个组合各提交 1 次', 'success', 3200);
+          const info = traverseInfo || { rounds: 1, oneRound: runTotal };
+          showToast('遍历模式：' + data.randomPools.length + ' 个池子，单轮 ' + info.oneRound + ' 个组合 × 次数 '
+            + info.rounds + ' 轮 = ' + runTotal + ' 条任务，逐条提交', 'success', 3600);
         }
         runNextInQueue();
         return;
