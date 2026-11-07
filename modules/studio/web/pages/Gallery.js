@@ -104,7 +104,7 @@ export default {
           <div class="zhg-card" v-for="it in items" :key="it.key" :data-key="it.key"
                :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)">
             <div class="zhg-thumb-wrap" :title="cardTip(it)">
-              <img class="zhg-thumb" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
+              <img class="zhg-thumb" draggable="false" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
               <!-- 右侧竖排操作：选择 / 放大 / 删除（悬停显现，永不挤压名字） -->
               <div class="zhg-card-actions">
                 <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}"
