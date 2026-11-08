@@ -25,10 +25,9 @@ export default {
             <span class="col-num">{{ pref.columns }}</span>
             <button class="col-btn" @click="changeColumns(1)">+</button>
           </div>
-          <button class="btn" @click="saveBankOrder" :disabled="bankSaving"
-                  data-tip="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
         </div>
 
+        <div class="bank-tabs-row">
         <div class="tabs">
           <button class="tab-add" data-tip="新增分类" @click="openAddTab">＋</button>
           <div v-for="name in tabs" :key="name"
@@ -42,6 +41,25 @@ export default {
                @drop.prevent="onTabDrop"
                @dragend="onTabDragEnd">{{ tabLabel(name) }}</div>
         </div>
+          <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
+          <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
+            <button v-if="!searchOpen" class="wb-search-trigger" data-tip="搜词条名或分类路径（Ctrl+F）"
+                    @click="openSearch">🔍</button>
+            <div v-else class="wb-search-box" :class="{ 'is-search': searching, 'closing': searchClosing }">
+              <span class="wb-search-ico">🔍</span>
+              <input ref="searchInputEl" class="wb-search-input" v-model="searchText"
+                     placeholder="搜词条 / 分类"
+                     @keydown.esc.stop.prevent="onSearchEsc"
+                     @blur="onSearchBlur" />
+              <!-- × 与输入的字平级，紧跟在词尾；范围开关贴框的右端 -->
+              <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词（Esc）"
+                      @click="clearSearch">×</button>
+              <button class="wb-scope-btn" :class="{ all: searchScope === 'all' }"
+                      :data-tip="searchScope === 'all' ? '全库：忽略 tab 与分类筛选，点此切回「筛选」' : '筛选：只在当前 tab + 已选分类里搜，点此切到「全库」'"
+                      @click="toggleSearchScope">{{ searchScope === 'all' ? '全库' : '筛选' }}</button>
+            </div>
+          </div>
+        </div>
 
         <div class="bank-body">
         <div class="chips-wrap">
@@ -52,18 +70,6 @@ export default {
               {{ chipsCollapsed ? '⏷ 展开' : '⏶ 收起' }}
             </button>
             <span class="chips-count">{{ listCountLabel }}</span>
-            <!-- 搜索：一个输入框 + 一个范围开关。筛选档只搜当前 tab+已选分类（纯内存），全库档搜全部词条 -->
-            <div class="wb-search" :class="{ 'is-search': searching }">
-              <span class="wb-search-ico">🔍</span>
-              <input class="wb-search-input" v-model="searchText"
-                     placeholder="搜词条名"
-                     @keydown.esc.stop.prevent="onSearchEsc" />
-              <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词（Esc）"
-                      @click="clearSearch">×</button>
-              <button class="wb-scope-btn" :class="{ all: searchScope === 'all' }"
-                      :data-tip="searchScope === 'all' ? '全库：忽略 tab 与分类筛选，点此切回「筛选」' : '筛选：只在当前 tab + 已选分类里搜，点此切到「全库」'"
-                      @click="toggleSearchScope">{{ searchScope === 'all' ? '全库' : '筛选' }}</button>
-            </div>
           </div>
           <div class="chips-container" :style="{ height: chipsHeightCss }">
             <div v-for="(line, depth) in chipLines" :key="depth" class="chips-line">
@@ -1772,11 +1778,29 @@ export default {
     // 两档取数路径天然不同：筛选档即时、全库档只拉一次，所以分开处理。
     const searchText = ref('');
     const searchScope = ref('filter');   // 'filter' | 'all'
+    // 方案A：搜索槽默认收起成放大镜图标，点开才展开
+    const searchOpen = ref(false);
+    const searchClosing = ref(false);   // 收回动画进行中（动画跑完才真正卸载输入框）
+    const searchInputEl = ref(null);
     const searchAll = ref(null);         // 全库快照
     const searchAllLoading = ref(false);
     const searchAllError = ref('');
-    // 只匹配词条名（name 即去编号的显示名），不搜提示词内容
     const searchQ = computed(() => String(searchText.value || '').trim().toLowerCase());
+    // 匹配范围 = 词条名 + 所在分类路径（tab / 各级分类）：
+    // 搜「扎发」既命中名字含扎发的词条，也命中 发型/扎发/编发 整条线上分类下的全部词条；
+    // 提示词正文仍然不参与匹配。
+    // 分类名里全角／、反斜杠等分隔符混用是常态，统一折成 "/" 再比，且忽略大小写
+    const normSep = (s) => String(s == null ? '' : s).replace(/[／＼\\]/g, '/').toLowerCase();
+    const cardPathText = (c) => {
+      const chips = Array.isArray(c && c.chips) ? c.chips : [];
+      return normSep([c && c.tab].concat(chips).filter(Boolean).join('/'));
+    };
+    const hitSearch = (c, q) => {
+      if (!q) return true;
+      const nq = normSep(q);
+      if (normSep(c && c.name).includes(nq)) return true;
+      return cardPathText(c).includes(nq);
+    };
     const ensureSearchAll = async () => {
       if (searchAll.value || searchAllLoading.value) return;
       searchAllLoading.value = true;
@@ -1813,7 +1837,7 @@ export default {
       const q = searchQ.value;
       if (!q) return null;   // 没有搜索词 = 不在搜索态，列表交回分类浏览
       const src = searchScope.value === 'all' ? (searchAll.value || []) : filteredFiles.value;
-      return src.filter(c => String(c.name || '').toLowerCase().includes(q));
+      return src.filter(c => hitSearch(c, q));
     });
     // 列表唯一出口：有词 → 搜索结果；无词 → 原分类浏览结果
     const listFiles = computed(() => searchHits.value || filteredFiles.value);
@@ -1832,19 +1856,47 @@ export default {
       if (!searching.value) return '没有匹配的提示词 —— 右键分类可新建词条 / 子分类';
       if (searchLoading.value) return '正在取全库词条…';
       if (searchFailed.value) return '全库取数失败：' + searchFailed.value;
-      return '没有名字含「' + String(searchText.value || '').trim() + '」的词条';
+      return '没有名字或分类路径含「' + String(searchText.value || '').trim() + '」的词条';
     });
     const toggleSearchScope = () => {
       searchScope.value = searchScope.value === 'all' ? 'filter' : 'all';
       if (searchScope.value === 'all') ensureSearchAll();
+    };
+    // 方案A：图标 -> 展开成框并聚焦；Ctrl+F 也走这里
+    const openSearch = () => {
+      searchOpen.value = true;
+      nextTick(() => {
+        const el = searchInputEl.value;
+        if (el && el.focus) { el.focus(); if (el.select) el.select(); }
+      });
+    };
+    // 收回成图标：先播 240ms 的收缩动画，动画结束再卸载，收起不会「啪」一下没了
+    const closeSearchBox = () => {
+      if (!searchOpen.value || searchClosing.value) return;
+      searchClosing.value = true;
+      setTimeout(() => {
+        searchOpen.value = false;
+        searchClosing.value = false;
+      }, 240);
+    };
+    // 无搜索词时失焦就收回成图标；框内的范围开关 / 清词按钮不算离开
+    const onSearchBlur = () => {
+      setTimeout(() => {
+        if (searchText.value) return;
+        const box = document.querySelector('.wb-search');
+        if (box && box.contains(document.activeElement)) return;
+        closeSearchBox();
+      }, 120);
     };
     // 只清搜索词、不动分类选中：清完列表自动回填到当前分类浏览（纯内存，零请求）
     const clearSearch = () => { searchText.value = ''; };
     // 点卡片区空白（非卡片本身）= 退出搜索回到当前分类浏览；滚动查看结果不会触发清词
     const onBoardBlankDown = () => { if (searchQ.value) clearSearch(); };
     const onSearchEsc = (e) => {
-      if (searchText.value) clearSearch();
+      // 有词先清词（留在搜索态，方便改词）；无词再按一次 Esc 收回成图标
+      if (searchText.value) { clearSearch(); return; }
       if (e && e.target && e.target.blur) e.target.blur();
+      closeSearchBox();
     };
     // 切到全库档后才懒取一次全量；切回筛选档不丢快照
     watch([searchQ, searchScope], () => {
@@ -2233,7 +2285,8 @@ const submitAddTab = async () => {
       tabs.value = tabs.value.filter(n => n !== json.tab);
       tabs.value.push(json.tab);
     }
-    await saveBankOrder();
+    // 新分类排到末尾：把顶层顺序落一次库（不再有手动保存按钮）
+    await saveTabOrder('');
   } finally {
     addingTab.value = false;
   }
@@ -3278,11 +3331,14 @@ const submitAddTab = async () => {
     const onTabDrop = () => { tabDrag = { name: null }; };
     const onTabDragEnd = async () => {
       const ordered = [...tabs.value];
+      const prev = [...tabOrder.value];
       tabDrag = { name: null };
-      // 不再自动写回文件夹：仅更新本地顺序并提示手动「排序保存」
+      const changed = prev.length !== ordered.length || ordered.some((n, i) => n !== prev[i]);
       tabOrder.value = ordered;
       saveState();
-      showToast('tab 顺序已调整，点击「排序保存」写回文件夹', 'info', 2600);
+      if (!prev.length || !changed) return;   // 首次加载或没挪动就不打扰后端
+      // 拖完即落库：只提交顶层这一层顺序
+      await saveTabOrder('tab 顺序已保存');
     };
 
     let chipDrag = { depth: -1, name: null, overName: null };
@@ -3306,144 +3362,95 @@ const submitAddTab = async () => {
           const ordered = [...line];
           const [moved] = ordered.splice(from, 1);
           ordered.splice(to, 0, moved);
-          // 按「层级+父节点id」隔离记录显示名顺序（本地），写回文件夹由「排序保存」统一完成
+          // 按「层级+父节点id」隔离记录显示名顺序（本地视图），再把这层的新顺序直接落库
           const parentPath = chipParentPath(depth);
           const parentId = parentPath
             ? (chipIdFor(data.activeTab, parentPath.split('/').length - 2, parentPath) || parentPath)
             : (tabIds.value[data.activeTab] || '');
           chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentId]: ordered.map(dispKey) };
-          showToast('分类顺序已调整，点击「排序保存」写回文件夹', 'info', 2200);
+          const ids = childLayerIds(data.activeTab, depth, parentId, ordered);
+          if (ids.length) postSortOrder({ [String(parentId)]: ids }, '分类顺序已保存');
+          else showToast('分类顺序已调整（未取到该层节点 id，仅本地生效）', 'warn', 2600);
         }
       }
       chipDrag = { depth: -1, name: null, overName: null };
     };
 
-    // ============ 手动「排序保存」：把当前完整数据顺序写回文件夹 ============
-    const bankSaving = ref(false);
+    // ============ 排序落库：拖拽/交换即存，不再有单独的「排序保存」按钮 ============
+    // 早先词库顺序写本地文件、一次落盘开销大，才需要手动攒一批再写；
+    // 现在顺序就存在 DB 的 sort_order 上，拖完直接把这一层的新顺序发给后端即可。
+    const sortSaving = ref(false);
 
-    // 从当前完整数据重建「父节点 id -> 直接子节点 id」的有序映射：
-    // 基底 = 后端层级深度优先顺序（卡片按 relPath 逐段排序），chipOrder（显示名）覆盖中间层顺序
-    const buildBankOrder = () => {
-      const order = {};
-      const nameById = {};
-      const seen = new Set();
-      const pushChild = (parentId, childId) => {
-        const key = parentId + '/' + childId;
-        if (seen.has(key)) return;
-        seen.add(key);
-        if (!order[parentId]) order[parentId] = [];
-        order[parentId].push(childId);
-      };
-      const tabIdOf = (tab) => tabIds.value[tab] || '';
-      // 顶层 tab：当前展示顺序
-      tabs.value.forEach(t => {
-        const tid = tabIdOf(t);
-        if (!tid) return;
-        pushChild('', tid);
-        nameById[tid] = t;
+    // 串行化：连拖多下时按先后顺序逐条落库，避免并发写互相覆盖
+    let sortChain = Promise.resolve();
+    const doPostSort = async (order, okMsg) => {
+      const resp = await fetch('/zhule_studio/api/wordbank/sort-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
       });
-      tabs.value.forEach(tab => {
-        const tid = tabIdOf(tab);
-        if (!tid) return;
-        const cards = bankData.value[tab] || [];
-        cards.forEach(card => {
-          // chip 中间层：chipKeys 每级完整相对路径，chipIds 每级 DB id（不含 tab 根）
-          const keys = Array.isArray(card.chipKeys) ? card.chipKeys : [];
-          const ids = Array.isArray(card.chipIds) ? card.chipIds : [];
-          keys.forEach((k, i) => {
-            const pid = i === 0 ? tid : ids[i - 1];
-            const cid = ids[i];
-            if (!pid || !cid) return;
-            pushChild(String(pid), String(cid));
-            nameById[String(cid)] = dispKey(k);
-          });
-          // 卡片层：父 = 最后一级 chip id（无 chip 则 tab id）
-          const pid = ids.length ? String(ids[ids.length - 1]) : tid;
-          if (pid && card.id) {
-            pushChild(String(pid), String(card.id));
-            nameById[String(card.id)] = card.name || dispKey(card.relPath || '');
-          }
-        });
-      });
-      // 应用 chipOrder：对每个 tab 的每层，把对应父节点下的直接子项按显示名顺序重排
-      tabs.value.forEach(tab => {
-        const tOrder = chipOrder[tab] || {};
-        Object.keys(tOrder).forEach(dStr => {
-          const sep = dStr.indexOf('|');
-          const d = parseInt(sep >= 0 ? dStr.slice(0, sep) : dStr, 10);
-          const parentKey = sep >= 0 ? dStr.slice(sep + 1) : '';
-          const names = tOrder[dStr];
-          if (!Array.isArray(names) || !names.length) return;
-          // 新格式：parentKey 为父节点 id；旧格式：为完整路径（反查 id）
-          let parents = [];
-          if (parentKey) {
-            if (/^\d+$/.test(parentKey)) {
-              if (order[parentKey]) parents = [parentKey];
-            } else {
-              const byPath = new Map();
-              const cards = bankData.value[tab] || [];
-              cards.forEach(c => {
-                const keys = Array.isArray(c.chipKeys) ? c.chipKeys : [];
-                const ids = Array.isArray(c.chipIds) ? c.chipIds : [];
-                keys.forEach((k, i) => { if (ids[i]) byPath.set(k, String(ids[i])); });
-              });
-              const pid = byPath.get(parentKey);
-              if (pid && order[pid]) parents = [pid];
-            }
-          }
-          if (!parents.length) return;
-          parents.forEach(p => {
-            const items = order[p];
-            if (!items || items.length < 2) return;
-            const byDisp = new Map();
-            items.forEach(cid => {
-              const disp = String(nameById[cid] != null ? nameById[cid] : cid);
-              if (!byDisp.has(disp)) byDisp.set(disp, []);
-              byDisp.get(disp).push(cid);
-            });
-            const reordered = [];
-            const used = new Set();
-            names.forEach(n => {
-              const disp = /^\d+$/.test(String(n)) ? String(n) : String(dispKey(n));
-              (byDisp.get(disp) || []).forEach(cid => { if (!used.has(cid)) { reordered.push(cid); used.add(cid); } });
-            });
-            items.forEach(cid => { if (!used.has(cid)) { reordered.push(cid); used.add(cid); } });
-            order[p] = reordered;
-          });
-        });
-      });
-      return order;
+      const json = await resp.json();
+      if (!json || json.error || json.ok === false) {
+        showToast('排序保存失败：' + ((json && (json.error || json.message)) || '未知错误'), 'error', 3600);
+        return false;
+      }
+      if (Array.isArray(json.errors) && json.errors.length) {
+        showToast('排序保存部分失败：' + json.errors.join('；'), 'warn', 4000);
+        return false;
+      }
+      if (okMsg) showToast(okMsg, 'success', 1500);
+      return true;
+    };
+    const postSortOrder = (order, okMsg) => {
+      if (!order || !Object.keys(order).length) return Promise.resolve(false);
+      sortSaving.value = true;
+      sortChain = sortChain
+        .then(() => doPostSort(order, okMsg))
+        .catch(e => { showToast('排序保存请求失败：' + e.message, 'error', 3600); return false; })
+        .finally(() => { sortSaving.value = false; });
+      return sortChain;
     };
 
-    const saveBankOrder = async () => {
-      if (bankSaving.value) return;
-      bankSaving.value = true;
-      try {
-        // 确保所有 tab 数据已加载：懒加载下未访问过的分类不在 bankData，避免排序重建遗漏
-        const missing = tabs.value.filter(t => !bankData.value[t]);
-        if (missing.length) await load(true);
-        const order = buildBankOrder();
-        const resp = await fetch('/zhule_studio/api/wordbank/sort-save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order }),
-        });
-        const json = await resp.json();
-        if (!json || json.error) {
-          showToast('排序保存失败：' + ((json && json.error) || '未知错误'), 'error', 4000);
-          return;
-        }
-        if (json.ok) {
-          showToast('排序已保存：更新 ' + (json.total || 0) + ' 项', 'success', 3000);
-          await load(true);
-        } else {
-          showToast('排序保存失败：' + (json.message || '未知错误'), 'error', 4000);
-        }
-      } catch (e) {
-        showToast('排序保存请求失败：' + e.message, 'error', 4000);
-      } finally {
-        bankSaving.value = false;
-      }
+    // 顶层 tab 顺序 -> id 序列：用 tab_ids 全量映射，不依赖各 tab 卡片是否已懒加载
+    const tabLayerIds = () => tabs.value.map(t => tabIds.value[t]).filter(Boolean).map(String);
+
+    // 某父节点下的子分类新顺序 -> id 序列：从已加载卡片反推「显示名 -> DB id」，
+    // 按拖拽后的显示名顺序重排；本层里没出现在卡片中的 id 原样补在末尾（空分类等）
+    const childLayerIds = (tab, depth, parentId, orderedNames) => {
+      const cards = bankData.value[tab] || [];
+      const tid = tabIds.value[tab] || '';
+      const byDisp = new Map();
+      const seq = [];
+      const seen = new Set();
+      cards.forEach(card => {
+        const keys = Array.isArray(card.chipKeys) ? card.chipKeys : [];
+        const ids = Array.isArray(card.chipIds) ? card.chipIds : [];
+        if (!keys[depth] || !ids[depth]) return;
+        const pid = depth === 0 ? tid : ids[depth - 1];
+        if (!pid || String(pid) !== String(parentId)) return;
+        const cid = String(ids[depth]);
+        if (seen.has(cid)) return;
+        seen.add(cid);
+        seq.push(cid);
+        const disp = dispKey(keys[depth]);
+        if (!byDisp.has(disp)) byDisp.set(disp, []);
+        byDisp.get(disp).push(cid);
+      });
+      const out = [];
+      const used = new Set();
+      (orderedNames || []).forEach(n => {
+        const disp = dispKey(n);
+        (byDisp.get(disp) || []).forEach(cid => { if (!used.has(cid)) { out.push(cid); used.add(cid); } });
+      });
+      seq.forEach(cid => { if (!used.has(cid)) { out.push(cid); used.add(cid); } });
+      return out;
+    };
+
+    // 只落顶层顺序（新建 tab 排末尾 / tab 拖拽后）
+    const saveTabOrder = (okMsg) => {
+      const ids = tabLayerIds();
+      if (!ids.length) return Promise.resolve(false);
+      return postSortOrder({ '': ids }, okMsg);
     };
 
     // ============ 拖拽 ============
@@ -3692,6 +3699,14 @@ const submitAddTab = async () => {
       load(); // 首屏加载数据（加载遮罩已移除）
     });
     const onBankKeydown = (e) => {
+      // Ctrl+F / Cmd+F：唤起词库搜索（页面不在前台时不抢键）
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        const anchor = document.querySelector('.wb-search');
+        if (!anchor || !anchor.offsetParent) return;
+        e.preventDefault();
+        openSearch();
+        return;
+      }
       if (e.key !== 'Escape') return;
       if (cardMenu.open) { closeCardMenu(); return; }
       if (catMenu.open) { closeCatMenu(); return; }
@@ -3722,7 +3737,7 @@ const submitAddTab = async () => {
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,
       chipLines, filteredFiles, previewText,
       // 搜索：listFiles = 列表唯一出口（有搜索词走搜索结果，无词走分类浏览）
-      listFiles, searchText, searchScope, searchQ, searching, searchAllLoading, searchLoading, searchFailed,
+      listFiles, searchText, searchScope, searchQ, searching, searchOpen, searchClosing, searchInputEl, openSearch, onSearchBlur, closeSearchBox, searchAllLoading, searchLoading, searchFailed,
       showCardTab, cardTabLabel,
       listCountLabel, emptyText, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
       pageIndex, pageCount, pageNumbers, visibleFiles, goPrevPage, goNextPage, goPage,
@@ -3752,7 +3767,7 @@ const submitAddTab = async () => {
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,
-      dispKey, bankSaving, saveBankOrder,
+      dispKey, sortSaving, saveTabOrder,
       onCardPointerDown, onTagPointerDown, onSelListPointerDown,
       toast, toastIcon, dismissToast,
     };

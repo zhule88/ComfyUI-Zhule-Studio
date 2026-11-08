@@ -144,25 +144,45 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .chips-toggle:hover { background: var(--card-hover); color: var(--text); }
 .chips-count { color: var(--primary); font-size: 16px; font-weight: 700;
   white-space: nowrap; flex-shrink: 0; text-shadow: 0 0 8px var(--primary-dim); }
-/* 词库搜索：输入框常驻（宽度随聚焦/有意展开），右侧是「筛选 / 全库」范围开关 */
-.wb-search { display: flex; align-items: center; gap: 6px; margin-left: auto;
-  min-width: 0; flex-shrink: 0; }
+/* Tab 行 + 右侧搜索（方案A）：默认只露一个放大镜图标，点开才在原位展开成框；范围开关放在框内 */
+.bank-tabs-row { display: flex; align-items: stretch; gap: 8px; padding-right: 14px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border-2); flex-shrink: 0; }
+.bank-tabs-row .tabs { flex: 1 1 auto; min-width: 0; background: transparent; border-bottom: none; }
+/* 收起态是图标按钮，展开态是带边框的搜索槽：🔍 | 输入…× | 范围开关（开关贴右端） */
+.wb-search { display: flex; align-items: center; margin-left: auto; align-self: center; flex-shrink: 0; }
+.wb-search-trigger { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1; color: var(--text-3); background: transparent;
+  border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+  transition: all 0.12s; animation: wbIcoIn 0.12s ease-out; }
+.wb-search-trigger:hover { color: var(--text); background: var(--card-hover); border-color: var(--border-2); }
+@keyframes wbIcoIn { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
+.wb-search-box { display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 8px;
+  width: 236px; overflow: hidden; background: #1b202b; border: 1px solid var(--border); border-radius: 13px;
+  animation: wbSearchGrow 0.14s ease-out; }
+.wb-search-box.is-search { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-dim); }
+/* 收回：先收缩再卸载，不瞬间消失 */
+.wb-search-box.closing { animation: wbSearchShrink 0.24s cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+@keyframes wbSearchGrow { from { width: 26px; opacity: 0.25; } to { width: 236px; opacity: 1; } }
+@keyframes wbSearchShrink {
+  from { width: 236px; opacity: 1; padding-left: 8px; padding-right: 4px; }
+  to { width: 26px; opacity: 0; padding-left: 0; padding-right: 0; }
+}
 .wb-search-ico { font-size: 12px; opacity: 0.55; flex-shrink: 0; line-height: 1; }
-.wb-search-input { width: 130px; padding: 3px 8px; font-size: 12px;
-  background: #1b202b; color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; outline: none; transition: width 0.15s, border-color 0.12s; }
+.wb-search-input { flex: 1 1 auto; min-width: 0; width: auto; padding: 0; font-size: 12px;
+  background: transparent; color: var(--text); border: none; outline: none; }
 .wb-search-input::placeholder { color: var(--text-3); }
-.wb-search-input:focus { width: 200px; border-color: var(--primary); }
-.wb-search.is-search .wb-search-input { border-color: var(--primary); }
-.wb-search-x { padding: 0 5px; font-size: 14px; line-height: 1; flex-shrink: 0;
-  background: transparent; color: var(--text-3); border: none; cursor: pointer; }
-.wb-search-x:hover { color: var(--text); }
-.wb-scope-btn { padding: 3px 9px; font-size: 11px; flex-shrink: 0; white-space: nowrap;
-  background: #1b202b; color: var(--text-3); border: 1px solid var(--border);
-  border-radius: 6px; cursor: pointer; transition: all 0.12s; }
-.wb-scope-btn:hover { background: var(--card-hover); color: var(--text); }
-/* 全库档：视觉上明确「已越过当前 tab / 分类筛选」 */
-.wb-scope-btn.all { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
+/* × 跟在词尾、与输入的字平级，位于范围开关左侧 */
+.wb-search-x { flex-shrink: 0; width: 16px; height: 16px; display: inline-flex; align-items: center;
+  justify-content: center; padding: 0; font-size: 13px; line-height: 1; border-radius: 50%;
+  background: transparent; color: var(--text-3); border: none; cursor: pointer; transition: all 0.12s; }
+.wb-search-x:hover { color: var(--text); background: var(--card-hover); }
+/* 范围开关：两档都走蓝色系。筛选＝蓝字蓝描边（未越界），全库＝实心蓝（已越界，强调） */
+.wb-scope-btn { flex-shrink: 0; height: 20px; padding: 0 8px; font-size: 11px; white-space: nowrap;
+  background: transparent; color: var(--primary); border: 1px solid var(--primary);
+  border-radius: 10px; cursor: pointer; transition: all 0.12s; }
+.wb-scope-btn:hover { background: var(--primary-dim); color: #fff; }
+.wb-scope-btn.all { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+.wb-scope-btn.all:hover { background: var(--primary); color: #fff; }
 .chips-container { height: 140px; overflow-y: auto;
   scrollbar-width: none; -ms-overflow-style: none; transition: height 0.15s ease; }
 .chips-container::-webkit-scrollbar { display: none; width: 0; height: 0; }
