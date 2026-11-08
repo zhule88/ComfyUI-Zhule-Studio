@@ -144,6 +144,25 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .chips-toggle:hover { background: var(--card-hover); color: var(--text); }
 .chips-count { color: var(--primary); font-size: 16px; font-weight: 700;
   white-space: nowrap; flex-shrink: 0; text-shadow: 0 0 8px var(--primary-dim); }
+/* 词库搜索：输入框常驻（宽度随聚焦/有意展开），右侧是「筛选 / 全库」范围开关 */
+.wb-search { display: flex; align-items: center; gap: 6px; margin-left: auto;
+  min-width: 0; flex-shrink: 0; }
+.wb-search-ico { font-size: 12px; opacity: 0.55; flex-shrink: 0; line-height: 1; }
+.wb-search-input { width: 130px; padding: 3px 8px; font-size: 12px;
+  background: #1b202b; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; outline: none; transition: width 0.15s, border-color 0.12s; }
+.wb-search-input::placeholder { color: var(--text-3); }
+.wb-search-input:focus { width: 200px; border-color: var(--primary); }
+.wb-search.is-search .wb-search-input { border-color: var(--primary); }
+.wb-search-x { padding: 0 5px; font-size: 14px; line-height: 1; flex-shrink: 0;
+  background: transparent; color: var(--text-3); border: none; cursor: pointer; }
+.wb-search-x:hover { color: var(--text); }
+.wb-scope-btn { padding: 3px 9px; font-size: 11px; flex-shrink: 0; white-space: nowrap;
+  background: #1b202b; color: var(--text-3); border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer; transition: all 0.12s; }
+.wb-scope-btn:hover { background: var(--card-hover); color: var(--text); }
+/* 全库档：视觉上明确「已越过当前 tab / 分类筛选」 */
+.wb-scope-btn.all { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
 .chips-container { height: 140px; overflow-y: auto;
   scrollbar-width: none; -ms-overflow-style: none; transition: height 0.15s ease; }
 .chips-container::-webkit-scrollbar { display: none; width: 0; height: 0; }
@@ -291,6 +310,20 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   /* 仅名字恢复指针事件，便于悬停看完整名（点击仍冒泡到卡片，不打断选中/拖拽） */
   pointer-events: auto;
+}
+
+/* 全库搜索：卡片可能不属于当前 tab，右上角标出真实所属分类链路（tab / 父类 / 子类）。
+   放在右上角避开左上的竖排操作区，且 pointer-events:none 不挡点选与拖拽 */
+.card-tab-chip {
+  position: absolute; right: 6px; top: 6px; z-index: 6;
+  max-width: calc(100% - 44px);
+  padding: 2px 6px; border-radius: 5px;
+  font-size: 10.5px; line-height: 1.45; letter-spacing: 0.2px;
+  color: #cfe1ff; background: rgba(12, 16, 22, 0.74);
+  border: 1px solid rgba(79, 143, 247, 0.42);
+  backdrop-filter: blur(6px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 左侧竖排操作区：静音 / 删除 / 编辑 / 上传参考图

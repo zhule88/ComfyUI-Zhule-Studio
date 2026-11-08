@@ -342,6 +342,10 @@ def _cards_from_tree(tree):
         collect(tab_node, [], [], cards, ())
         tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
         tabs.append(tab_disp)
+        # 卡片自带所属 tab：relPath 从 tab 根开始、不含 tab 名，跨 tab 可能同名同路径；
+        # 前端选词/全库搜索要靠它判定归属，不能再拿 activeTab 去推
+        for _c in cards:
+            _c["tab"] = tab_disp
         data[tab_disp] = cards
     return {"tabs": tabs, "data": data}
 

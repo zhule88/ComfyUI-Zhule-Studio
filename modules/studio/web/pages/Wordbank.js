@@ -51,7 +51,19 @@ export default {
                     :data-tip="chipsCollapsed ? '展开分类区' : '收起分类区'">
               {{ chipsCollapsed ? '⏷ 展开' : '⏶ 收起' }}
             </button>
-            <span class="chips-count">数量 {{ filteredFiles.length }}</span>
+            <span class="chips-count">{{ listCountLabel }}</span>
+            <!-- 搜索：一个输入框 + 一个范围开关。筛选档只搜当前 tab+已选分类（纯内存），全库档搜全部词条 -->
+            <div class="wb-search" :class="{ 'is-search': searching }">
+              <span class="wb-search-ico">🔍</span>
+              <input class="wb-search-input" v-model="searchText"
+                     placeholder="搜词条名"
+                     @keydown.esc.stop.prevent="onSearchEsc" />
+              <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词（Esc）"
+                      @click="clearSearch">×</button>
+              <button class="wb-scope-btn" :class="{ all: searchScope === 'all' }"
+                      :data-tip="searchScope === 'all' ? '全库：忽略 tab 与分类筛选，点此切回「筛选」' : '筛选：只在当前 tab + 已选分类里搜，点此切到「全库」'"
+                      @click="toggleSearchScope">{{ searchScope === 'all' ? '全库' : '筛选' }}</button>
+            </div>
           </div>
           <div class="chips-container" :style="{ height: chipsHeightCss }">
             <div v-for="(line, depth) in chipLines" :key="depth" class="chips-line">
@@ -79,10 +91,11 @@ export default {
         </div>
 
         <div class="main">
-          <div class="grid" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }">
-            <div v-if="!filteredFiles.length" class="empty">没有匹配的提示词 —— 右键分类可新建词条 / 子分类</div>
-            <div v-for="file in visibleFiles" :key="file.relPath"
-                 class="card image" :data-rel="file.relPath"
+          <div class="grid" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }"
+               @pointerdown.self="onBoardBlankDown">
+            <div v-if="!listFiles.length" class="empty">{{ emptyText }}</div>
+            <div v-for="file in visibleFiles" :key="(file.tab || '') + '/' + file.relPath"
+                 class="card image" :data-rel="file.relPath" :data-tab="file.tab || ''"
                  :class="{
                    selected: isFileSelected(file),
                    muted: !!file.mute,
@@ -112,6 +125,9 @@ export default {
                   <button class="dice" @click.stop="randomImage(file)">🎲</button>
                   <button @click.stop="nextImage(file)">›</button>
                 </div>
+                <!-- 全库搜索：卡片可能不属于当前 tab，右上角标出它真实所属的分类链路 -->
+                <div class="card-tab-chip" v-if="showCardTab(file)"
+                     :data-tip="'该词条属于：' + cardTabLabel(file)">{{ cardTabLabel(file) }}</div>
                 <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
                 <div class="card-actions" v-if="!hideCardIcons">
                   <button class="card-act act-mute" :class="{on: !!file.mute}"
@@ -168,7 +184,7 @@ export default {
                     :class="{active: p === pageIndex}" :disabled="p < 0"
                     @click="goPage(p)">{{ p < 0 ? '…' : p + 1 }}</button>
             <button class="btn" :disabled="pageIndex >= pageCount - 1" @click="goNextPage">下一页 ›</button>
-            <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ filteredFiles.length }} 张</span>
+            <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ listFiles.length }} 张</span>
           </div>
         </div>
         </div>
@@ -1185,6 +1201,7 @@ export default {
         }
         // 原地改：bankData 是 ref，深层对象为响应式代理，卡片样式立即刷新
         file.mute = json.mute;
+        patchSearchAll(file.id, { mute: json.mute });
         showToast((json.mute ? '已静音：' : '已取消静音：') + file.name
           + (json.mute ? '（自动选词跳过它，手动点选仍可用）' : ''), 'success', 2600);
       } catch (e) {
@@ -1355,6 +1372,7 @@ export default {
           return;
         }
         file.images = json.images || [];
+        patchSearchAll(file.id, { images: file.images });
         const n = file.images.length;
         setImgIdx(file, n ? Math.min(idx, n - 1) : 0);
         // 若删除发生在详情弹层，同步修正弹层索引
@@ -1490,6 +1508,7 @@ export default {
           return;
         }
         file.images = json.images || [];
+        patchSearchAll(file.id, { images: file.images });
         showToast('参考图已上传', 'success');
         closeUploadRef();
       } catch (e) {
@@ -1568,6 +1587,10 @@ export default {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         if (json.error) throw new Error(json.error);
+        // 重新取数即代表数据变了（新建 / 删除 / 编辑 / 手动刷新），让「全库搜索快照」过期，
+        // 下次在全库档搜索时重新整包取一次；放在 await 之后，避免 setup 同步阶段访问 searchAll
+        searchAll.value = null;
+        searchAllError.value = '';
         tabs.value = json.tabs || [];
         tabIds.value = json.tab_ids || {};
         if (json.nodes && typeof json.nodes === 'object') bankNodes.value = json.nodes;
@@ -1741,13 +1764,100 @@ export default {
       return result;
     });
 
+    // ============ 搜索（同一个控件，两档范围）============
+    // 档「筛选」：只在当前 tab + 已选 chips 的 filteredFiles 里过滤 —— 纯内存，零请求
+    // 档「全库」：忽略 tab / chips，走一次性拉取的全库快照。
+    //   前端是懒加载的，没点开过的 tab 根本没有数据，所以全库档必须先整包取一次，
+    //   取完缓存住，之后都在这份快照上过滤；快照只读，绝不写回 bankData。
+    // 两档取数路径天然不同：筛选档即时、全库档只拉一次，所以分开处理。
+    const searchText = ref('');
+    const searchScope = ref('filter');   // 'filter' | 'all'
+    const searchAll = ref(null);         // 全库快照
+    const searchAllLoading = ref(false);
+    const searchAllError = ref('');
+    // 只匹配词条名（name 即去编号的显示名），不搜提示词内容
+    const searchQ = computed(() => String(searchText.value || '').trim().toLowerCase());
+    const ensureSearchAll = async () => {
+      if (searchAll.value || searchAllLoading.value) return;
+      searchAllLoading.value = true;
+      searchAllError.value = '';
+      try {
+        // 不带 tab 参数 = 后端返回全部 tab 的全量树
+        const resp = await fetch('/zhule_studio/api/wordbank');
+        const json = await resp.json();
+        if (!resp.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + resp.status));
+        const all = [];
+        const d = (json && json.data) || {};
+        for (const t of Object.keys(d)) {
+          for (const c of (d[t] || [])) {
+            // 归属 tab 以分组键为准（后端卡片本身也带 tab 字段，这里兜一道）
+            if (!c.tab) c.tab = t;
+            all.push(c);
+          }
+        }
+        searchAll.value = all;
+        zhuleLog('ensureSearchAll: 全库快照就绪', all.length);
+      } catch (e) {
+        searchAllError.value = e.message || String(e);
+      } finally {
+        searchAllLoading.value = false;
+      }
+    };
+    // 全库快照里的同一词条跟上本地已改的字段（参考图 / 静音态），
+    // 避免全库搜索结果点开详情时看到过期数据；赋新数组才能触发重算
+    const patchSearchAll = (id, patch) => {
+      if (!searchAll.value || !id) return;
+      searchAll.value = searchAll.value.map(x => (x.id === id ? Object.assign({}, x, patch) : x));
+    };
+    const searchHits = computed(() => {
+      const q = searchQ.value;
+      if (!q) return null;   // 没有搜索词 = 不在搜索态，列表交回分类浏览
+      const src = searchScope.value === 'all' ? (searchAll.value || []) : filteredFiles.value;
+      return src.filter(c => String(c.name || '').toLowerCase().includes(q));
+    });
+    // 列表唯一出口：有词 → 搜索结果；无词 → 原分类浏览结果
+    const listFiles = computed(() => searchHits.value || filteredFiles.value);
+    // 全库搜索的卡片可能压根不在当前 tab 里，右上角标出它的真实归属（tab / 父类 / 子类）
+    const showCardTab = (file) => searching.value && searchScope.value === 'all' && !!(file && file.tab);
+    const cardTabLabel = (file) => {
+      if (!file) return '';
+      const chips = Array.isArray(file.chips) ? file.chips : [];
+      return [file.tab].concat(chips).filter(Boolean).join(' / ');
+    };
+    const searching = computed(() => !!searchQ.value);
+    const searchLoading = computed(() => !!searchQ.value && searchScope.value === 'all' && searchAllLoading.value);
+    const searchFailed = computed(() => (searchQ.value && searchScope.value === 'all') ? searchAllError.value : '');
+    const listCountLabel = computed(() => (searching.value ? '命中 ' : '数量 ') + listFiles.value.length);
+    const emptyText = computed(() => {
+      if (!searching.value) return '没有匹配的提示词 —— 右键分类可新建词条 / 子分类';
+      if (searchLoading.value) return '正在取全库词条…';
+      if (searchFailed.value) return '全库取数失败：' + searchFailed.value;
+      return '没有名字含「' + String(searchText.value || '').trim() + '」的词条';
+    });
+    const toggleSearchScope = () => {
+      searchScope.value = searchScope.value === 'all' ? 'filter' : 'all';
+      if (searchScope.value === 'all') ensureSearchAll();
+    };
+    // 只清搜索词、不动分类选中：清完列表自动回填到当前分类浏览（纯内存，零请求）
+    const clearSearch = () => { searchText.value = ''; };
+    // 点卡片区空白（非卡片本身）= 退出搜索回到当前分类浏览；滚动查看结果不会触发清词
+    const onBoardBlankDown = () => { if (searchQ.value) clearSearch(); };
+    const onSearchEsc = (e) => {
+      if (searchText.value) clearSearch();
+      if (e && e.target && e.target.blur) e.target.blur();
+    };
+    // 切到全库档后才懒取一次全量；切回筛选档不丢快照
+    watch([searchQ, searchScope], () => {
+      if (searchQ.value && searchScope.value === 'all') ensureSearchAll();
+    });
+
     // ============ 卡片分页（懒渲染）：每页固定数量，避免全量 DOM 膨胀 ============
     const PAGE_SIZE = 80;
     const pageIndex = ref(0);
-    const pageCount = computed(() => Math.max(1, Math.ceil(filteredFiles.value.length / PAGE_SIZE)));
+    const pageCount = computed(() => Math.max(1, Math.ceil(listFiles.value.length / PAGE_SIZE)));
     const visibleFiles = computed(() => {
       const start = pageIndex.value * PAGE_SIZE;
-      return filteredFiles.value.slice(start, start + PAGE_SIZE);
+      return listFiles.value.slice(start, start + PAGE_SIZE);
     });
     const pageNumbers = computed(() => {
       const total = pageCount.value;
@@ -1763,8 +1873,8 @@ export default {
     const goPrevPage = () => { pageIndex.value = Math.max(0, pageIndex.value - 1); };
     const goNextPage = () => { pageIndex.value = Math.min(pageCount.value - 1, pageIndex.value + 1); };
     const goPage = (i) => { if (i >= 0 && i < pageCount.value) pageIndex.value = i; };
-    // 筛选/排序结果变化时回到第一页，避免停留在无效页码
-    watch(filteredFiles, () => { pageIndex.value = 0; });
+    // 筛选/排序/搜索词变化时回到第一页，避免停留在无效页码
+    watch(listFiles, () => { pageIndex.value = 0; });
 
     // ============ 排除词引擎（与节点 modules/studio/node.py::build_prompt 同一套规则）============
     // 段分隔：中英逗号 / 顿号 / 分号 / 换行；段内按空白分词；段内任一命中（OR）即排除。
@@ -1964,7 +2074,16 @@ export default {
       data.imgIndices[file.relPath] = n ? Math.min(Math.max(i, 0), n - 1) : 0;
     };
     const displayContent = (file) => (pref.translate && file.content_cn) ? file.content_cn : file.content;
-    const isFileSelected = (file) => data.selected.some(s => s.relPath === file.relPath);
+    // 同一张卡片 = tab + relPath 都一致。relPath 从 tab 根开始、不含 tab 名，
+    // 全库搜索时不同 tab 下可能存在完全相同的 relPath，只比 relPath 会把两张卡误判成一张。
+    // 任一方缺 tab（历史存档）时退回只比路径，保证老存档的选中态照常显示。
+    const sameCard = (a, b) => {
+      if (!a || !b || a.relPath !== b.relPath) return false;
+      const ta = String(a.tab || ''), tb = String(b.tab || '');
+      if (!ta || !tb) return true;
+      return ta === tb;
+    };
+    const isFileSelected = (file) => data.selected.some(s => sameCard(s, file));
 
     // ============ 随机池（多项独立子池：每个右键选中的 tab / chip 各为一池，随机/遍历时各抽一组合；父子互不包含） ============
     const samePath = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -2120,6 +2239,8 @@ const submitAddTab = async () => {
   }
 };
     const switchTab = (name) => {
+      // 搜索态下点任意 tab = 退出搜索，回到该 tab 的分类浏览（词条都在内存里，零请求）
+      if (searchQ.value) clearSearch();
       if (data.activeTab === name) return;
       data.activeTab = name;
       pageIndex.value = 0;
@@ -2137,6 +2258,9 @@ const submitAddTab = async () => {
       const sel = getSelections();
       if (!Array.isArray(sel[depth])) sel[depth] = [];
       if (sel[depth].length === 1 && sel[depth][0] === name) {
+        // 搜索态下点「已选中的同一个分类」= 用内存里已有的分类数据回填、覆盖搜索结果，
+        // 选中态保持不变（不取消），也不发任何请求
+        if (searchQ.value) { clearSearch(); return; }
         sel[depth] = [];
       } else {
         sel[depth] = [name];
@@ -2559,10 +2683,10 @@ const submitAddTab = async () => {
       if (file.images && file.images.length) fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
       else fullViewer.open(defaultImageUrl, (file.name || '') + '（暂无参考图）');
     };
-    // 切换提示词：以当前筛选结果（filteredFiles）为范围，dir=±1 上下一条
+    // 切换提示词：以当前列表（分类浏览结果或搜索结果）为范围，dir=±1 上下一条
     const zoomWordAt = (dir) => {
       const cur = zoomCtx.file;
-      const list = filteredFiles.value;
+      const list = listFiles.value;
       if (!cur || !list.length) return;
       let idx = list.findIndex(f => f.relPath === cur.relPath);
       if (idx < 0) idx = 0;
@@ -3332,11 +3456,12 @@ const submitAddTab = async () => {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
       e.preventDefault();
-      const existIdx = data.selected.findIndex(s => s.relPath === file.relPath);
+      const existIdx = data.selected.findIndex(s => sameCard(s, file));
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
-        item: { tab: data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
+        // tab 以卡片自带的为准（全库搜索结果里卡片可能不属于当前 activeTab）
+        item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -3419,9 +3544,9 @@ const submitAddTab = async () => {
       }
       const card = el.closest('.card');
       if (card && pDrag.pending && pDrag.pending.sourceType === 'card') {
-        // 通过 data-rel 定位卡片（分页渲染下 DOM 索引与 filteredFiles 不再一一对应，且要排除 card-add）
+        // 通过 data-rel 定位卡片（分页渲染下 DOM 索引与列表不再一一对应，且要排除 card-add）
         const rel = card.getAttribute('data-rel');
-        const f = rel ? filteredFiles.value.find(x => x.relPath === rel) : null;
+        const f = rel ? listFiles.value.find(x => x.relPath === rel) : null;
         if (f) {
           drag.hoverTagIdx = -1; drag.hoverSide = null; drag.hoverCardRelPath = f.relPath;
           return;
@@ -3490,7 +3615,7 @@ const submitAddTab = async () => {
           data.selected.splice(t, 0, moved);
         } else {
           const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
-          const existIdx = data.selected.findIndex(s => s.relPath === item.relPath);
+          const existIdx = data.selected.findIndex(s => sameCard(s, item));
           let targetIdx = idx;
           if (existIdx >= 0) {
             data.selected.splice(existIdx, 1);
@@ -3508,33 +3633,35 @@ const submitAddTab = async () => {
           data.selected.push(moved);
         } else {
           const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
-          if (data.selected.some(s => s.relPath === item.relPath)) return;
+          if (data.selected.some(s => sameCard(s, item))) return;
           data.selected.push(item);
         }
         return;
       }
 
       if (card && p.sourceType === 'card') {
-        // 通过 data-rel 定位目标卡片（分页渲染下 DOM 索引与 filteredFiles 不再一一对应，且排除 card-add）
+        // 通过 data-rel 定位目标卡片（分页渲染下 DOM 索引与列表不再一一对应，且排除 card-add）
+        // 搜索态下卡片可能来自搜索结果，所以按 listFiles 找；relPath 跨 tab 会重名，再用 data-tab 收窄
         const rel = card.getAttribute('data-rel');
-        const target = rel ? filteredFiles.value.find(x => x.relPath === rel) : null;
+        const tabAttr = card.getAttribute('data-tab') || '';
+        const target = rel ? listFiles.value.find(x => x.relPath === rel && (!tabAttr || String(x.tab || '') === tabAttr)) : null;
         if (!target) return;
-        const targetIdx = data.selected.findIndex(s => s.relPath === target.relPath);
+        const targetIdx = data.selected.findIndex(s => sameCard(s, target));
         const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
-          if (data.selected.some(s => s.relPath === item.relPath)) return;
+          if (data.selected.some(s => sameCard(s, item))) return;
           data.selected.push(item);
         }
       }
     };
 
     const toggleFile = (file) => {
-      const idx = data.selected.findIndex(s => s.relPath === file.relPath);
+      const idx = data.selected.findIndex(s => sameCard(s, file));
       if (idx >= 0) data.selected.splice(idx, 1);
       else data.selected.push({
-        tab: data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
+        tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
         content: file.content, content_cn: file.content_cn,
         neg: file.neg || '', override: file.override || '',
         // 父级分类属性链随选区一起存快照：运行/预览都按它递归继承，历史选区也能自解释
@@ -3594,6 +3721,10 @@ const submitAddTab = async () => {
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,
       chipLines, filteredFiles, previewText,
+      // 搜索：listFiles = 列表唯一出口（有搜索词走搜索结果，无词走分类浏览）
+      listFiles, searchText, searchScope, searchQ, searching, searchAllLoading, searchLoading, searchFailed,
+      showCardTab, cardTabLabel,
+      listCountLabel, emptyText, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
       pageIndex, pageCount, pageNumbers, visibleFiles, goPrevPage, goNextPage, goPage,
       getSelections,
       chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
