@@ -13,7 +13,7 @@ const channel = new BroadcastChannel(CHANNEL_NAME);
 // 若用户开着多个画布标签页且含相同ID，每个页面都会收到广播并各自 queuePrompt，
 // 一次运行会生成多份图。认领窗口 + claimed 广播能挡住绝大多数重复（毫秒级竞态不可完全消除）。
 // seq 缺失（旧词库页）时按 0 处理，仍走窗口去重；新词库页每次运行 seq 递增，不会误伤连续运行。
-const RUN_CLAIM_WINDOW_MS = 3000;
+const RUN_CLAIM_WINDOW_MS = 1500;
 const claimedRuns = new Map(); // bindId -> { t: lastClaimAt, seq: runSeq }
 
 function makeLinkButton(text, bg, border) {
@@ -63,20 +63,32 @@ async function handleRunMessage(msg) {
   const bindId = String(msg.bindId || "");
   if (!bindId) return;
 
-  // 多标签页去重：同一轮次（bindId+seq）在窗口期内已被处理过则跳过，避免多个画布页同时 queuePrompt 生成多份图
-  const now = Date.now();
-  const seq = Number(msg.seq) || 0;
-  const prev = claimedRuns.get(bindId);
-  if (prev && prev.seq === seq && now - prev.t < RUN_CLAIM_WINDOW_MS) return;
-  claimedRuns.set(bindId, { t: now, seq });
-
-  // 广播认领声明：其他标签页收到后会在窗口期内跳过同一轮次的 run（异步竞态下仍可能有毫秒级重复，已大幅收敛）
-  try { channel.postMessage({ type: "zhule:claimed", bindId, seq }); } catch (e) { /* 忽略 */ }
-
-  // 在自己的工作流里找ID匹配的节点（用户保证全局唯一，因此只有目标工作流会认领）
+  // 先在自己的工作流里找ID匹配的节点（用户保证全局唯一，因此只有目标工作流会认领）。
+  // 必须「先找节点、后认领」：否则没有该ID的标签页也会写下 claimedRuns 并广播 claimed，
+  // 把真正拥有节点的页面在窗口期内误挡掉，表现为「提示提交成功但画布没有新任务」。
   const nodes = app.graph?._nodes || [];
   const node = nodes.find((n) => n.type === NODE_TYPE && getBindValue(n) === bindId);
   if (!node) return; // 本工作流没有这个ID，忽略（不打扰其他工作流）
+
+  // 多标签页去重：同一轮次（bindId+seq+内容签名）在窗口期内已被处理过则跳过，
+  // 避免多个画布页同时 queuePrompt 生成多份图。内容签名不可省：词库页刷新后 seq 会从 1 重来，
+  // 只按 seq 去重会把「改完角色立刻重跑」的新任务当成重复静默丢掉（提示成功但画布没有新任务）。
+  const now = Date.now();
+  const seq = Number(msg.seq) || 0;
+  const sig = (Array.isArray(msg.items) ? msg.items : [])
+    .map((s) => `${(s && s.id) || ""}:${(s && s.content) || ""}`)
+    .join("|");
+  const prev = claimedRuns.get(bindId);
+  if (prev && prev.seq === seq && prev.sig === sig && now - prev.t < RUN_CLAIM_WINDOW_MS) {
+    // 重复轮次：本轮已由（本页或别的画布页）处理，这里必须回执成功，
+    // 否则词库页会误报「未收到画布回执」，用户以为没提交、实际已经在跑。
+    ack(bindId, true);
+    return;
+  }
+  claimedRuns.set(bindId, { t: now, seq, sig });
+
+  // 广播认领声明：其他标签页收到后会在窗口期内跳过同一轮次的 run（异步竞态下仍可能有毫秒级重复，已大幅收敛）
+  try { channel.postMessage({ type: "zhule:claimed", bindId, seq, sig }); } catch (e) { /* 忽略 */ }
 
   const w = ensureSelectedWidget(node);
   if (!w) {
@@ -108,8 +120,14 @@ async function handleRunMessage(msg) {
 
   try {
     const count = Math.max(1, Math.min(99, Number(msg.count) || 1));
-    // 走前端当前画布实时状态，与手动点 Run 等价（内部会重新 graphToPrompt）
-    await app.queuePrompt(count);
+    // 走前端当前画布实时状态，与手动点 Run 等价（内部会重新 graphToPrompt）。
+    // 注意签名：queuePrompt(number, batchCount, opts) —— 第一参是队列序号，第二参才是重复次数。
+    // 只传 count 会被当成 number、batchCount 落回默认 1，表现为「提示跑 N 次、画布只有 1 个任务」。
+    console.log("[ZhuleStudio] zhule:run bind=", bindId, "count=", count, "items=", items.length);
+    const ok = await app.queuePrompt(0, count);
+    // queuePrompt 返回 false 只有一种情况：上一次提交还在处理中，本次请求已进 queueItems 等待，稍后照常执行。
+    // 所以这里不能再回「失败」误导用户；真正的构建/提交异常是抛错，走下面的 catch。
+    if (ok === false) console.warn("[ZhuleStudio] queuePrompt 已入队等待上一次请求处理（非失败）");
     ack(bindId, true);
   } catch (e) {
     ack(bindId, false, String(e?.message || e));
@@ -122,7 +140,7 @@ channel.onmessage = (ev) => {
   // 其他标签页的认领声明：窗口期内跳过同一轮次的 run，防止重复 queuePrompt
   if (d.type === "zhule:claimed") {
     const bid = String(d.bindId || "");
-    if (bid) claimedRuns.set(bid, { t: Date.now(), seq: Number(d.seq) || 0 });
+    if (bid) claimedRuns.set(bid, { t: Date.now(), seq: Number(d.seq) || 0, sig: String(d.sig ?? "") });
     return;
   }
   void handleRunMessage(d);
