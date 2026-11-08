@@ -902,8 +902,10 @@ export function useGalleryCommon(opts = {}) {
     selector: '.zhg-card',
     getKey: (el) => el.getAttribute('data-key'),
     isInteractive: (e) => !!(e.target && e.target.closest && e.target.closest('.zhg-del-btn, .zhg-zoom-btn, .zhg-sel-toggle')),
-    onUpdate: (hits) => {
-      selected.clear();
+    onUpdate: (hits, ctx) => {
+      // 不按 Ctrl：替换式框选（清空后写入本次命中）
+      // 按住 Ctrl：并集追加（只 add 不 clear，Set 天然去重，已在选中里的不会重复加）
+      if (!(ctx && ctx.additive)) selected.clear();
       for (const k of hits) selected.add(k);
     },
     onEnd: ({ moved, cancelled, initialKeys }) => {

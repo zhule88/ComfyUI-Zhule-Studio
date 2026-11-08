@@ -663,8 +663,9 @@ export default {
         const tg = ev.target;
         return !!(tg && tg.closest && tg.closest('.card-actions, .thumb-nav, .thumb-enter, .thumb-zoom, .thumb-del'));
       },
-      onUpdate: (hits) => {
-        pickSel.clear();
+      onUpdate: (hits, ctx) => {
+        // 不按 Ctrl：替换式框选；按住 Ctrl：并集追加（Set 去重，不重复添加）
+        if (!(ctx && ctx.additive)) pickSel.clear();
         hits.forEach(k => pickSel.add(k));
       },
       onEnd: ({ cancelled, initialKeys }) => {

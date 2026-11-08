@@ -275,6 +275,11 @@ export function useMarqueeSelect(options = {}) {
     if (e.button !== button) { return; }
     if (isInteractive && isInteractive(e)) { return; }
 
+    // 追加模式：按住 Ctrl（或 Mac 的 Cmd）起手框选 = 并集追加，不清空原有选中；
+    // 不按 Ctrl 仍是替换式框选（第二次框选覆盖第一次）。
+    // 只在按下瞬间取一次，拖动途中松开 Ctrl 不会中途变成替换（避免结算口径漂移）。
+    const additive = !!(e.ctrlKey || e.metaKey);
+
     const gridEl = getContainer ? getContainer() : null;
     if (!gridEl) { return; }
 
@@ -309,6 +314,7 @@ export function useMarqueeSelect(options = {}) {
       'draggable=' + (e.target ? !!e.target.draggable : '?'),
       'scrollEl=' + (scrollEl ? (scrollEl === window ? 'window' : (scrollEl.className || scrollEl.tagName)) : 'none'),
       'scroll=' + startScrollTop + ',' + startScrollLeft,
+      'ctrl=' + additive,
       'gen=' + myGen);
 
     const onMove = (ev) => {
@@ -373,7 +379,7 @@ export function useMarqueeSelect(options = {}) {
       const hits = computeHits();
       if (logOn()) {
         const R = lastRect;
-        mqLog('settle', 'cancelled=' + cancelled,
+        mqLog('settle', 'cancelled=' + cancelled, 'additive=' + additive,
           'up=' + Math.round(curX) + ',' + Math.round(curY),
           'rect=' + (R ? [R.l, R.t, R.r, R.b].map((v) => Math.round(v)).join(',') : 'null'),
           'scroll=' + (R ? R.scrollTop + ',' + R.scrollLeft : '?')
@@ -382,7 +388,9 @@ export function useMarqueeSelect(options = {}) {
           'hits=' + hits.size,
           'rows=' + JSON.stringify(rowReport()));
       }
-      if (onUpdate) onUpdate(hits);
+      // 第二个参数交给页面决定「替换」还是「并集追加」：
+      // additive=true 时页面只 add 不 clear（Set 天然去重，不会重复添加）
+      if (onUpdate) onUpdate(hits, { additive, initialKeys: initialKeys || new Set() });
       // 回写后的核对打点：rowReport 里的 sel 是结算瞬间读的 DOM，
       // 此时 Vue 还没把 selected 渲染成 .sel 类，恒为 0，不能用来判断"到底选没选中"。
       // 这里延后一拍再数一次 .zhg-card.sel，才能区分「命中算错」和「命中对了但没写进选中态」。
@@ -399,6 +407,7 @@ export function useMarqueeSelect(options = {}) {
           hitKeys: hits,
           moved: true,
           cancelled,
+          additive,
           initialKeys: initialKeys || new Set(),
         });
       }
@@ -466,6 +475,7 @@ export function useMarqueeSelect(options = {}) {
             hitKeys: new Set(),
             moved: true,
             cancelled: true,
+            additive,
             initialKeys: initialKeys || new Set(),
           });
         }
