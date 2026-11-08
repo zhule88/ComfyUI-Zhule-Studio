@@ -1612,6 +1612,8 @@ export default {
         // 数据就绪后统一收敛参考图下标（图库删图造成的越界下标在此修正并回写存档）。
         // 必须在 restoreState 之后，否则会被存档里的旧越界值覆盖回去。
         normalizeImgIndices(!!force && !tabName);
+        // 选区 id 自愈：修掉历史存档里 id 为空的条目（否则出图 tag 不带角色）
+        healSelectedIds();
         loaded.value = true;
         // 已选列表中若含尚未加载的 tab，补拉数据以恢复完整内容（fire-and-forget）
         const need = new Set();
@@ -1861,6 +1863,20 @@ export default {
         override: joinInherit(chain.map(n => n.override)),
       };
     };
+    // 空 id 自愈：历史存档或老拖拽路径可能丢掉词条 id。id 为空时 SaveImage 不写提示词标签，
+    // 表现为「这张图的 tag 里没有我选的角色」。这里按 tab + relPath 回查卡片把 id 补回来。
+    const healSelectedIds = () => {
+      let fixed = 0;
+      for (const s of data.selected) {
+        if (s.id) continue;
+        const cards = bankData.value[s.tab] || [];
+        const f = cards.find(x => x.relPath === s.relPath);
+        if (f && f.id) { s.id = f.id; fixed++; }
+      }
+      if (fixed) zhuleLog('healSelectedIds: 补回词条 id 数量', fixed);
+      return fixed;
+    };
+
     // 把选中项展开成「已继承」的最终字段（预览与运行出口共用同一套规则）
     const expandItems = (items) => (items || []).map(it => {
       const ex = expandInherit(it);
@@ -3001,6 +3017,8 @@ const submitAddTab = async () => {
 
     const runGenerate = async () => {
       const count = pref.genCount;
+      // 运行前统一自愈选区 id（普通/遍历/填充三条出口都依赖 selected 里的词条 id）
+      healSelectedIds();
       if (data.fillMode || data.traverseMode) {
         if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
         const ready = await ensurePoolData();
@@ -3091,6 +3109,7 @@ const submitAddTab = async () => {
         return;
       }
       // 普通模式：占位符已填充（绑定抽中词条）时参与运行；未抽取的占位符跳过
+      healSelectedIds();
       const readyItems = data.selected.filter(s => !s._ph || s._filled);
       if (!readyItems.length) return showToast('还没选任何提示词', 'warn');
       if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
@@ -3330,7 +3349,7 @@ const submitAddTab = async () => {
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
-        item: { tab: data.activeTab, relPath: file.relPath, name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
+        item: { tab: data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -3514,7 +3533,7 @@ const submitAddTab = async () => {
         const target = rel ? filteredFiles.value.find(x => x.relPath === rel) : null;
         if (!target) return;
         const targetIdx = data.selected.findIndex(s => s.relPath === target.relPath);
-        const item = { tab: p.item.tab, relPath: p.item.relPath, name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
+        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
