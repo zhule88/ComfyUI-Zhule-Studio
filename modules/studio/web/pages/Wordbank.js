@@ -1,5 +1,6 @@
 import { reactive, computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
 import { useDeleteConfirm, DeleteDialog } from './deleteConfirm.js';
+import { useMarqueeSelect } from './marqueeSelect.js';
 
 export default {
   name: 'Wordbank',
@@ -78,9 +79,6 @@ export default {
               <div class="chip-depth" :data-tip="depth === 0 ? '一级分类（右键分类可新建 / 编辑）' : '第 ' + (depth + 1) + ' 级分类'">{{ depth === 0 ? '大类' : (depth + 1) + '级' }}</div>
               <div v-if="line.length" class="chip clear" :class="{active: !getSelections()[depth].length}"
                    @click="clearChip(depth)">全部</div>
-              <div v-else-if="canAddChip(depth)" class="chip chip-void"
-                   data-tip="这一层还没有分类，右键在此新建子分类"
-                   @contextmenu.prevent="openAddChip(depth)">（空）右键新建</div>
               <div v-for="name in line" :key="name"
                    class="chip"
                    :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipTraversePool(depth, name), 'in-pool-random': isChipInPool(depth, name) && !isChipTraversePool(depth, name)}]"
@@ -99,13 +97,20 @@ export default {
         </div>
 
         <div class="main">
-          <div class="grid" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }"
-               @pointerdown.self="onBoardBlankDown">
+          <!-- 框选状态条：只在有框选时出现，给计数与取消入口（凝结按钮统一在卡片右键菜单里） -->
+          <div class="pick-bar" v-if="pickSel.size">
+            <span class="pick-count">框选 <b>{{ pickSel.size }}</b> 项</span>
+            <span class="pick-tip">右键其中任一卡片 → 凝结为遍历池 ∞ / 随机池 🎲</span>
+            <button class="btn pick-clear" @click="clearPick">取消框选</button>
+          </div>
+          <div class="grid" ref="gridEl" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }"
+               @pointerdown="onGridPointerDown">
             <div v-if="!listFiles.length" class="empty">{{ emptyText }}</div>
             <div v-for="file in visibleFiles" :key="(file.tab || '') + '/' + file.relPath"
                  class="card image" :data-rel="file.relPath" :data-tab="file.tab || ''"
                  :class="{
                    selected: isFileSelected(file),
+                   'pick-sel': isPicked(file),
                    muted: !!file.mute,
                    'zhule-source': drag.active && drag.sourceType === 'card' && drag.sourceRelPath === file.relPath,
                    'drop-target': drag.hoverCardRelPath === file.relPath
@@ -273,6 +278,16 @@ export default {
       <div v-if="cardMenu.open" class="ctx-layer" @pointerdown.self="closeCardMenu" @contextmenu.prevent.self="closeCardMenu">
         <div class="ctx-menu" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px' }">
           <div class="ctx-title">{{ cardMenu.title }}</div>
+          <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
+          <template v-if="cardMenu.picked">
+            <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
+              ∞ 凝结为遍历池（{{ cardMenu.pickCount }} 项）
+            </button>
+            <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
+              🎲 凝结为随机池（{{ cardMenu.pickCount }} 项）
+            </button>
+            <div class="ctx-sep"></div>
+          </template>
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
             {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
@@ -612,6 +627,59 @@ export default {
       traverseMode: false,
     });
 
+    // ============ 卡片框选（多选 → 凝结成池）============
+    // 选中语义与图库一致：框选 = 一次性覆盖写入命中集合；Ctrl/⌘ + 左键点卡片 = 单项增删。
+    // 词库的特殊性：左键长按卡片是「把卡片拖成标签」的起手动作，不能占用，
+    // 所以这里的长按框选改成**右键**起手（图库仍是左键）。
+    // 框选结果只是"待凝结的候选"，不进入 data.selected，不影响已选区与预览。
+    const pickSel = reactive(new Set());
+    const gridEl = ref(null);
+    // key 与卡片 DOM 上的 data-tab + data-rel 严格同构，composable 拿到的 key 可直接回喂本集合
+    const pickKey = (file) => (file.tab || '') + '||' + (file.relPath || '');
+    const isPicked = (file) => pickSel.has(pickKey(file));
+    const clearPick = () => pickSel.clear();
+    const togglePick = (file) => {
+      const k = pickKey(file);
+      if (pickSel.has(k)) pickSel.delete(k); else pickSel.add(k);
+    };
+    // key 反查卡片对象：框选只可能命中当前可见网格，可见列表即是全集
+    const pickedFiles = () => {
+      const byKey = new Map((visibleFiles.value || []).map(f => [pickKey(f), f]));
+      const out = [];
+      pickSel.forEach(k => { const f = byKey.get(k); if (f) out.push(f); });
+      return out;
+    };
+    const { onPointerDown: onPickPointerDown } = useMarqueeSelect({
+      getContainer: () => gridEl.value,
+      selector: '.card',
+      getKey: (el) => (el.getAttribute('data-tab') || '') + '||' + (el.getAttribute('data-rel') || ''),
+      // 右键长按起手框选：左键留给「拖成标签」
+      button: 2,
+      selectedClass: 'pick-sel',
+      // 拖动成立后拦掉松手时补发的 contextmenu，避免框完立刻弹出卡片菜单
+      maskContextMenu: true,
+      marqueeClass: 'zhg-marquee',
+      isInteractive: (ev) => {
+        const tg = ev.target;
+        return !!(tg && tg.closest && tg.closest('.card-actions, .thumb-nav, .thumb-enter, .thumb-zoom, .thumb-del'));
+      },
+      onUpdate: (hits) => {
+        pickSel.clear();
+        hits.forEach(k => pickSel.add(k));
+      },
+      onEnd: ({ cancelled, initialKeys }) => {
+        if (!cancelled) return;
+        pickSel.clear();
+        (initialKeys || new Set()).forEach(k => pickSel.add(k));
+      },
+    });
+    // 网格按下统一入口：空白处左键仍走「退出搜索」，右键则只当框选起手；
+    // 框选本身由 composable 判键（button:2），左键按下在这里被它直接忽略，不影响拖拽打标。
+    const onGridPointerDown = (e) => {
+      if (e.target === gridEl.value) onBoardBlankDown(e);
+      onPickPointerDown(e);
+    };
+
     // pref 单独持久化：整包 state 的 JSON.stringify 一旦因数据异常失败会被静默吞掉，
     // 连带偏好失效；这里让 pref 走自己的 key，与整包存档互不牵连。
     const PREF_KEY = 'zhule_wordbank_pref_v1';
@@ -786,7 +854,7 @@ export default {
         if (state.randomPools) {
           const clean = [];
           if (Array.isArray(state.randomPools)) {
-            clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip') && typeof it.tab === 'string' && Array.isArray(it.path)));
+            clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string' && Array.isArray(it.path)));
           } else if (typeof state.randomPools === 'object') {
             // 兼容旧版按 tab 分桶的存档
             Object.keys(state.randomPools).forEach(t => {
@@ -799,7 +867,14 @@ export default {
               });
             });
           }
-          data.randomPools = clean;
+          // 凝结池（kind:'list'）校验：items 必须是有 tab + relPath 的数组，池子空了就丢弃
+          data.randomPools = clean.filter(it => {
+            if (it.kind !== 'list') return true;
+            it.items = (Array.isArray(it.items) ? it.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
+            if (!it.poolId) it.poolId = 'L' + Math.random().toString(36).slice(2, 10);
+            if (!it.display) it.display = '凝结' + it.items.length + '项';
+            return it.items.length > 0;
+          });
         }
         // 池类型：旧存档的池没有 traverse 字段 → 一律视为随机池 🎲（与旧行为一致）
         data.randomPools.forEach(it => { it.traverse = !!it.traverse; });
@@ -1711,12 +1786,8 @@ export default {
         const pending = pendingChips.value.filter(p => p.depth === depth);
         pending.forEach(p => { if (!options.includes(p.key)) options.push(p.key); });
         if (!options.length) {
-          // 空层：depth 0 为 tab 根，恒保留占位行（渲染「＋」与「全部」），以便在空大类下新建一级分类；
-          // 更深层仅当上层有明确选中的父分类时保留占位行，否则终止后续层
-          if (depth === 0 || (depth > 0 && chipParentPath(depth))) {
-            lines.push([]);
-            continue;
-          }
+          // 空层不再产出占位行（原「（空）右键新建」已移除）：新建子分类统一走分类右键菜单。
+          // 某层为空时其子层必然也为空，直接终止即可，lines 的索引仍与 depth 一一对应。
           break;
         }
         lines.push(options);
@@ -1907,7 +1978,8 @@ export default {
     // 只清搜索词、不动分类选中：清完列表自动回填到当前分类浏览（纯内存，零请求）
     const clearSearch = () => { searchText.value = ''; };
     // 点卡片区空白（非卡片本身）= 退出搜索回到当前分类浏览；滚动查看结果不会触发清词
-    const onBoardBlankDown = () => { if (searchQ.value) clearSearch(); };
+    // 右键按下是框选起手，不能顺手把搜索词清掉，只认左键
+    const onBoardBlankDown = (e) => { if (e && e.button !== 0) return; if (searchQ.value) clearSearch(); };
     const onSearchEsc = (e) => {
       // Esc 只收回成图标、不动框里的字（要清词点 × ）
       if (e && e.target && e.target.blur) e.target.blur();
@@ -2419,7 +2491,7 @@ const submitAddTab = async () => {
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
     // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
-    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false });
+    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0 });
     const openCardMenu = (evt, file) => {
       if (!file) return;
       closeCatMenu();
@@ -2427,6 +2499,9 @@ const submitAddTab = async () => {
       cardMenu.title = file.name || '';
       cardMenu.muted = !!file.mute;
       cardMenu.hasImages = !!(file.images && file.images.length);
+      // 该卡片是否在框选集合里 → 决定右键菜单是否多出「凝结为池」两项
+      cardMenu.picked = isPicked(file);
+      cardMenu.pickCount = pickSel.size;
       cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
       cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 330));
       cardMenu.open = true;
@@ -2440,6 +2515,40 @@ const submitAddTab = async () => {
     const onCardGallery = () => { const f = cardMenu.file; closeCardMenu(); if (f) goToGallery(f); };
     const onCardZoom = () => { const f = cardMenu.file; closeCardMenu(); if (f) zoomCardImage(f); };
     const onCardDeleteRef = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteRef(f); };
+
+    // ---- 框选凝结成池 ----
+    // 与 tab / chip 池完全同构的自定义池（kind:'list'）：同样有 traverse 区分 🎲 随机池 / ∞ 遍历池，
+    // 同样在已选区生成黄色占位符，同样参与单次随机、遍历与填充。差别只在候选来源：
+    // 不是某个分类下的词条，而是框选时点名的这批卡片（按 tab + relPath 存，取用时实时回查，
+    // 词条改名/移动不影响，被删则自动跳过）。
+    const condenseSig = (items) => (items || []).map(e => e.tab + '/' + e.relPath).sort().join('\n');
+    const onCardCondense = (traverse) => {
+      closeCardMenu();
+      const files = pickedFiles();
+      if (!files.length) { showToast('框选已失效，请重新框选', 'warn'); return; }
+      const items = files.map(f => ({ tab: f.tab || data.activeTab, relPath: f.relPath, id: f.id || '', name: f.name }));
+      const sig = condenseSig(items);
+      const label = traverse ? '遍历池 ∞' : '随机池 🎲';
+      let pool = data.randomPools.find(it => it.kind === 'list' && condenseSig(it.items) === sig);
+      if (pool) {
+        const same = !!pool.traverse === !!traverse;
+        pool.traverse = !!traverse;
+        syncPlaceholders();
+        showToast(same
+          ? `这 ${items.length} 项已经是「${label}」了`
+          : `「${pool.display}」已改为${label}`, same ? 'success' : 'success', 2400);
+      } else {
+        pool = {
+          kind: 'list', poolId: 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          tab: '', path: [], display: '凝结' + items.length + '项', items, traverse: !!traverse,
+        };
+        data.randomPools.push(pool);
+        syncPlaceholders();
+        showToast(`${items.length} 项已凝结为${label}，已加入下方池子`, 'success', 2600);
+      }
+      zhuleLog('onCardCondense', { kind: 'list', poolId: pool.poolId, count: items.length, traverse: !!traverse }, 'selected=', selSummary());
+      clearPick();
+    };
     // 池三态：直接复用原有 toggle 逐级推进，校验（父子链冲突提示）与三态循环完全一致
     const setPoolBy = (kind, key, depth, want) => {
       for (let i = 0; i < 4; i++) {
@@ -2613,18 +2722,26 @@ const submitAddTab = async () => {
     const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
 
     // ============ 占位符（右键 tab / chip 进池时同步出现在已选列表，类名即占位名；遍历/随机出词后填充该位置） ============
-    const poolKeyFor = (item) => item.kind === 'tab' ? 'tab:' + item.tab : 'chip:' + item.tab + '|' + (item.path || []).join('/');
+    const poolKeyFor = (item) => item.kind === 'tab' ? 'tab:' + item.tab
+      : item.kind === 'list' ? 'list:' + (item.poolId || '')
+      : 'chip:' + item.tab + '|' + (item.path || []).join('/');
     const placeholderFor = (item) => ({
       _ph: true,
       _poolKey: poolKeyFor(item),
       tab: item.tab,
-      name: (item.traverse ? '∞ ' : '🎲 ') + (item.kind === 'tab' ? tabLabel(item.tab) : dispKey(item.display || (item.path || []).map(dispKey).join('/') || '')),
+      name: (item.traverse ? '∞ ' : '🎲 ') + (item.kind === 'tab' ? tabLabel(item.tab)
+        : item.kind === 'list' ? (item.display || ('凝结' + (item.items || []).length + '项'))
+        : dispKey(item.display || (item.path || []).map(dispKey).join('/') || '')),
     });
     // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:tab|逐层路径），用于「分类：抽中词条名」拼接
     const placeholderBaseName = (s) => {
       if (!s || !s._poolKey) return '';
       const k = s._poolKey;
       if (k.startsWith('tab:')) return tabLabel(k.slice(4));
+      if (k.startsWith('list:')) {
+        const it = data.randomPools.find(p => p.kind === 'list' && ('list:' + (p.poolId || '')) === k);
+        return it ? (it.display || '凝结池') : '';
+      }
       const bar = k.indexOf('|');
       if (bar < 0) return '';
       const parts = k.slice(bar + 1).split('/');
@@ -2903,6 +3020,17 @@ const submitAddTab = async () => {
     // 静音（mute=1）：被标记的词条不进入任何自动选词流程——单次随机、随机模式、
     // 遍历模式全部跳过；用户手动点选卡片时走 data.selected，不经过本函数，故不受影响。
     const poolCandidates = (item) => {
+      // 凝结池（框选生成）：候选就是框选时点名的这批卡片，按 tab + relPath 实时回查，
+      // 词条改名/移动不影响，被删或被静音则自动跳过（与 tab 池的静音语义一致）
+      if (item.kind === 'list') {
+        const out = [];
+        for (const e of (item.items || [])) {
+          const f = (bankData.value[e.tab] || []).find(x => x.relPath === e.relPath && !x.mute);
+          if (f) out.push(f);
+        }
+        zhuleLog('poolCandidates: 凝结池', item.poolId, 'count=', out.length, 'total=', (item.items || []).length);
+        return out;
+      }
       const files = bankData.value[item.tab] || [];
       if (!files.length && tabs.value.includes(item.tab)) {
         // 懒加载下该分类尚未加载：异步补拉数据，返回 null 让调用方提示稍候
@@ -3050,22 +3178,27 @@ const submitAddTab = async () => {
 
     // 随机池里所有 tab 的数据是否都已加载；没加载的先补齐（懒加载下未打开过的分类会被误判为空）
     const ensurePoolData = async () => {
-      const missing = data.randomPools.filter(it => {
-        const files = bankData.value[it.tab] || [];
-        return !files.length && tabs.value.includes(it.tab);
-      });
-      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + p.tab + (p.chipId ? '/id:' + p.chipId : (p.path ? '/' + p.path.join('/') : ''))), 'missing=', missing.map(m => m.tab));
+      // 凝结池一个池可能横跨多个分类，需把它名下所有 tab 一并纳入补拉范围
+      const needTabs = new Set();
+      for (const it of data.randomPools) {
+        const tabsOf = it.kind === 'list' ? (it.items || []).map(e => e.tab) : [it.tab];
+        for (const tb of tabsOf) {
+          if (!(bankData.value[tb] || []).length && tabs.value.includes(tb)) needTabs.add(tb);
+        }
+      }
+      const missing = [...needTabs];
+      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : (p.path ? '/' + p.path.join('/') : '')))), 'missing=', missing);
       if (missing.length) {
         // 并行补拉缺失的 tab，补齐后再抽
-        await Promise.all(missing.map(it => load(false, it.tab)));
+        await Promise.all(missing.map(tb => load(false, tb)));
       }
       // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
       normalizePoolIds();
       // 补拉完仍为空 = 该 tab 真的没有词条；有词条但全被静音同样视为不可用（自动选词取不到）
-      const alive = (it) => (bankData.value[it.tab] || []).filter(f => !f.mute);
+      const alive = (it) => it.kind === 'list' ? (poolCandidates(it) || []) : (bankData.value[it.tab] || []).filter(f => !f.mute);
       const ready = data.randomPools.every(it => alive(it).length > 0);
       zhuleLog('ensurePoolData: ready=', ready,
-        '各池可用词条数=', data.randomPools.map(p => p.tab + ':' + alive(p).length + '/' + (bankData.value[p.tab] || []).length));
+        '各池可用词条数=', data.randomPools.map(p => (p.kind === 'list' ? p.display : p.tab) + ':' + alive(p).length));
       return ready;
     };
 
@@ -3480,6 +3613,12 @@ const submitAddTab = async () => {
 
     const onCardPointerDown = (e, file) => {
       if (e.button !== 0) return;
+      // Ctrl/⌘ + 左键 = 框选的单项增删：不启动拖拽打标，也不进已选区
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        togglePick(file);
+        return;
+      }
       if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-act') || e.target.closest('.thumb-enter') || e.target.closest('.thumb-del')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
@@ -3767,6 +3906,8 @@ const submitAddTab = async () => {
       chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
       selectedCollapsed, toggleSelectedCollapsed,
       imageUrl, getImgIdx, displayContent, isFileSelected,
+      // 卡片框选（右键长按）+ Ctrl 左键多选，凝结成池
+      pickSel, gridEl, isPicked, clearPick, togglePick, onGridPointerDown, onCardCondense,
       defaultImageUrl,
       isTabInPool, isChipInPool, isTabTraversePool, isChipTraversePool, tabHasSelected,
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,

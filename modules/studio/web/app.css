@@ -228,6 +228,14 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .main::-webkit-scrollbar-thumb { background: #2f3540; border-radius: 4px; }
 .grid { display: grid; gap: 10px; align-content: start; }
 
+/* 框选状态条（词库）：只在有框选时出现，不动布局高度以外的任何东西 */
+.pick-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  padding: 6px 10px; border-radius: 8px; font-size: 12px;
+  background: rgba(240, 169, 59, 0.10); border: 1px solid rgba(240, 169, 59, 0.42); }
+.pick-bar .pick-count { color: #ffbd5c; font-weight: 600; }
+.pick-bar .pick-tip { color: var(--text-3); }
+.pick-bar .pick-clear { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+
 /* 卡片：图片主导（作品集式），名字叠在图片底部，操作按钮左侧竖排 */
 .card { background: var(--card); border: 2px solid transparent; border-radius: 10px;
   cursor: pointer; position: relative; transition: border-color 0.14s, background 0.14s, box-shadow 0.18s;
@@ -264,6 +272,15 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   color: #fff; background: var(--primary); border-radius: 50%; vertical-align: 1px;
   text-decoration: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+/* 框选候选（还没凝结成池）：琥珀描边 + 右上角圆点，与蓝色「已选提示词」严格区分 */
+.card.pick-sel { border-color: #f0a93b;
+  box-shadow: 0 0 0 1px #f0a93b, 0 0 0 4px rgba(240, 169, 59, 0.18),
+              0 6px 18px rgba(240, 169, 59, 0.22); }
+.card.pick-sel:hover { border-color: #ffbd5c; }
+.card.pick-sel::after {
+  content: ''; position: absolute; top: 6px; right: 6px; width: 9px; height: 9px;
+  border-radius: 50%; background: #f0a93b; pointer-events: none; z-index: 6;
+  box-shadow: 0 0 0 2px rgba(10, 14, 20, 0.75); }
 .card.zhule-source { opacity: 0.35; }
 .card.image { padding: 0; }
 .card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
@@ -1823,7 +1840,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .zhg-block-resize-x:hover { background: rgba(79, 143, 247, 0.25); }
 
-
 /* ============================================================
    词库：顶层面板容器 / 分类右键菜单 / 编辑分类 / 负面预览
    （视觉移植自 wordbank_category_edit_demo.html，空词库时也不再空荡）
@@ -1866,7 +1882,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .ctx-sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.07); }
 
 /* 空分类层占位：右键新建 */
-.chip-void { color: var(--text-3); border-style: dashed; }
 
 /* 预览框：正向（浅蓝）/ 负向（浅红）两块，负面可一键收起 */
 .preview { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
@@ -1903,3 +1918,55 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .cat-provide.on { border-color: rgba(79, 143, 247, 0.45); background: rgba(79, 143, 247, 0.10); color: #cfe1ff; }
 .cat-provide input { width: 14px; height: 14px; accent-color: var(--primary); cursor: pointer; }
 
+/* ============================================================
+   词库：分类区（chips）与卡片区（.main）之间的分隔强化
+   作用域限死在 .bank-body 直接子级，不波及其它页面
+   ============================================================ */
+
+/* 分类区底板：加内凹底边 + 向下投影，形成明确的分层面 */
+.bank-body > .chips-wrap {
+  position: relative;
+  z-index: 2;
+  background: linear-gradient(to bottom, #171d28, #141920);
+  border-bottom: 1px solid #34425c;
+  box-shadow: 0 10px 20px -12px rgba(0, 0, 0, 0.9), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* 拖拽条升级为常显分隔带：深色渐变 + 上下描边 + 中央把手 */
+.bank-body > .chips-resize {
+  position: relative;
+  height: 10px;
+  flex-shrink: 0;
+  background: linear-gradient(to bottom, #12171f, #1b2230 50%, #12171f);
+  border-top: 1px solid #34425c;
+  border-bottom: 1px solid #34425c;
+  cursor: ns-resize;
+}
+.bank-body > .chips-resize::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 64px;
+  height: 3px;
+  border-radius: 2px;
+  background: #3d4d68;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+  transition: width 0.14s, background 0.14s, box-shadow 0.14s;
+}
+.bank-body > .chips-resize:hover {
+  background: linear-gradient(to bottom, #16202d, #24344b 50%, #16202d);
+}
+.bank-body > .chips-resize:hover::after {
+  width: 88px;
+  background: var(--primary);
+  box-shadow: 0 0 10px var(--primary-dim);
+}
+
+/* 卡片区：顶部压一层极淡阴影，视觉上被分隔带"抬"到下层 */
+.bank-body > .main {
+  position: relative;
+  z-index: 1;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.22), transparent 22px);
+}

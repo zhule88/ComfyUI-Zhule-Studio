@@ -11,6 +11,13 @@ export function useMarqueeSelect(options = {}) {
     onEnd = null,
     escCancel = true,
     marqueeClass = 'zhg-marquee',
+    // 启动框选的鼠标键：0=左键（图库）；2=右键（词库——左键长按在词库里是"把卡片拖成标签"，
+    // 框选不能占用左键，否则与打标拖拽互相抢指针）
+    button = 0,
+    // 页面自己的选中类名：结算前用它在 DOM 上读"框选前的选中集"，Esc 取消时据此回滚
+    selectedClass = 'sel',
+    // 右键框选：拖动成立后浏览器会在松手时补发 contextmenu，不拦就会在框选结束瞬间弹出右键菜单
+    maskContextMenu = false,
   } = options;
 
 
@@ -55,6 +62,20 @@ export function useMarqueeSelect(options = {}) {
     console.log(line);
     _logBuf.push(line);
   };
+
+  // 右键框选的收尾守卫：Windows/Chrome 在右键松手时补发 contextmenu，
+  // 此时本次拖拽已结算，但菜单会立刻盖在刚框好的卡片上。settle 成功时开一个很短的窗口，
+  // 窗口内捕获阶段的 contextmenu 一律吞掉（stopPropagation 让卡片上的 @contextmenu 收不到）。
+  let ctxGuardUntil = 0;
+  const onCtxGuard = (ev) => {
+    if (Date.now() < ctxGuardUntil) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  };
+  if (typeof document !== 'undefined') {
+    document.addEventListener('contextmenu', onCtxGuard, true);
+  }
 
   // 最近一次命中框（内容坐标），供结算后统计每行命中情况
   let lastRect = null;
@@ -251,7 +272,7 @@ export function useMarqueeSelect(options = {}) {
 
   function onPointerDown(e) {
 
-    if (e.button !== 0) { return; }
+    if (e.button !== button) { return; }
     if (isInteractive && isInteractive(e)) { return; }
 
     const gridEl = getContainer ? getContainer() : null;
@@ -307,7 +328,7 @@ export function useMarqueeSelect(options = {}) {
         active = true;
         initialKeys = new Set();
         gridEl.querySelectorAll(selector).forEach((el) => {
-          if (el.classList && el.classList.contains('sel')) {
+          if (el.classList && el.classList.contains(selectedClass)) {
             const k = getKey(el);
             if (k != null) initialKeys.add(k);
           }
@@ -347,6 +368,8 @@ export function useMarqueeSelect(options = {}) {
     const settle = () => {
       if (myGen !== gen) return;
       if (!moved) return;
+      // 拖动成立才开窗口：仅仅是"右键单击卡片"时 moved=false，右键菜单照常弹出
+      if (maskContextMenu) ctxGuardUntil = Date.now() + 300;
       const hits = computeHits();
       if (logOn()) {
         const R = lastRect;
@@ -366,7 +389,7 @@ export function useMarqueeSelect(options = {}) {
       if (logOn()) {
         setTimeout(() => {
           const c2 = getContainer ? getContainer() : null;
-          const domSel = c2 ? c2.querySelectorAll(selector + '.sel').length : -1;
+          const domSel = c2 ? c2.querySelectorAll(selector + '.' + selectedClass).length : -1;
           mqLog('after', 'hits=' + hits.size, 'domSel=' + domSel);
           flushLog();
         }, 80);
