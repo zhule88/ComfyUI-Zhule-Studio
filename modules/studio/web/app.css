@@ -1117,12 +1117,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
     rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.74) 40%, rgba(0,0,0,0.30) 74%, rgba(0,0,0,0) 100%);
   pointer-events: none;
 }
-/* 模型名 + 标签：一行内横向排列，超出裁掉（完整内容看 data-tip 悬停提示） */
+/* 模型名 + 标签：多行堆叠（一行放不下就往下叠），最多 3 行，再多裁掉（完整内容看 data-tip 悬停提示） */
 .zhg-card-meta {
-  display: flex; align-items: center; gap: 4px;
-  min-width: 0; overflow: hidden; white-space: nowrap;
-  -webkit-mask-image: linear-gradient(to right, #000 82%, transparent 100%);
-          mask-image: linear-gradient(to right, #000 82%, transparent 100%);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px 4px;
+  min-width: 0; max-height: 52px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 84%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 84%, transparent 100%);
 }
 .zhg-card-chip {
   flex: 0 0 auto; max-width: 7.5em; padding: 1px 6px;

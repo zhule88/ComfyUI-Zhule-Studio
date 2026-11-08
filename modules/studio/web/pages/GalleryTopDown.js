@@ -150,10 +150,10 @@ export default {
                 <span class="zhg-card-chip model" v-if="pref.gallery.showModel !== false && it.model"
                       :data-tip="'模型：' + fmtModel(it.model)">{{ fmtModel(it.model) }}</span>
                 <template v-if="pref.gallery.showTags !== false">
-                  <span class="zhg-card-chip" v-for="t in cardTags(it).slice(0, 3)" :key="'ct' + t"
+                  <span class="zhg-card-chip" v-for="t in cardTags(it).slice(0, 9)" :key="'ct' + t"
                         :data-tip="'标签：' + t">{{ t }}</span>
-                  <span class="zhg-card-chip more" v-if="cardTags(it).length > 3"
-                        :data-tip="'标签：' + cardTags(it).join(' / ')">+{{ cardTags(it).length - 3 }}</span>
+                  <span class="zhg-card-chip more" v-if="cardTags(it).length > 9"
+                        :data-tip="'标签：' + cardTags(it).join(' / ')">+{{ cardTags(it).length - 9 }}</span>
                 </template>
               </div>
               <div class="zhg-card-line">
