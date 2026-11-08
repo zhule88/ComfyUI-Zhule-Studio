@@ -155,6 +155,8 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border: 1px solid transparent; border-radius: 8px; cursor: pointer;
   transition: all 0.12s; animation: wbIcoIn 0.12s ease-out; }
 .wb-search-trigger:hover { color: var(--text); background: var(--card-hover); border-color: var(--border-2); }
+/* 收回成图标后框里的词仍生效（列表还在按它过滤），所以图标保持高亮，点开即回到原词 */
+.wb-search.is-search .wb-search-trigger { color: var(--primary); background: var(--primary-dim); border-color: var(--primary); }
 @keyframes wbIcoIn { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
 .wb-search-box { display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 8px;
   width: 236px; overflow: hidden; background: #1b202b; border: 1px solid var(--border); border-radius: 13px;
@@ -332,18 +334,21 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   pointer-events: auto;
 }
 
-/* 全库搜索：卡片可能不属于当前 tab，右上角标出真实所属分类链路（tab / 父类 / 子类）。
-   放在右上角避开左上的竖排操作区，且 pointer-events:none 不挡点选与拖拽 */
-.card-tab-chip {
-  position: absolute; right: 6px; top: 6px; z-index: 6;
-  max-width: calc(100% - 44px);
-  padding: 2px 6px; border-radius: 5px;
-  font-size: 10.5px; line-height: 1.45; letter-spacing: 0.2px;
-  color: #cfe1ff; background: rgba(12, 16, 22, 0.74);
-  border: 1px solid rgba(79, 143, 247, 0.42);
-  backdrop-filter: blur(6px);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  pointer-events: none;
+/* 全库搜索：卡片可能不属于当前 tab，把真实分类链路（tab / 父类 / 子类）作为
+   名字上方的一行小字，与名字同处底部渐变区——天然避开卡片圆角，不会被裁切，
+   也不再额外压一块浮层盖住图片。没有分类链路时该 class 不生效，其它卡片零影响 */
+.card-caption.has-path {
+  display: grid; grid-template-columns: 1fr auto;
+  align-items: end; column-gap: 6px; row-gap: 1px;
+}
+.card-caption.has-path .card-path { grid-column: 1 / -1; }
+.card-caption.has-path .card-name { min-width: 0; }
+.card-path {
+  font-size: 10px; line-height: 1.35; letter-spacing: 0.2px;
+  color: #a8c4ea;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.9);
+  pointer-events: auto;
 }
 
 /* 左侧竖排操作区：静音 / 删除 / 编辑 / 上传参考图

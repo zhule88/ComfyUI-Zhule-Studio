@@ -281,6 +281,30 @@ const App = {
       } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
       window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { autoSelectParent: v } }));
     }
+    // 词库设置「搜索是否对分类生效」：默认关闭，即搜索只匹配词条名，不看父级分类；
+    // 开启后词条名或分类路径（tab / 各级分类）任一命中即算命中。存储与下发方式同 autoSelectParent。
+    const wordbankSearchByPath = ref(readWordbankSearchByPath());
+    function readWordbankSearchByPath() {
+      try {
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null');
+        if (p && typeof p.searchByPath === 'boolean') return p.searchByPath;
+      } catch (e) { /* ignore */ }
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_wordbank_state_v2') || 'null');
+        if (raw && raw.pref && typeof raw.pref.searchByPath === 'boolean') return raw.pref.searchByPath;
+      } catch (e) { /* ignore */ }
+      return false;
+    }
+    function toggleWordbankSearchByPath() {
+      const v = !wordbankSearchByPath.value;
+      wordbankSearchByPath.value = v;
+      try {
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null') || {};
+        p.searchByPath = v;
+        localStorage.setItem('zhule_wordbank_pref_v1', JSON.stringify(p));
+      } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
+      window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { searchByPath: v } }));
+    }
     // 数据库重建：仅设置页保留入口，正常使用不需要触发
     const rebuilding = ref(false);
     const rebuildNotice = ref('');
@@ -351,7 +375,7 @@ const App = {
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
-      wordbankAutoParent, toggleWordbankAutoParent, rebuilding, rebuildNotice, rebuildDB,
+      wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
   computed: {
@@ -572,6 +596,14 @@ const App = {
                   </label>
                 </div>
                 <div class="settings-hint">开启后，在词库点击某个子分类会自动把整条父链一并选中；本项仅对词库生效。</div>
+                <div class="settings-row">
+                  <span class="settings-label">搜索对分类生效</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="wordbankSearchByPath" @change="toggleWordbankSearchByPath">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">关闭时搜索只匹配词条名；开启后词条名或所在分类路径（含 tab 与各级分类）任一命中即算命中。</div>
                 <div class="settings-row">
                   <span class="settings-label">去中文清理</span>
                   <button class="btn" :disabled="wordbankCleaningCn" @click="wordbankCleanCn">{{ wordbankCleaningCn ? '清理中…' : '开始清理' }}</button>

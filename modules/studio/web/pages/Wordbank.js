@@ -43,16 +43,16 @@ export default {
         </div>
           <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
           <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
-            <button v-if="!searchOpen" class="wb-search-trigger" data-tip="搜词条名或分类路径（Ctrl+F）"
+            <button v-if="!searchOpen" class="wb-search-trigger" :data-tip="searchTip"
                     @click="openSearch">🔍</button>
             <div v-else class="wb-search-box" :class="{ 'is-search': searching, 'closing': searchClosing }">
               <span class="wb-search-ico">🔍</span>
               <input ref="searchInputEl" class="wb-search-input" v-model="searchText"
-                     placeholder="搜词条 / 分类"
+                     :placeholder="searchPh"
                      @keydown.esc.stop.prevent="onSearchEsc"
                      @blur="onSearchBlur" />
               <!-- × 与输入的字平级，紧跟在词尾；范围开关贴框的右端 -->
-              <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词（Esc）"
+              <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词"
                       @click="clearSearch">×</button>
               <button class="wb-scope-btn" :class="{ all: searchScope === 'all' }"
                       :data-tip="searchScope === 'all' ? '全库：忽略 tab 与分类筛选，点此切回「筛选」' : '筛选：只在当前 tab + 已选分类里搜，点此切到「全库」'"
@@ -131,9 +131,6 @@ export default {
                   <button class="dice" @click.stop="randomImage(file)">🎲</button>
                   <button @click.stop="nextImage(file)">›</button>
                 </div>
-                <!-- 全库搜索：卡片可能不属于当前 tab，右上角标出它真实所属的分类链路 -->
-                <div class="card-tab-chip" v-if="showCardTab(file)"
-                     :data-tip="'该词条属于：' + cardTabLabel(file)">{{ cardTabLabel(file) }}</div>
                 <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
                 <div class="card-actions" v-if="!hideCardIcons">
                   <button class="card-act act-mute" :class="{on: !!file.mute}"
@@ -175,8 +172,10 @@ export default {
                     </svg>
                   </button>
                 </div>
-                <!-- 底部压暗渐变 + 名字叠于图上 -->
-                <div class="card-caption">
+                <!-- 底部压暗渐变 + 名字叠于图上；全库搜索时名字上方多一行真实分类链路 -->
+                <div class="card-caption" :class="{ 'has-path': showCardTab(file) }">
+                  <span class="card-path" v-if="showCardTab(file)"
+                        :data-tip="'所在分类：' + cardTabLabel(file)">{{ cardTabLabel(file) }}</span>
                   <span class="card-name" :data-tip="file.name">{{ file.name }}</span>
                   <span class="thumb-count" v-if="file.images && file.images.length">{{ getImgIdx(file) + 1 }}/{{ file.images.length }}</span>
                 </div>
@@ -618,7 +617,9 @@ export default {
     const PREF_KEY = 'zhule_wordbank_pref_v1';
     function loadPref() {
       // showNegPreview：预览框是否展开「负面提示词」一行，默认展开。开关只在预览框上（pv-neg-toggle），不设独立设置面板。
-      const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true, showNegPreview: true };
+      // searchByPath：搜索是否对分类生效，默认关闭（只匹配词条名）；
+      // 开启后词条名或所在分类路径（tab / 各级分类）任一命中即算命中。设置入口在导航栏设置面板「词库设置」。
+      const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true, showNegPreview: true, searchByPath: false };
       try {
         const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
         if (raw && typeof raw === 'object') {
@@ -626,6 +627,7 @@ export default {
           if (typeof raw.translate === 'boolean') p.translate = raw.translate;
           if (typeof raw.genCount === 'number' && raw.genCount >= 0 && raw.genCount <= 99) p.genCount = raw.genCount;
           if (typeof raw.autoSelectParent === 'boolean') p.autoSelectParent = raw.autoSelectParent;
+          if (typeof raw.searchByPath === 'boolean') p.searchByPath = raw.searchByPath;
           if (typeof raw.showNegPreview === 'boolean') p.showNegPreview = raw.showNegPreview;
         }
       } catch (e) { /* 存档损坏则用默认值 */ }
@@ -759,6 +761,7 @@ export default {
           if (typeof srcPref.translate === 'boolean') pref.translate = srcPref.translate;
           if (typeof srcPref.genCount === 'number' && srcPref.genCount >= 0 && srcPref.genCount <= 99) pref.genCount = srcPref.genCount;
           if (typeof srcPref.autoSelectParent === 'boolean') pref.autoSelectParent = srcPref.autoSelectParent;
+          if (typeof srcPref.searchByPath === 'boolean') pref.searchByPath = srcPref.searchByPath;
           if (typeof srcPref.showNegPreview === 'boolean') pref.showNegPreview = srcPref.showNegPreview;
         }
         if (Array.isArray(state.tabOrder)) tabOrder.value = state.tabOrder.filter(n => typeof n === 'string');
@@ -965,6 +968,8 @@ export default {
     function onWordbankPref(e) {
       const v = e && e.detail && e.detail.autoSelectParent;
       if (typeof v === 'boolean') pref.autoSelectParent = v;
+      const sp = e && e.detail && e.detail.searchByPath;
+      if (typeof sp === 'boolean') pref.searchByPath = sp;
     }
     // 通用删除免确认由 deleteConfirm.js 统一处理（onMounted 读取设置并监听广播）
     // 全局标签主题/圆角/颜色种子（与图库标签样式一致，作用于词库小分类 chip）
@@ -1795,10 +1800,13 @@ export default {
       const chips = Array.isArray(c && c.chips) ? c.chips : [];
       return normSep([c && c.tab].concat(chips).filter(Boolean).join('/'));
     };
+    // searchByPath（设置项「搜索是否对分类生效」）默认关闭：关闭时只比词条名，
+    // 开启后词条名或所在分类路径（tab / 各级分类）任一命中即算命中
     const hitSearch = (c, q) => {
       if (!q) return true;
       const nq = normSep(q);
       if (normSep(c && c.name).includes(nq)) return true;
+      if (pref.searchByPath !== true) return false;
       return cardPathText(c).includes(nq);
     };
     const ensureSearchAll = async () => {
@@ -1837,7 +1845,8 @@ export default {
       const q = searchQ.value;
       if (!q) return null;   // 没有搜索词 = 不在搜索态，列表交回分类浏览
       const src = searchScope.value === 'all' ? (searchAll.value || []) : filteredFiles.value;
-      return src.filter(c => hitSearch(c, q));
+      // 搜索一律忽略静音词条：静音＝不参与自动选词，搜索里也不该冒出来（不受「隐藏静音」设置影响）
+      return src.filter(c => !c.mute && hitSearch(c, q));
     });
     // 列表唯一出口：有词 → 搜索结果；无词 → 原分类浏览结果
     const listFiles = computed(() => searchHits.value || filteredFiles.value);
@@ -1856,8 +1865,15 @@ export default {
       if (!searching.value) return '没有匹配的提示词 —— 右键分类可新建词条 / 子分类';
       if (searchLoading.value) return '正在取全库词条…';
       if (searchFailed.value) return '全库取数失败：' + searchFailed.value;
-      return '没有名字或分类路径含「' + String(searchText.value || '').trim() + '」的词条';
+      return pref.searchByPath === true
+        ? '没有名字或分类路径含「' + String(searchText.value || '').trim() + '」的词条'
+        : '没有名字含「' + String(searchText.value || '').trim() + '」的词条';
     });
+    // 搜索框提示随「搜索是否对分类生效」设置联动：关闭时只提示搜词条名；搜索始终忽略静音词条
+    const searchPh = computed(() => (pref.searchByPath === true ? '搜词条 / 分类' : '搜词条名'));
+    const searchTip = computed(() => (pref.searchByPath === true
+      ? '搜词条名或分类路径（Ctrl+F）｜静音词条不参与搜索'
+      : '搜词条名（Ctrl+F）｜静音词条不参与搜索'));
     const toggleSearchScope = () => {
       searchScope.value = searchScope.value === 'all' ? 'filter' : 'all';
       if (searchScope.value === 'all') ensureSearchAll();
@@ -1879,10 +1895,10 @@ export default {
         searchClosing.value = false;
       }, 240);
     };
-    // 无搜索词时失焦就收回成图标；框内的范围开关 / 清词按钮不算离开
+    // 失焦即收回成图标，但绝不删掉框里的字：下次点开还是原来那串词，结果也照旧按它过滤
+    // （清词只由框内 × 按钮或卡片区空白点击触发）
     const onSearchBlur = () => {
       setTimeout(() => {
-        if (searchText.value) return;
         const box = document.querySelector('.wb-search');
         if (box && box.contains(document.activeElement)) return;
         closeSearchBox();
@@ -1893,8 +1909,7 @@ export default {
     // 点卡片区空白（非卡片本身）= 退出搜索回到当前分类浏览；滚动查看结果不会触发清词
     const onBoardBlankDown = () => { if (searchQ.value) clearSearch(); };
     const onSearchEsc = (e) => {
-      // 有词先清词（留在搜索态，方便改词）；无词再按一次 Esc 收回成图标
-      if (searchText.value) { clearSearch(); return; }
+      // Esc 只收回成图标、不动框里的字（要清词点 × ）
       if (e && e.target && e.target.blur) e.target.blur();
       closeSearchBox();
     };
@@ -2296,6 +2311,13 @@ const submitAddTab = async () => {
       if (searchQ.value) clearSearch();
       if (data.activeTab === name) return;
       data.activeTab = name;
+      // 切大类一律回到「全部」：清掉该 tab 下残留/存档恢复的分类选中。
+      // 不清的话切过去就像「还没加载」，必须再点一次分类才出词条（旧行为是切换即全量）。
+      const sel = data.selections && data.selections[name];
+      if (Array.isArray(sel) && sel.some(a => Array.isArray(a) && a.length)) {
+        data.selections[name] = new Array(maxDepth.value).fill(null).map(() => []);
+        saveState();
+      }
       pageIndex.value = 0;
       // 该 tab 数据尚未加载时按分类局部拉取（首屏/懒加载路径）
       // 加载期间用遮罩覆盖「筛选分类区 + 卡片区」，避免闪现「数量 0」与空分类
@@ -3739,7 +3761,7 @@ const submitAddTab = async () => {
       // 搜索：listFiles = 列表唯一出口（有搜索词走搜索结果，无词走分类浏览）
       listFiles, searchText, searchScope, searchQ, searching, searchOpen, searchClosing, searchInputEl, openSearch, onSearchBlur, closeSearchBox, searchAllLoading, searchLoading, searchFailed,
       showCardTab, cardTabLabel,
-      listCountLabel, emptyText, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
+      listCountLabel, emptyText, searchPh, searchTip, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
       pageIndex, pageCount, pageNumbers, visibleFiles, goPrevPage, goNextPage, goPage,
       getSelections,
       chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
