@@ -92,10 +92,11 @@ export default {
           <span class="zhg-tag-gear" data-tip="编辑标签" @click.stop="tagPanelOpen = true">⚙</span>
         </div>
         <div class="zhg-block-body">
-          <!-- 外部过滤区：俄罗斯套娃包裹式展开；普通左键点击启用/禁用，Ctrl+左键隐藏（完全移除），普通右键展开/收起，Ctrl+右键展开还原（逐级收起） -->
+          <!-- 外部过滤区：俄罗斯套娃包裹式展开；普通左键点击启用/禁用，Ctrl+左键隐藏（完全移除），普通右键展开/收起，Ctrl+右键展开还原（逐级收起）；
+               状态三态：实色=生效 / 红虚线=待生效 / 斜纹+右上角圆点=半选（自身未启用但分支内有生效子标签，沿父链层层上卷） -->
           <div class="zhg-sel-tags" v-if="visibleTags.length">
             <out-node v-for="t in visibleTags" :key="tagKey(t)" :node="t" :depth="0"
-                      :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"
+                      :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :sel-state="nodeSelState" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"
                       :show-count="showTagCount" :count-of="tagCount"
                       @toggle="toggleTagActive" @add="addTagFilter" @hide="hideTag"></out-node>
           </div>

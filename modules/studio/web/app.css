@@ -1,4 +1,4 @@
-﻿* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   /* 卡片图片左上竖排操作图标按钮边长（设置页「图片上的图标大小」写入，默认中=26px） */
   --zh-act-size: 26px;
@@ -874,6 +874,38 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-sel-tag.zhg-out-tag.on:hover { border-color: var(--tag-bg, var(--primary)); }
 .zhg-sel-tag.zhg-out-tag.off { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 45%, transparent); border-style: dashed; }
 .zhg-sel-tag.zhg-out-tag.off:hover { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 62%, transparent); }
+/* part=半选上卷：自身没启用，但分支里有启用的子标签（选 璃月 → 角色/璃月/原神 整条父链都点亮）。
+   与 on 的区分不靠颜色（要沿用标签主题色），而靠通用「半选」视觉语言：
+   斜纹底 + 实线同色描边 + 右上角实心圆点（不加 opacity，否则又像 off 那样被误判为没生效）。
+   只用 background-image，不覆盖主题类设置的 background-color。 */
+.zhg-sel-tag.zhg-out-tag.part {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 85%, transparent);
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.18) 0 4px, transparent 4px 9px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+  position: relative;
+}
+.zhg-sel-tag.zhg-out-tag.part:hover { border-color: var(--tag-bg, var(--primary)); }
+.zhg-sel-tag.zhg-out-tag.part::after {
+  content: '';
+  position: absolute; top: -2px; right: -2px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--tag-bg, var(--primary));
+  box-shadow: 0 0 0 2px var(--bg, #1a1d23);
+}
+/* 展开态容器同样上卷提示：分支内有生效项时加同色外发光 + 右下角圆点 */
+.zhg-out-open.part {
+  border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 72%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tag-bg, var(--primary)) 26%, transparent);
+  position: relative;
+}
+.zhg-out-open.part::after {
+  content: '';
+  position: absolute; bottom: -2px; right: -2px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--tag-bg, var(--primary));
+  box-shadow: 0 0 0 2px var(--bg, #1a1d23);
+}
 /* 关联图数量角标样式见 .zhg-ttp-count（与 .zhg-tag-count 同一套胶囊规则，统一定义在中段） */
 @keyframes zhg-kids-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 

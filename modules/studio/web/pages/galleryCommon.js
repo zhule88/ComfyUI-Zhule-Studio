@@ -75,6 +75,9 @@ const OutNode = {
     inFilter: { type: Function, required: true },
     isActive: { type: Function, required: true },
     isHidden: { type: Function, default: null },
+    // 勾选态上卷（父组件传入 nodeSelState）：'on' 自身启用 / 'part' 分支内有启用项 / '' 无。
+    // 缺失时退化为原来的 isActive 二态，保持组件单独可用
+    selState: { type: Function, default: null },
     treeKidsFn: { type: Function, default: null },
     // 全局标签主题类（zhg-tag-theme-* / zhg-tag-square），由父组件传入，复用详情标签样式
     themeCls: { type: String, default: '' },
@@ -141,21 +144,25 @@ const OutNode = {
     function fwdToggle(name) { emit('toggle', name); }
     function fwdAdd(node) { emit('add', node); }
     function fwdHide(name) { emit('hide', name); }
+    // 当前节点的勾选态：on（自身启用）/ part（仅分支内有启用）/ ''（无）
+    const st = () => (props.selState ? (props.selState(props.node) || '') : (props.isActive(props.node) ? 'on' : ''));
+    // 半选提示：说明分支内已有生效的子标签，点父级可整支启用（命中范围相同）
+    const partTip = () => (st() === 'part' ? '分支内有子标签生效中，点击启用父级（命中同样的图）' : '');
     return {
-      expanded, kids, hasKids, chipStyle, boxStyle, leafName,
+      expanded, kids, hasKids, chipStyle, boxStyle, leafName, st, partTip,
       onClick, onCtx, fwdToggle, fwdAdd, fwdHide,
     };
   },
   template: `
     <div class="zhg-out-wrap" :class="{ open: expanded }">
-      <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: isActive(node), off: !isActive(node), leaf: !hasKids() }]" :style="chipStyle()"
-            :data-tip="(isActive(node) ? '生效中，点击停用' : '待生效，点击启用') + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
+      <span class="zhg-sel-tag zhg-out-tag" v-if="!expanded" :class="[themeCls, { on: st() === 'on', part: st() === 'part', off: !st(), leaf: !hasKids() }]" :style="chipStyle()"
+            :data-tip="(st() === 'on' ? '生效中，点击停用' : (st() === 'part' ? partTip() : '待生效，点击启用')) + ' / Ctrl+左键隐藏（完全移除） / 右键展开收起'"
             @click="onClick" @contextmenu.prevent="onCtx">
         {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf && countOf(node) != null">{{ countOf(node) }}</span>
       </span>
-      <div class="zhg-out-open" v-else :style="boxStyle()" @contextmenu.prevent="onCtx">
+      <div class="zhg-out-open" v-else :class="{ part: st() === 'part' }" :style="boxStyle()" :data-tip="partTip()" @contextmenu.prevent="onCtx">
         <out-node v-for="c in kids()" :key="c.rel || c.name" :node="c" :depth="depth + 1"
-                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls" :color-of="colorOf"
+                  :in-filter="inFilter" :is-active="isActive" :is-hidden="isHidden" :sel-state="selState" :tree-kids-fn="treeKidsFn" :theme-cls="themeCls" :color-of="colorOf"
                   :show-count="showCount" :count-of="countOf"
                   @toggle="fwdToggle" @add="fwdAdd" @hide="fwdHide"></out-node>
       </div>
@@ -822,6 +829,28 @@ export function useGalleryCommon(opts = {}) {
   function isTagActive(name) {
     const t = findTagEntry(name);
     return !!(t && t.active);
+  }
+  // 外部过滤区节点的「勾选态」上卷：on = 自身已启用；part = 自身未启用但分支内有启用的后代。
+  // 起因：右键展开只选子标签（璃月）后收起，外层大标签（角色）看不出里面已选好，误以为没生效。
+  // 判定按 rel 前缀（同域 + 路径前缀）层层递归，父链上每一层都会返回 part；
+  // 只影响显示，不改查询语义——后端 _tag_hit 选父级时本就会展开整个子树命中，而选子级只命中该分支。
+  function nodeSelState(node) {
+    const info = tagInfo(node);
+    if (!info.name) return '';
+    const self = findTagEntry(info);
+    if (self && self.active && !self.hidden) return 'on';
+    const rel = String(info.rel || self && self.rel || '');
+    if (!rel) return '';
+    const prefix = rel + '/';
+    const isCustom = info.kind === 'custom';
+    for (const t of tagMap.values()) {
+      if (!t.active || t.hidden) continue;
+      // 域不同的同名路径是另一棵树的标签（prompt#5 与 custom#5），不能互相点亮
+      if ((t.kind === 'custom') !== isCustom) continue;
+      const tr = String(t.rel || '');
+      if (tr && tr.startsWith(prefix)) return 'part';
+    }
+    return '';
   }
   function inTagFilter(name) {
     return !!findTagEntry(name);
@@ -1999,7 +2028,7 @@ export function useGalleryCommon(opts = {}) {
     side, sideStyle, startSideDrag,
     addTagFilter, clearTagFilter, toggleTagMode, visibleTags,
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
-    isTagActive, inTagFilter, isTagHidden,
+    isTagActive, inTagFilter, isTagHidden, nodeSelState,
     openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
