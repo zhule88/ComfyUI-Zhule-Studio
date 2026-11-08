@@ -29,7 +29,9 @@ export default {
 
         <div class="bank-tabs-row">
         <div class="tabs">
-          <button class="tab-add" data-tip="新增分类" @click="openAddTab">＋</button>
+          <!-- 新建大类统一走右键菜单；仅在没有大类时留一个兜底占位，避免无处右键 -->
+          <div v-if="!tabs.length" class="tab tab-void"
+               data-tip="还没有大类，右键新建" @contextmenu.prevent="openAddTab">（无大类）右键新建</div>
           <div v-for="name in tabs" :key="name"
                class="tab"
                :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'has-selected': tabHasSelected(name)}"
@@ -196,8 +198,26 @@ export default {
 
         <div class="bottom">
           <div class="selected-header">
-            <span>已选 <span class="selected-count">{{ data.selected.length }}</span> 项</span>
-            <span style="color:var(--text-3);font-size:11px;">右键 tab / chip 循环切换：🎲 随机池 → ∞ 遍历池 → 移出 ｜ 拖动 tab / chip / 已选标签排序</span>
+            <span class="sel-title">已选 <span class="selected-count">{{ data.selected.length }}</span> 项</span>
+            <!-- 已选标签直接排在这一行：右侧的收起/清空/次数/运行永远固定可见，不被标签挤走 -->
+            <div class="selected-list"
+                 :class="{'drag-active': drag.hoverSide === 'selList', 'is-collapsed': selectedCollapsed}"
+                 @pointerdown="onSelListPointerDown">
+              <span v-if="!data.selected.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
+              <div v-for="(item, idx) in data.selected" :key="idx"
+                   class="tag"
+                   :class="{
+                     'placeholder': item._ph,
+                     'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
+                     'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
+                     'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right'
+                   }"
+                   @pointerdown.stop="onTagPointerDown($event, idx)">
+                <span>{{ item.name }}</span>
+                <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
+                <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
+              </div>
+            </div>
             <div class="header-actions">
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :data-tip="selectedCollapsed ? '展开已选区' : '收起已选区'"
@@ -216,34 +236,14 @@ export default {
               <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
             </div>
           </div>
-          <div class="selected-list" v-show="!selectedCollapsed"
-               :class="{'drag-active': drag.hoverSide === 'selList'}"
-               @pointerdown="onSelListPointerDown">
-            <span v-if="!data.selected.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
-            <div v-for="(item, idx) in data.selected" :key="idx"
-                 class="tag"
-                 :class="{
-                   'placeholder': item._ph,
-                   'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
-                   'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
-                   'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right'
-                 }"
-                 @pointerdown.stop="onTagPointerDown($event, idx)">
-              <span>{{ item.name }}</span>
-              <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
-              <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
-            </div>
-          </div>
           <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
           <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">
-            <span class="pv-label">正向</span>
             <span class="pv-text">{{ previewText }}</span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
                     :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
           </div>
           <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
                :class="{'random-mode': data.fillMode || data.traverseMode}">
-            <span class="pv-label neg">负向</span>
             <span class="pv-text">{{ previewNegText || '（无）' }}</span>
           </div>
         </div>

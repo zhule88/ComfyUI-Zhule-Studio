@@ -84,6 +84,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: transparent; border: 1px dashed var(--border-2); border-radius: 8px;
   cursor: pointer; user-select: none; transition: all 0.12s; }
 .tab-add:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-dim); }
+/* 无大类时的兜底占位：新建大类统一走右键，不留常驻加号 */
+.tab.tab-void { align-self: center; color: var(--text-3); font-style: italic;
+  background: transparent; border: 1px dashed var(--border-2); border-radius: 6px;
+  padding: 5px 10px; cursor: context-menu; }
 .chip-add { flex-shrink: 0; width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px; line-height: 1; font-weight: 700; color: var(--text-3);
@@ -400,6 +404,14 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .bottom { flex-shrink: 0; border-top: 1px solid var(--border-2); background: var(--bg-2);
   padding: 12px 18px; display: flex; flex-direction: column; gap: 10px; }
 .selected-header { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-2); }
+.selected-header .sel-title { flex-shrink: 0; white-space: nowrap; }
+/* 已选标签排在 header 行内：占用中间剩余宽度，超出纵向滚动；右侧操作区固定不被挤走 */
+.selected-header .selected-list { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: 72px;
+  overflow-y: auto; overflow-x: hidden; padding: 0; gap: 5px; align-content: flex-start; }
+/* 收起态：标签不隐藏，只压成单行，超出部分横向滚动 */
+.selected-header .selected-list.is-collapsed { flex-wrap: nowrap; max-height: 26px;
+  overflow-x: auto; overflow-y: hidden; }
+.selected-header .selected-list .tag { padding: 2px 6px 2px 8px; font-size: 11.5px; }
 .selected-header .header-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .selected-count { color: var(--accent); font-weight: 600; }
 .selected-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 32px; position: relative;
@@ -418,10 +430,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tag .close { cursor: pointer; color: #b3d4ff; font-size: 14px; line-height: 1; padding: 0 2px; }
 .tag .close:hover { color: #fff; }
 .empty-tip { color: var(--text-3); font-size: 12px; padding: 4px 0; }
-.preview { padding: 8px 12px; background: #0b0e13; border: 1px solid var(--border-2);
-  border-radius: 6px; color: var(--text-2); font-family: ui-monospace, Consolas, monospace;
+.preview { padding: 8px 12px; background: rgba(79, 143, 247, 0.13); border: 1px solid rgba(79, 143, 247, 0.38);
+  border-radius: 6px; color: #cfe1ff; font-family: ui-monospace, Consolas, monospace;
   font-size: 12px; max-height: 60px; overflow-y: auto; word-break: break-all; line-height: 1.5; }
-.preview.random-mode { color: var(--purple); border-color: var(--purple); background: rgba(76, 58, 122, 0.15); }
+.preview.random-mode { color: var(--purple); border-color: var(--purple); }
 .count-ctrl { display: flex; align-items: center; gap: 4px; }
 .count-ctrl label { color: var(--text-3); font-size: 12px; margin-right: 2px; }
 .count-btn { width: 24px; height: 24px; padding: 0; font-size: 15px; line-height: 1;
@@ -1856,14 +1868,9 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 /* 空分类层占位：右键新建 */
 .chip-void { color: var(--text-3); border-style: dashed; }
 
-/* 预览框：正向 / 负向两块，负面可一键收起 */
+/* 预览框：正向（浅蓝）/ 负向（浅红）两块，负面可一键收起 */
 .preview { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
-.pv-label {
-  flex-shrink: 0; padding: 1px 6px; font-size: 10.5px; color: var(--text-3);
-  border: 1px solid var(--border-2); border-radius: 5px;
-}
-.pv-label.neg { color: #ffb3b3; border-color: #7a2626; }
-.pv-text { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text-2); word-break: break-all; }
+.pv-text { flex: 1 1 auto; min-width: 0; font-size: 12px; color: inherit; word-break: break-all; }
 .pv-neg-toggle {
   margin-left: auto; flex-shrink: 0; padding: 2px 8px; font-size: 11px;
   background: transparent; color: var(--text-3);
@@ -1871,7 +1878,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .pv-neg-toggle:hover { color: var(--text); border-color: #3d4c63; }
 .pv-neg-toggle.on { color: #ffb3b3; border-color: #7a2626; background: rgba(229, 72, 77, 0.12); }
-.preview.neg { background: #140f12; border-color: #3a2a2a; }
+.preview.neg { background: rgba(229, 72, 77, 0.13); border-color: rgba(229, 72, 77, 0.38); color: #ffd6d6; }
 
 /* 编辑分类弹层里的负向 / 排除字段，与词条弹层同一套配色 */
 .edit-dialog .field.neg > label,
