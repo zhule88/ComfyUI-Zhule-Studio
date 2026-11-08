@@ -194,7 +194,31 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: transparent; border: 2px dashed var(--border-2); border-radius: 8px;
   cursor: pointer; user-select: none; min-height: 120px; transition: all 0.12s; }
 .card-add:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-dim); }
-.card.selected { background: var(--card-sel); border-color: var(--primary); }
+/* 选中态：不再只靠一圈蓝光——外描边辉光 + 图片内描边 + 名字前勾选徽标 + 底部说明条染蓝。
+   ::before 仅绘制内描边，pointer-events: none，不影响卡片点击 / 拖拽 / 悬停图标 */
+.card.selected {
+  background: var(--card-sel); border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 0 0 4px rgba(79, 143, 247, 0.22),
+              0 6px 18px rgba(79, 143, 247, 0.30); }
+.card.selected:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 0 0 4px rgba(79, 143, 247, 0.32),
+              0 8px 22px rgba(79, 143, 247, 0.40); }
+.card.selected::before {
+  content: ''; position: absolute; inset: 0; z-index: 4;
+  pointer-events: none; border-radius: 8px;
+  box-shadow: inset 0 0 0 2px rgba(79, 143, 247, 0.92),
+              inset 0 0 24px rgba(79, 143, 247, 0.34); }
+.card.selected .card-caption {
+  background: linear-gradient(to top,
+    rgba(30, 62, 110, 0.96) 0%, rgba(30, 62, 110, 0.72) 35%,
+    rgba(30, 62, 110, 0.18) 72%, rgba(0, 0, 0, 0) 100%); }
+.card.selected .card-name::before {
+  content: '✓'; display: inline-block; width: 15px; height: 15px; margin-right: 5px;
+  font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
+  color: #fff; background: var(--primary); border-radius: 50%; vertical-align: 1px;
+  text-decoration: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
 .card.zhule-source { opacity: 0.35; }
 .card.image { padding: 0; }
 .card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
@@ -1741,17 +1765,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 
 /* 空分类层占位：右键新建 */
 .chip-void { color: var(--text-3); border-style: dashed; }
-
-/* 词库专属设置（⚙） */
-.bank-pref {
-  position: absolute; top: 44px; right: 16px; z-index: 60; width: 244px;
-  padding: 10px 12px; background: #1b2433; border: 1px solid #3a4a63; border-radius: 10px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
-}
-.bp-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
-.bp-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); cursor: pointer; }
-.bp-row input { width: 14px; height: 14px; accent-color: var(--primary); cursor: pointer; }
-.bp-hint { margin-top: 7px; font-size: 10.5px; color: var(--text-3); line-height: 1.6; }
 
 /* 预览框：正向 / 负向两块，负面可一键收起 */
 .preview { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }

@@ -27,16 +27,6 @@ export default {
           </div>
           <button class="btn" @click="saveBankOrder" :disabled="bankSaving"
                   data-tip="按当前展示顺序（层级深度优先）把编号写回并覆盖文件夹">💾 排序保存</button>
-          <button class="btn icon-btn" @click.stop="bankPrefOpen = !bankPrefOpen" data-tip="词库专属设置">⚙</button>
-          <!-- 词库专属设置（不是通用设置，只作用于本页） -->
-          <div v-if="bankPrefOpen" class="bank-pref">
-            <div class="bp-title">词库设置</div>
-            <label class="bp-row" @click.stop>
-              <input type="checkbox" v-model="pref.showNegPreview">
-              <span>预览框显示负面提示词</span>
-            </label>
-            <div class="bp-hint">关闭后预览框只留正向结果，运行不受影响。</div>
-          </div>
         </div>
 
         <div class="tabs">
@@ -223,12 +213,12 @@ export default {
               <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
             </div>
           </div>
-          <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键展开（词库设置里可永久关闭） -->
+          <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
           <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">
             <span class="pv-label">正向</span>
             <span class="pv-text">{{ previewText }}</span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
-                    :data-tip="pref.showNegPreview ? '收起负面提示词预览（词库设置里可永久关闭）' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
+                    :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
           </div>
           <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
                :class="{'random-mode': data.fillMode || data.traverseMode}">
@@ -604,11 +594,8 @@ export default {
     // pref 单独持久化：整包 state 的 JSON.stringify 一旦因数据异常失败会被静默吞掉，
     // 连带偏好失效；这里让 pref 走自己的 key，与整包存档互不牵连。
     const PREF_KEY = 'zhule_wordbank_pref_v1';
-    // 词库专属设置面板开关（只作用于本页，不写进通用设置）
-    const bankPrefOpen = ref(false);
-
     function loadPref() {
-      // showNegPreview 为词库专属设置（非通用设置）：预览框是否展开「负面提示词」一行，默认展开。
+      // showNegPreview：预览框是否展开「负面提示词」一行，默认展开。开关只在预览框上（pv-neg-toggle），不设独立设置面板。
       const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true, showNegPreview: true };
       try {
         const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
@@ -1950,7 +1937,7 @@ export default {
       if (!picked.length) return '';
       return joinInherit(expandItems(picked).map(s => s.neg));
     });
-    // 预览框上的快捷开关，与词库设置里的开关共用同一个 pref 字段
+    // 预览框上的负面提示词折叠开关（唯一入口，直接写回 pref 并持久化）
     const toggleNegPreview = () => { pref.showNegPreview = !pref.showNegPreview; };
 
     // ============ 工具 ============
@@ -3570,7 +3557,7 @@ const submitAddTab = async () => {
       window.addEventListener('zhule-wordbank-pref', onWordbankPref);
       window.addEventListener('zhule-pref-changed', onGlobalPrefChanged);
       window.addEventListener('zhule:wordbank-changed', onWordbankChanged);
-      // 右键菜单 / 词库设置面板：点空白、Esc、滚动、改变窗口大小都收起，避免残留
+      // 右键菜单：点空白、Esc、滚动、改变窗口大小都收起，避免残留
       document.addEventListener('keydown', onBankKeydown);
       document.addEventListener('click', onBankDismiss, true);
       document.addEventListener('scroll', onBankDismiss, true);
@@ -3582,15 +3569,10 @@ const submitAddTab = async () => {
       if (cardMenu.open) { closeCardMenu(); return; }
       if (catMenu.open) { closeCatMenu(); return; }
       if (catEdit.open) { closeCatEdit(); return; }
-      if (bankPrefOpen.value) bankPrefOpen.value = false;
     };
     const onBankDismiss = (e) => {
       if (catMenu.open && !(e && e.target && e.target.closest && e.target.closest('.ctx-menu'))) closeCatMenu();
       if (cardMenu.open && !(e && e.target && e.target.closest && e.target.closest('.ctx-menu'))) closeCardMenu();
-      if (bankPrefOpen.value && e && e.target && e.target.closest
-        && !e.target.closest('.bank-pref') && !e.target.closest('[data-tip="词库专属设置"]')) {
-        bankPrefOpen.value = false;
-      }
     };
     onBeforeUnmount(() => {
       if (clickBlocker) document.removeEventListener('click', clickBlocker, true);
@@ -3627,7 +3609,7 @@ const submitAddTab = async () => {
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
       onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef,
       catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
-      previewNegText, toggleNegPreview, bankNodes, nodeOfCat, bankPrefOpen,
+      previewNegText, toggleNegPreview, bankNodes, nodeOfCat,
       canAddChip, chipParentLabel, addCardIsTxt,
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,

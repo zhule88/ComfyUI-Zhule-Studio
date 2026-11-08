@@ -435,7 +435,6 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
-                <div class="settings-hint">开启后词库卡片只保留左右切换与 🎲 骰子（高频操作），进入详情、放大、删除图、静音、编辑、上传参考图等全部收进卡片右键菜单。</div>
                 <!-- 通用设置下的子类：标签（可折叠，折叠状态与其它分组一起持久化） -->
                 <div class="settings-subgroup" :class="{ 'collapsed': isCollapsed('common-tag') }">
                   <div class="settings-group-title settings-subgroup-head" @click="toggleCollapse('common-tag')">
