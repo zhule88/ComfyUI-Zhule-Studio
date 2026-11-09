@@ -79,17 +79,18 @@ export default {
               <div class="chip-depth" :data-tip="depth === 0 ? '一级分类（右键分类可新建 / 编辑）' : '第 ' + (depth + 1) + ' 级分类'">{{ depth === 0 ? '大类' : (depth + 1) + '级' }}</div>
               <div v-if="line.length" class="chip clear" :class="{active: !getSelections()[depth].length}"
                    @click="clearChip(depth)">全部</div>
-              <div v-for="name in line" :key="name"
+              <!-- 分类 chip 自带 { id, parentId, name }：选中/拖拽/池/右键全按节点 id，不再有路径 key -->
+              <div v-for="chip in line" :key="chip.id"
                    class="chip"
-                   :class="[chipThemeClass, {active: getSelections()[depth].includes(name), 'in-pool': isChipTraversePool(depth, name), 'in-pool-random': isChipInPool(depth, name) && !isChipTraversePool(depth, name)}]"
-                   :style="chipStyle(name)"
+                   :class="[chipThemeClass, {active: getSelections()[depth].includes(chip.id), 'in-pool': isChipTraversePool(chip), 'in-pool-random': isChipInPool(chip) && !isChipTraversePool(chip)}]"
+                   :style="chipStyle(chip.name)"
                    draggable="true"
-                   @click="toggleChip(depth, name)"
-                   @contextmenu.prevent="openCatMenu($event, 'chip', name, depth)"
-                   @dragstart="onChipDragStart($event, depth, name)"
-                   @dragover="onChipDragOver($event, depth, name)"
+                   @click="toggleChip(depth, chip)"
+                   @contextmenu.prevent="openCatMenu($event, 'chip', chip, depth)"
+                   @dragstart="onChipDragStart($event, depth, chip)"
+                   @dragover="onChipDragOver($event, depth, chip)"
                    @drop.prevent
-                   @dragend="onChipDragEnd">{{ dispKey(name) }}<span v-if="isCatMuted('chip', name)" class="chip-mute">🔇</span></div>
+                   @dragend="onChipDragEnd">{{ chip.name }}<span v-if="isCatMuted('chip', chip.id)" class="chip-mute">🔇</span></div>
             </div>
           </div>
           <div v-show="!chipsCollapsed" class="chips-resize" data-tip="拖拽调整高度"
@@ -849,27 +850,13 @@ export default {
     // 排序固定为「深度」= 层级深度优先（完整路径逐段编号转数字比较），不做手动选择
     const DEFAULT_TAB_SORT = { field: 'path', dir: 'asc' };
 
-    const getChipOrder = (tab, depth, parentPath) => {
+    // 排序键统一为「层级|父节点id」（第 0 层的父 = 大类 Tab 根 id）
+    const getChipOrder = (tab, depth, parentId) => {
       const t = chipOrder[tab];
       if (!t) return [];
-      // 旧路径键优先（存量存档）
-      const exact = t[depth + '|' + parentPath];
+      const exact = t[depth + '|' + String(parentId || '')];
       if (Array.isArray(exact)) return exact;
-      // 新格式：键为「层级|父节点id」（拖拽排序已按 id 记录），父 id = 路径反查
-      if (parentPath) {
-        const pid = chipIdFor(tab, parentPath.split('/').length - 2, parentPath);
-        if (pid) {
-          const byId = t[depth + '|' + pid];
-          if (Array.isArray(byId)) return byId;
-        }
-      } else {
-        const tid = tabIds.value[tab];
-        if (tid) {
-          const byId = t[depth + '|' + tid];
-          if (Array.isArray(byId)) return byId;
-        }
-      }
-      // 兼容旧存档：整层全局顺序（无父路径）作为兜底
+      // 兼容早期存档：整层全局顺序（无父级）作为兜底
       const legacy = t[depth + '|'];
       if (Array.isArray(legacy)) return legacy;
       return [];
@@ -986,7 +973,8 @@ export default {
         if (state.randomPools) {
           const clean = [];
           if (Array.isArray(state.randomPools)) {
-            clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string' && Array.isArray(it.path)));
+            clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string'
+              && (it.kind !== 'chip' || it.chipId || Array.isArray(it.path))));
           } else if (typeof state.randomPools === 'object') {
             // 兼容旧版按 tab 分桶的存档
             Object.keys(state.randomPools).forEach(t => {
@@ -994,13 +982,23 @@ export default {
               if (!Array.isArray(arr)) return;
               arr.forEach(it => {
                 if (it && (it.kind === 'tab' || it.kind === 'chip') && Array.isArray(it.path)) {
-                  clean.push({ kind: it.kind, tab: t, path: it.path, display: it.display || (it.kind === 'tab' ? '(全部)' : (it.path || []).join('/')) });
+                  clean.push({ kind: it.kind, tab: t, path: it.path, display: it.display || '' });
                 }
               });
             });
           }
+          clean.forEach(it => {
+            // 池的 chip 身份统一为节点 id：旧存档只有路径，按 nodes[].path 反查迁移，反查不到丢弃
+            if (it.kind !== 'chip') return;
+            if (!it.chipId && Array.isArray(it.path)) it.chipId = nodeIdByPath(it.path.join('/')) || '';
+            delete it.path;
+            if (!it.chipId) it.dead = true;
+            // 显示名统一按节点名重算（旧存档可能存的是路径串）
+            else it.display = nodeNameOf(it.chipId) || it.display || String(it.chipId);
+          });
           // 凝结池（kind:'list'）校验：items 必须是有 tab + relPath 的数组，池子空了就丢弃
           data.randomPools = clean.filter(it => {
+            if (it.kind === 'chip' && it.dead) return false;
             if (it.kind !== 'list') return true;
             it.items = (Array.isArray(it.items) ? it.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
             if (!it.poolId) it.poolId = 'L' + Math.random().toString(36).slice(2, 10);
@@ -1036,8 +1034,12 @@ export default {
             data.selections[t] = new Array(maxDepth.value).fill(null).map(() => []);
             for (let i = 0; i < Math.min(arr.length, maxDepth.value); i++) {
               const v = arr[i];
-              if (Array.isArray(v)) data.selections[t][i] = v.filter(x => x).slice(0, 1); // 互斥单选：旧多选只保留首个
-              else if (v) data.selections[t][i] = [v];
+              const one = Array.isArray(v) ? v.filter(x => x)[0] : v;   // 互斥单选：旧多选只保留首个
+              if (!one) continue;
+              // 选区现在存节点 id：旧存档存的是路径 key，按 nodes[].path 反查迁移
+              let id = String(one);
+              if (!(bankNodes.value || {})[id]) id = nodeIdByPath(id);
+              if (id) data.selections[t][i] = [id];
             }
           });
         }
@@ -1298,18 +1300,17 @@ export default {
     const canAddChip = (depth) => {
       if (!data.activeTab) return false;
       if (depth === 0) return true;
-      return !!chipParentPath(depth);
+      return !!chipParentId(depth);
     };
 
     // 注：词条/分类的新增入口已统一收到「分类右键菜单」，不再有加号卡片
 
     const addCardIsTxt = computed(() => (addCardName.value || '').trim().toLowerCase().endsWith('.txt'));
 
-    // 父分类显示名链（用于加号按钮 title）
+    // 父分类显示名链（用于加号按钮 title）：按 parentId 上溯现算
     const chipParentLabel = (depth) => {
       if (depth <= 0) return tabLabel(data.activeTab);
-      const parentKey = chipParentPath(depth);
-      return parentKey ? parentKey.split('/').map(dispKey).join('/') : '';
+      return nodePathOf(chipParentId(depth));
     };
 
 
@@ -1329,17 +1330,8 @@ export default {
       if (!name) { showToast('请输入分类名', 'warn'); return; }
       addingChip.value = true;
       try {
-        const parentKey = chipParentPath(addChipDepth.value);
-        // 与新建词条同一套兜底：卡片反查 → nodes 按路径反查 → 当前 tab 根
-        let parentId = '';
-        if (parentKey) {
-          parentId = chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey)
-            || nodeIdByPath(parentKey)
-            || '';
-          if (!parentId) parentId = tabIds.value[data.activeTab] || '';
-        } else {
-          parentId = tabIds.value[data.activeTab] || '';
-        }
+        // 父级 id 直接取选中链：depth 0 落当前大类 Tab 根，更深层取上一层选中节点
+        const parentId = chipParentId(addChipDepth.value) || tabIds.value[data.activeTab] || '';
         if (!parentId) {
           showToast('没找到父级：请先在左侧选中一个分类（或某个大类）再新建', 'warn', 3200);
           return;
@@ -1353,9 +1345,10 @@ export default {
         if (!resp.ok) { showToast(json.error || '创建失败', 'error'); return; }
         addChipOpen.value = false;
         addChipName.value = '';
-        const key = (parentKey ? parentKey + '/' : data.activeTab + '/') + name;
-        if (!pendingChips.value.some(p => p.depth === addChipDepth.value && p.key === key)) {
-          pendingChips.value.push({ depth: addChipDepth.value, key });
+        // 新分类暂无词条，后端扫描看不到 → 本地补位；身份直接用后端返回的节点 id
+        const newId = String(json.id || '');
+        if (newId && !pendingChips.value.some(p => String(p.id) === newId)) {
+          pendingChips.value.push({ id: newId, parentId: String(parentId), name, depth: addChipDepth.value });
         }
         showToast('分类已创建', 'success');
       } finally {
@@ -1395,24 +1388,15 @@ export default {
       addingCard.value = true;
       try {
         const sel = getSelections();
-        let parentKey = '';
+        let selId = '';
         for (let i = 0; i < maxDepth.value; i++) {
-          if (Array.isArray(sel[i]) && sel[i].length) parentKey = sel[i][0];
+          if (Array.isArray(sel[i]) && sel[i].length) selId = String(sel[i][0] || '');
         }
-        // 父级 id 三级兜底：① 版本组锁定的锚点 id；② 选中的分类——先从卡片链反查，
-        // 反查不到（该分类下还没有任何卡片 / 卡片懒加载未到位）再用全树 nodes 索引按路径查，
-        // 「测试」这类空分类、孤立顶层分类都靠这一步才能建得进去；③ 整层没选分类时落到当前 tab 根。
-        let parentId = '';
-        if (addCardLock.value) {
-          parentId = addCardLock.value.parentId;
-        } else if (parentKey) {
-          parentId = chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey)
-            || nodeIdByPath(parentKey)
-            || '';
-          if (!parentId) parentId = tabIds.value[data.activeTab] || '';
-        } else {
-          parentId = tabIds.value[data.activeTab] || '';
-        }
+        // 父级 id：① 版本组锁定的锚点 id；② 选中的分类节点 id（左栏自带 id，不再反查）；
+        // ③ 整层没选分类时落到当前 tab 根。
+        const parentId = addCardLock.value
+          ? addCardLock.value.parentId
+          : (selId || tabIds.value[data.activeTab] || '');
         if (!parentId) {
           addingCard.value = false;
           showToast('没找到父级：请先在左侧选中一个分类（或某个大类）再新建', 'warn', 3200);
@@ -1822,7 +1806,7 @@ export default {
       } catch (e) { return ''; }
     };
 
-    // 动态算最大 chips 层数：遍历当前已加载的所有 tab 卡片
+    // 动态算最大 chips 层数：卡片层数 与 分类树实际层级 取大（空分类也算，保证空小类可展开）
     const recalcMaxDepth = () => {
       let max = 0;
       Object.values(bankData.value).forEach(cards => {
@@ -1838,6 +1822,15 @@ export default {
           }
           if (n > max) max = n;
         });
+      });
+      // 分类节点树本身的最大深度（与卡片无关，空目录也贡献层级）
+      const idx = bankNodes.value || {};
+      Object.keys(idx).forEach(id => {
+        const n = idx[id];
+        if (!n) return;
+        if ((n.type || 'category') !== 'category' || n.vg) return;
+        const len = nodeIdChainById(id).length;
+        if (len > max) max = len;
       });
       maxDepth.value = Math.max(1, max);
     };
@@ -1900,6 +1893,10 @@ export default {
         tabs.value = json.tabs || [];
         tabIds.value = json.tab_ids || {};
         if (json.nodes && typeof json.nodes === 'object') bankNodes.value = json.nodes;
+        // 已落库的空分类会出现在节点索引里，本地补位缓存清掉同名 id，避免重复与陈旧项
+        if (pendingChips.value.length && bankNodes.value) {
+          pendingChips.value = pendingChips.value.filter(p => !(p && p.id && bankNodes.value[String(p.id)]));
+        }
         orderTabs();
         if (tabName) {
           // 局部加载：只替换该 tab 数据，保留其它已加载 tab（切 tab 懒加载路径）
@@ -1968,53 +1965,66 @@ export default {
     };
 
     const chipLines = computed(() => {
-      // 小分类 chip 同样遵循「隐藏被静音的提示词」：静音词条不参与 chip 生成，避免出现点进去空空的分组
-      // 且必须先按版本组归并：版本组的「组名」只是卡片标签，不是分类层级，
-      // 否则每个版本组都会在左侧多冒出一行分类（正是组名没被合并掉的表现）
-      const files = vgMergeCards((bankData.value[data.activeTab] || []).filter(f => !(hideMuted.value && f.mute)));
-      const sel = data.selections[data.activeTab] || [];
+      // 终局版：左栏直接由「分类节点树」构建（nodes 里 type=category 的节点按 parentId 挂树），
+      // 不再从卡片 chipIds 反推——空分类（没有词条的目录）也能正常显示与展开。
+      // 每个 chip 自带 { id, parentId, name }：id 是分类自身的 DB 身份，与卡片无关。
+      const tab = data.activeTab;
+      const rootId = String(tabIds.value[tab] || '');
+      const idx = bankNodes.value || {};
+      const sel = data.selections[tab] || [];
       const lines = [];
-      // 循环上限 = 词条最大层级 与 选中链深度+2 取大：选中 depth d 的空分类时需渲染 d+1 层，提供「＋」/「全部」以继续创建子分类
+      if (!rootId) return lines;
+      // parentId -> 子分类；跳过 Tab 根、词条节点与版本组组名层（组名只是卡片标签，不是分类层）
+      const kids = new Map();
+      Object.keys(idx).forEach(id => {
+        const n = idx[id];
+        if (!n) return;
+        if (String(id) === rootId) return;
+        if ((n.type || 'category') !== 'category') return; // 词条 / 空壳锚点不进分类栏
+        if (n.vg) return;
+        const p = String(n.parentId || '');
+        if (!p) return;
+        if (!kids.has(p)) kids.set(p, []);
+        kids.get(p).push({ id: String(id), parentId: p, name: n.name || '' });
+      });
       let maxSelDepth = -1;
       for (let i = 0; i < (sel || []).length; i++) {
         if (Array.isArray(sel[i]) && sel[i].length) maxSelDepth = i;
       }
+      // 循环上限 = 选中链深度+2：选中 depth d 的空分类时需渲染 d+1 层，提供「＋」/「全部」以继续创建子分类
       const loopDepth = Math.max(maxDepth.value, maxSelDepth + 2);
       for (let depth = 0; depth < loopDepth; depth++) {
-        const filtered = files.filter(f => {
-          for (let i = 0; i < depth; i++) {
-            const picks = sel[i];
-            if (!Array.isArray(picks) || !picks.length) continue;
-            if (!f.chipKeys[i]) continue;
-            if (!picks.includes(f.chipKeys[i])) return false;
-          }
-          return true;
+        const parentId = chipParentId(depth);
+        if (!parentId) break;
+        let options = (kids.get(parentId) || []).slice();
+        // 合并刚创建、尚未落盘为词条的空小类（避免空目录未刷新时不可见）
+        pendingChips.value.forEach(p => {
+          if (String(p.parentId || '') !== String(parentId)) return;
+          if (!p.name && !p.id) return;
+          if (options.some(o => (p.id && o.id === String(p.id)) || (!p.id && o.name === p.name))) return;
+          options.push({ id: String(p.id || ''), parentId: String(parentId), name: p.name || '' });
         });
-        // 用唯一键（完整相对路径）去重，同名不同父级各自独立展示
-        const set = new Set();
-        filtered.forEach(f => { if (f.chipKeys[depth]) set.add(f.chipKeys[depth]); });
-        const options = [...set];
-        const parentPath = chipParentPath(depth);
-        const order = getChipOrder(data.activeTab, depth, parentPath);
+        const order = getChipOrder(tab, depth, parentId);
         if (order.length) {
-          const byDisp = new Map();
-          options.forEach(k => { const d = dispKey(k); if (!byDisp.has(d)) byDisp.set(d, []); byDisp.get(d).push(k); });
+          const byOrderId = new Map(options.map(o => [o.id, o]));
+          const byName = new Map();
+          options.forEach(o => { if (!byName.has(o.name)) byName.set(o.name, []); byName.get(o.name).push(o); });
           const ordered = [];
           const used = new Set();
-          order.forEach(d => { (byDisp.get(d) || []).forEach(k => { if (!used.has(k)) { ordered.push(k); used.add(k); } }); });
-          const rest = options.filter(k => !used.has(k));
-          options.splice(0, options.length, ...ordered, ...rest);
+          order.forEach(k => {
+            const key = String(k == null ? '' : k);
+            const hit = byOrderId.get(key);
+            if (hit && !used.has(hit.id)) { ordered.push(hit); used.add(hit.id); return; }
+            // 旧存档按显示名存顺序：按名字兜底匹配
+            (byName.get(key) || []).forEach(o => { if (!used.has(o.id)) { ordered.push(o); used.add(o.id); } });
+          });
+          options = ordered.concat(options.filter(o => !used.has(o.id)));
         }
-        // 无 chipOrder 时保持后端层级深度优先顺序（不再按名称 sort，避免破坏父级优先）
-        // 合并刚创建、尚未落盘为词条的空小类（避免空目录被后端扫描忽略而不可见）
-        const pending = pendingChips.value.filter(p => p.depth === depth);
-        pending.forEach(p => { if (!options.includes(p.key)) options.push(p.key); });
-        if (!options.length) {
-          // 空层不再产出占位行（原「（空）右键新建」已移除）：新建子分类统一走分类右键菜单。
-          // 某层为空时其子层必然也为空，直接终止即可，lines 的索引仍与 depth 一一对应。
-          break;
-        }
+        if (!options.length) break;
         lines.push(options);
+        // 该层未选中则不再往下
+        const picks = sel[depth];
+        if (!Array.isArray(picks) || !picks.length) break;
       }
       return lines;
     });
@@ -2052,8 +2062,9 @@ export default {
         for (let i = 0; i < maxDepth.value; i++) {
           const picks = sel[i];
           if (!Array.isArray(picks) || !picks.length) continue;
-          if (!f.chipKeys[i]) continue;
-          if (!picks.includes(f.chipKeys[i])) return false;
+          const ids = f.chipIds || [];
+          if (!ids[i]) continue;
+          if (!picks.map(String).includes(String(ids[i]))) return false;
         }
         return true;
       }).sort((a, b) => {
@@ -2740,30 +2751,32 @@ export default {
     const isFileSelected = (file) => data.selected.some(s => sameCard(s, file));
 
     // ============ 随机池（多项独立子池：每个右键选中的 tab / chip 各为一池，随机/遍历时各抽一组合；父子互不包含） ============
-    const samePath = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-    // 从已加载卡片反查 chip 节点的 DB id：右键 chip = 当前筛选分支下 chipKeys[depth] 对应的节点，
-    // 取该节点在卡片 chipIds 链中同层的 id（同一 chip 下所有卡片该层 id 一致）。
-    const chipIdFor = (tab, depth, name) => {
-      const files = bankData.value[tab] || [];
-      const sel = data.selections[tab] || [];
-      const f = files.find(c => {
-        const keys = c.chipKeys || [];
-        if (keys[depth] !== name) return false;
-        for (let i = 0; i < depth; i++) {
-          const picks = sel[i];
-          if (!Array.isArray(picks) || !picks.length) continue;
-          if (!keys[i] || !picks.includes(keys[i])) return false;
-        }
-        return true;
-      });
-      if (!f) return '';
-      const ids = f.chipIds || [];
-      return ids[depth] || '';
+    // ============ 分类节点即身份：左栏 chip 自带 { id, parentId, name }，路径 key 已废弃 ============
+    // 节点显示名：后端 nodes 索引里的 name 本身已是无编号显示名
+    const nodeNameOf = (id) => {
+      const n = bankNodes.value[String(id || '')];
+      return n && n.name ? n.name : '';
     };
+    // 由节点 id 上溯祖先 id 链（从顶层到自身，不含大类 Tab 根）：与卡片 chipIds 同口径
+    const nodeIdChainById = (id) => {
+      const idx = bankNodes.value || {};
+      const out = [];
+      let cur = String(id || '');
+      let guard = 0;
+      while (cur && guard++ < 64) {
+        const n = idx[cur];
+        if (!n) break;
+        const p = String(n.parentId || '');
+        if (!p) break;            // 无父 = 大类 Tab 根，不属于分类层级
+        out.unshift(cur);
+        cur = p;
+      }
+      return out;
+    };
+    // 分类显示路径（顶层 / … / 自身）：只用于菜单标题、弹层与提示文案，不再当逻辑键
+    const nodePathOf = (id) => nodeIdChainById(id).map(x => nodeNameOf(x)).filter(Boolean).join(' / ');
 
-    // 按「完整相对路径」在全树 nodes 索引里反查 DB id：chipIdFor 只能从已加载卡片反推，
-    // 空分类（像「测试」这种一条卡片都没挂的顶层分类）反查必然是空，这里用后端给的
-    // nodes[id].path（与卡片 chipKeys 同为带编号原始目录名口径）兜住。
+    // 存档迁移兜底：旧存档的选区存的是「完整相对路径」key，这里按 nodes[].path 反查回节点 id
     const nodeIdByPath = (path) => {
       const want = String(path || '');
       if (!want) return '';
@@ -2775,40 +2788,32 @@ export default {
       return '';
     };
 
-    const chipParentPath = (depth) => {
-      if (depth <= 0) return '';
+    // 当前选中链上第 depth 层的父节点 id（depth 0 的父 = 当前大类 Tab 根）
+    const chipParentId = (depth) => {
+      if (depth <= 0) return String(tabIds.value[data.activeTab] || '');
       const sel = getSelections();
       const p = sel[depth - 1];
-      return Array.isArray(p) && p.length ? p[0] : '';
+      return Array.isArray(p) && p.length ? String(p[0] || '') : '';
     };
-    const chipPathFor = (depth, name) => {
-      const sel = data.selections[data.activeTab] || [];
-      const path = [];
-      for (let i = 0; i < depth; i++) {
-        const picks = Array.isArray(sel[i]) ? sel[i] : (sel[i] ? [sel[i]] : []);
-        if (picks.length) path.push(picks[0]);
-      }
-      path.push(name);
-      return path;
+    // 同层兄弟节点 id：拖拽排序落库时补齐未展示的节点（保持旧行为「没出现的补末尾」）
+    const siblingIdsOf = (parentId, skip) => {
+      const idx = bankNodes.value || {};
+      const out = [];
+      Object.keys(idx).forEach(id => {
+        const n = idx[id];
+        if (!n) return;
+        if (String(n.parentId || '') !== String(parentId || '')) return;
+        // 只算「分类层」的兄弟节点：词条节点、版本组组名节点不参与分类排序
+        if ((n.type || 'category') !== 'category' || n.vg) return;
+        if (skip && skip.has(String(id))) return;
+        out.push(String(id));
+      });
+      return out;
     };
-    // 由 chipId 反查该节点所在卡片链：chipIds 为不含 tab 根的祖先 id 链，chips 为同构的无编号显示名链
-    const chipIdChain = (tab, id) => {
-      if (!id) return [];
-      const files = bankData.value[tab] || [];
-      const f = files.find(c => (c.chipIds || []).includes(id));
-      if (!f) return [];
-      const idx = (f.chipIds || []).indexOf(id);
-      return idx >= 0 ? (f.chipIds || []).slice(0, idx + 1) : [];
-    };
-    const chipDisplayFor = (tab, id) => {
-      if (!id) return '';
-      const files = bankData.value[tab] || [];
-      const f = files.find(c => (c.chipIds || []).includes(id));
-      if (!f) return '';
-      const idx = (f.chipIds || []).indexOf(id);
-      return ((f.chips || [])[idx] || '') || '';
-    };
-    // 随机池父子冲突按 DB id 链判断（路径逻辑已废弃）：同链上谁浅谁包含谁，提示一律用无编号显示名
+    // 由节点 id 取祖先 id 链（与卡片 chipIds 同口径：不含大类 Tab 根），供池父子冲突判断
+    const chipIdChain = (tab, id) => nodeIdChainById(id);
+    const chipDisplayFor = (tab, id) => nodeNameOf(id) || String(id || '');
+    // 随机池父子冲突按 DB id 链判断：同链上谁浅谁包含谁，提示一律用无编号显示名
     const hasPoolConflict = (tab, chipId) => {
       const items = data.randomPools.filter(it => it.tab === tab);
       const myChain = chipIdChain(tab, chipId);
@@ -2819,9 +2824,10 @@ export default {
         }
         if (it.kind === 'chip') {
           const theirName = chipDisplayFor(tab, it.chipId) || it.display || '';
+          if (!it.chipId) continue;
           if (myChain.length === 0) return { conflict: true, msg: `「${theirName}」已进池，不能再加入整个「${tabLabel(tab)}」` };
-          if (myChain.includes(it.chipId)) return { conflict: true, msg: `「${theirName}」已进池，它包含「${chipDisplayFor(tab, chipId)}」，父子不能同时进池` };
-          if (chipIdChain(tab, it.chipId).includes(chipId)) return { conflict: true, msg: `「${chipDisplayFor(tab, chipId)}」包含已进池的「${theirName}」，父子不能同时进池` };
+          if (myChain.includes(String(it.chipId))) return { conflict: true, msg: `「${theirName}」已进池，它包含「${chipDisplayFor(tab, chipId)}」，父子不能同时进池` };
+          if (chipIdChain(tab, it.chipId).includes(String(chipId))) return { conflict: true, msg: `「${chipDisplayFor(tab, chipId)}」包含已进池的「${theirName}」，父子不能同时进池` };
         }
       }
       return { conflict: false };
@@ -2859,15 +2865,18 @@ export default {
       const rels = new Set(cards.map(c => c.relPath));
       return data.selected.some(s => rels.has(s.relPath));
     };
-    const isChipInPool = (depth, name) => {
+    // 左栏 chip 是 { id, parentId, name } 对象：入池判断、高亮全部按节点 id 比对
+    const isChipInPool = (chip) => {
       const tab = data.activeTab;
-      const chipId = chipIdFor(tab, depth, name);
-      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, chipPathFor(depth, name))));
+      const id = String((chip && chip.id) || '');
+      if (!id) return false;
+      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
     };
-    const isChipTraversePool = (depth, name) => {
+    const isChipTraversePool = (chip) => {
       const tab = data.activeTab;
-      const chipId = chipIdFor(tab, depth, name);
-      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && !!it.traverse && (it.chipId ? it.chipId === chipId : samePath(it.path, chipPathFor(depth, name))));
+      const id = String((chip && chip.id) || '');
+      if (!id) return false;
+      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && !!it.traverse && String(it.chipId || '') === id);
     };
 
     // ============ 交互 ============
@@ -2930,23 +2939,24 @@ const submitAddTab = async () => {
       } else {
       }
     };
-    const toggleChip = (depth, name) => {
+    const toggleChip = (depth, chip) => {
+      const id = String((chip && chip.id) || '');
+      if (!id) return;
       const sel = getSelections();
       if (!Array.isArray(sel[depth])) sel[depth] = [];
-      if (sel[depth].length === 1 && sel[depth][0] === name) {
+      if (sel[depth].length === 1 && String(sel[depth][0]) === id) {
         // 搜索态下点「已选中的同一个分类」= 用内存里已有的分类数据回填、覆盖搜索结果，
         // 选中态保持不变（不取消），也不发任何请求
         if (searchQ.value) { clearSearch(); return; }
         sel[depth] = [];
       } else {
-        sel[depth] = [name];
-        // 设置项开启时，点击分类自动把整条父链选中（name 为从词库根开始的完整相对路径 key）
+        sel[depth] = [id];
+        // 设置项开启时，点击分类自动把整条父链选中（父链直接由 parentId 上溯，无需解析路径）
         if (pref.autoSelectParent) {
-          const parts = String(name).split('/');
-          // 第 i 级父链 = 取到第 i+1 层，恰好等于上一层的完整 key
-          for (let i = 0; i < depth && i < parts.length - 1; i++) {
+          const chain = nodeIdChainById(id);
+          for (let i = 0; i < depth && i < chain.length - 1; i++) {
             if (!Array.isArray(sel[i])) sel[i] = [];
-            sel[i] = [parts.slice(0, i + 2).join('/')];
+            sel[i] = [chain[i]];
           }
         }
       }
@@ -2975,45 +2985,40 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all', muted: false, vg: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, vg: false });
 
-    // 路径（带编号的原始目录名链路，与 chips key 同口径）→ 节点属性：
-    // 空分类目录还没生成任何词条卡片时，也能靠它精确定位分类节点。
-    const nodeByPath = computed(() => {
-      const m = {};
-      const all = bankNodes.value || {};
-      Object.keys(all).forEach(id => {
-        const n = all[id];
-        if (n && n.path) m[n.path] = n;
-      });
-      return m;
-    });
-    const nodeOfCat = (kind, key) => (kind === 'tab'
-      ? (bankNodes.value[tabIds.value[key] || ''] || null)
-      : (nodeByPath.value[key] || null));
-    const poolKindOf = (kind, key, depth) => {
+    // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
+    const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
+      ? (bankNodes.value[String(tabIds.value[keyOrId] || '')] || null)
+      : (bankNodes.value[String(keyOrId || '')] || null));
+    // 池三态：tab 传入大类名，chip 传入节点 id
+    const poolKindOf = (kind, keyOrId) => {
       const tab = data.activeTab;
       if (kind === 'tab') {
-        const it = data.randomPools.find(p => p.kind === 'tab' && p.tab === key);
+        const it = data.randomPools.find(p => p.kind === 'tab' && p.tab === keyOrId);
         return it ? (it.traverse ? 'traverse' : 'random') : 'all';
       }
-      const chipId = chipIdFor(tab, depth, key);
-      const path = chipPathFor(depth, key);
-      const it = data.randomPools.find(p => p.kind === 'chip' && p.tab === tab
-        && (p.chipId ? p.chipId === chipId : samePath(p.path, path)));
+      const id = String(keyOrId || '');
+      if (!id) return 'all';
+      const it = data.randomPools.find(p => p.kind === 'chip' && p.tab === tab && String(p.chipId || '') === id);
       return it ? (it.traverse ? 'traverse' : 'random') : 'all';
     };
-    const openCatMenu = (evt, kind, key, depth) => {
+    const openCatMenu = (evt, kind, keyOrNode, depth) => {
       if (!data.activeTab) return;
+      const isChip = kind === 'chip';
+      const node = isChip ? (keyOrNode || null) : null;
+      const id = isChip ? String((node && node.id) || '') : String(tabIds.value[keyOrNode] || '');
       catMenu.open = true;
       catMenu.kind = kind;
-      catMenu.key = key;
-      catMenu.depth = depth;
-      catMenu.title = kind === 'tab' ? tabLabel(key) : String(key).split('/').slice(1).map(dispKey).join(' / ');
-      catMenu.pool = poolKindOf(kind, key, depth);
-      catMenu.muted = !!((nodeOfCat(kind, key) || {}).mute);
+      catMenu.key = isChip ? id : keyOrNode;   // tab：大类名；chip：分类节点 id
+      catMenu.id = id;
+      catMenu.name = isChip ? ((node && node.name) || '') : tabLabel(keyOrNode);
+      catMenu.depth = isChip ? depth : 0;
+      catMenu.title = isChip ? (nodePathOf(id) || catMenu.name) : tabLabel(keyOrNode);
+      catMenu.pool = poolKindOf(kind, isChip ? id : keyOrNode);
+      catMenu.muted = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).mute);
       // 版本组开关的当前值（只对非 tab 分类有意义）
-      catMenu.vg = !!((nodeOfCat(kind, key) || {}).vg);
+      catMenu.vg = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).vg);
       // 贴边翻转，避免菜单跑出窗口
       catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
@@ -3154,19 +3159,20 @@ const submitAddTab = async () => {
       clearPick();
     };
     // 池三态：直接复用原有 toggle 逐级推进，校验（父子链冲突提示）与三态循环完全一致
-    const setPoolBy = (kind, key, depth, want) => {
+    // tab 传入大类名，chip 传入分类节点 id
+    const setPoolBy = (kind, keyOrId, want) => {
       for (let i = 0; i < 4; i++) {
-        const cur = poolKindOf(kind, key, depth);
+        const cur = poolKindOf(kind, keyOrId);
         if (cur === want) return;
-        if (kind === 'tab') togglePoolForTab(key);
-        else togglePoolForChip(depth, key);
-        if (poolKindOf(kind, key, depth) === cur) return; // 被冲突拦住，别空转
+        if (kind === 'tab') togglePoolForTab(keyOrId);
+        else togglePoolForChip(keyOrId);
+        if (poolKindOf(kind, keyOrId) === cur) return; // 被冲突拦住，别空转
       }
     };
     const onCtxPool = (want) => {
-      const m = { kind: catMenu.kind, key: catMenu.key, depth: catMenu.depth };
+      const m = { kind: catMenu.kind, key: catMenu.key, name: catMenu.name };
       closeCatMenu();
-      setPoolBy(m.kind, m.key, m.depth, want);
+      setPoolBy(m.kind, m.key, want);
     };
 
     // ---- 版本组开关：一个分类的多条词条要不要合并成 1 张多版本卡 ----
@@ -3344,7 +3350,7 @@ const submitAddTab = async () => {
       catEdit.provide = n.provide !== 0;
       catEdit.pathLabel = kind === 'tab'
         ? tabLabel(key)
-        : String(key).split('/').slice(1).map(dispKey).join(' / ');
+        : (nodePathOf(n.id) || n.name || '');
     };
     const closeCatEdit = () => { if (!catSaving.value) catEdit.open = false; };
     const submitCatEdit = async () => {
@@ -3397,7 +3403,7 @@ const submitAddTab = async () => {
       const n = nodeOfCat(kind, key);
       if (!n) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
       if (kind === 'tab') { showToast('大类（Tab 根）不可删除', 'warn', 2600); return; }
-      const label = String(key).split('/').slice(1).map(dispKey).join(' / ');
+      const label = nodePathOf(n.id) || n.name || String(n.id);
       del.ask({
         title: '确认删除分类',
         message: '是否确认删除该分类「' + label + '」？它下面的所有子分类与词条会一并删除'
@@ -3463,14 +3469,12 @@ const submitAddTab = async () => {
       openAddCard();
     };
     const onCtxAddTab = () => { closeCatMenu(); openAddTab(); };
-    // 把选区设成某条分类链（新建词条的父目录由选区推导）
-    const selectChipChain = (key, depth) => {
+    // 把选区设成某条分类链（新建词条的父目录由选区推导）：父链直接由 parentId 上溯
+    const selectChipChain = (id, depth) => {
       const sel = getSelections();
       for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
-      const parts = String(key).split('/');
-      for (let i = 0; i <= depth && i < parts.length - 1; i++) {
-        sel[i] = [parts.slice(0, i + 2).join('/')];
-      }
+      const chain = nodeIdChainById(id);
+      for (let i = 0; i <= depth && i < chain.length; i++) sel[i] = [chain[i]];
       pageIndex.value = 0;
     };
 
@@ -3493,53 +3497,54 @@ const submitAddTab = async () => {
       }
       const chk = hasPoolConflict(tab, '');
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'tab', tab, path: [], display: tab, traverse: false });
+      data.randomPools.push({ kind: 'tab', tab, display: tab, traverse: false });
       zhuleLog('togglePoolForTab: 加入随机池', { kind: 'tab', tab }, 'selected=', selSummary());
       syncPlaceholders();
       showToast('「' + tabLabel(tab) + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
-    const togglePoolForChip = (depth, name) => {
-      const path = chipPathFor(depth, name);
+    const togglePoolForChip = (chipId, label) => {
       const tab = data.activeTab;
-      const chipId = chipIdFor(tab, depth, name);
-      const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && (it.chipId ? it.chipId === chipId : samePath(it.path, path)));
-      const label = path.map(dispKey).join('/');
+      const id = String(chipId || '');
+      if (!id) return;
+      const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
+      const disp = label || nodeNameOf(id) || id;
       if (idx >= 0) {
         const cur = data.randomPools[idx];
         if (!cur.traverse) {
           cur.traverse = true;
-          zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId, display: label }, 'selected=', selSummary());
+          zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
           syncPlaceholders();
-          return showToast('「' + label + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
+          return showToast('「' + disp + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
         }
         data.randomPools.splice(idx, 1);
         zhuleLog('togglePoolForChip: 移出池', cur, 'selected=', selSummary());
         syncPlaceholders();
-        return showToast('「' + label + '」已移出池', 'warn', 2000);
+        return showToast('「' + disp + '」已移出池', 'warn', 2000);
       }
-      const chk = hasPoolConflict(tab, chipId);
+      const chk = hasPoolConflict(tab, id);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'chip', tab, path, chipId, display: label, traverse: false });
-      zhuleLog('togglePoolForChip: 加入随机池', { kind: 'chip', tab, path, chipId, display: label }, 'selected=', selSummary());
+      data.randomPools.push({ kind: 'chip', tab, chipId: id, display: disp, traverse: false });
+      zhuleLog('togglePoolForChip: 加入随机池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
       syncPlaceholders();
-      showToast('「' + label + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
+      showToast('「' + disp + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
     const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
 
     // ============ 占位符（右键 tab / chip 进池时同步出现在已选列表，类名即占位名；遍历/随机出词后填充该位置） ============
+    // 池的唯一键：tab:大类名 / list:池id / chip:大类名|分类节点id（分类身份即节点 id，已无路径概念）
     const poolKeyFor = (item) => item.kind === 'tab' ? 'tab:' + item.tab
       : item.kind === 'list' ? 'list:' + (item.poolId || '')
-      : 'chip:' + item.tab + '|' + (item.path || []).join('/');
+      : 'chip:' + item.tab + '|' + String(item.chipId || '');
     const placeholderFor = (item) => ({
       _ph: true,
       _poolKey: poolKeyFor(item),
       tab: item.tab,
       name: (item.traverse ? '∞ ' : '🎲 ') + (item.kind === 'tab' ? tabLabel(item.tab)
         : item.kind === 'list' ? (item.display || ('凝结' + (item.items || []).length + '项'))
-        : dispKey(item.display || (item.path || []).map(dispKey).join('/') || '')),
+        : (nodeNameOf(item.chipId) || item.display || String(item.chipId || ''))),
     });
-    // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:tab|逐层路径），用于「分类：抽中词条名」拼接
+    // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:大类名|节点id），用于「分类：抽中词条名」拼接
     const placeholderBaseName = (s) => {
       if (!s || !s._poolKey) return '';
       const k = s._poolKey;
@@ -3550,8 +3555,9 @@ const submitAddTab = async () => {
       }
       const bar = k.indexOf('|');
       if (bar < 0) return '';
-      const parts = k.slice(bar + 1).split('/');
-      return dispKey(parts[parts.length - 1]);
+      const rest = k.slice(bar + 1);
+      const n = bankNodes.value[rest];
+      return n && n.name ? n.name : '';    // 键里就是节点 id，直接读节点名
     };
     // 以随机池为基准同步占位符与随机结果标签：
     // 池在 → 占位符（黄色分类标签）恒保留；池移除 → 该池的占位符与结果标签一并删除；
@@ -3841,7 +3847,7 @@ const submitAddTab = async () => {
       if (!files.length && tabs.value.includes(item.tab)) {
         // 懒加载下该分类尚未加载：异步补拉数据，返回 null 让调用方提示稍候
         load(false, item.tab);
-        zhuleLog('poolCandidates: 懒加载补拉', item.kind, 'tab=', item.tab, 'path=', item.path || []);
+        zhuleLog('poolCandidates: 懒加载补拉', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || '');
         return null;
       }
       const alive = files.filter(f => !f.mute);
@@ -3852,7 +3858,7 @@ const submitAddTab = async () => {
       // chip 池候选 = 按节点 DB id 递归收集：该 chip 下所有后代卡片（chipIds 祖先链含本 id 的叶子）即为候选，
       // 与路径/前后缀匹配完全无关；词条改名、移动、换父级后 id 不变，候选恒稳定。
       const id = item.chipId;
-      if (!id) { zhuleLog('poolCandidates: chip池缺chipId（旧存档未迁移，请重新右键加入随机池）', 'tab=', item.tab, 'path=', item.path || []); return []; }
+      if (!id) { zhuleLog('poolCandidates: chip池缺 chipId（请重新右键该分类加入随机池）', 'tab=', item.tab); return []; }
       const out = alive.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(id));
       zhuleLog('poolCandidates: chip池', 'tab=', item.tab, 'chipId=', id, 'count=', out.length, 'total=', files.length, 'sampleChipIds=', files.slice(0, 3).map(f => f.chipIds));
       return out;
@@ -3944,7 +3950,7 @@ const submitAddTab = async () => {
       const picks = [];
       for (const item of pools) {
         const c = poolCandidates(item);
-        if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
+        if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || ''); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
         picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true, _vgKey: file._vgKey || '' });
@@ -3990,27 +3996,9 @@ const submitAddTab = async () => {
       return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey, _vgKey: e.file._vgKey || '' })));
     };
 
-    // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
-    // 该 chip 节点的 id，补上 chipId 后候选匹配一律走 id 递归，路径逻辑彻底废弃。
+    // 池身份已统一为分类节点 id（旧存档的路径在 restoreState 里就迁完了），
+    // 这里只保留一个「占位符对齐」出口，供抽词前统一调用。
     const normalizePoolIds = () => {
-      for (const it of data.randomPools) {
-        if (it.kind !== 'chip' || it.chipId) continue;
-        const files = bankData.value[it.tab] || [];
-        if (!files.length) continue;
-        const keyPath = it.path || [];
-        if (!keyPath.length) continue;
-        const dispPath = keyPath.map(dispKey);
-        let hit = null;
-        let hitLen = 0;
-        for (const v of [{ arr: keyPath, prop: 'chipKeys' }, { arr: dispPath, prop: 'chips' }, ...(dispPath.length > 1 ? [{ arr: dispPath.slice(1), prop: 'chips' }] : [])]) {
-          if (hit || !v.arr.length) continue;
-          const f = files.find(c => v.arr.every((s, i) => (c[v.prop] || [])[i] === s));
-          if (f) { hit = f; hitLen = v.arr.length; }
-        }
-        if (!hit) continue;
-        const ids = hit.chipIds || [];
-        if (ids.length >= hitLen) it.chipId = ids[hitLen - 1];
-      }
       syncPlaceholders();
     };
 
@@ -4025,7 +4013,7 @@ const submitAddTab = async () => {
         }
       }
       const missing = [...needTabs];
-      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : (p.path ? '/' + p.path.join('/') : '')))), 'missing=', missing);
+      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : ''))), 'missing=', missing);
       if (missing.length) {
         // 并行补拉缺失的 tab，补齐后再抽
         await Promise.all(missing.map(tb => load(false, tb)));
@@ -4255,7 +4243,7 @@ const submitAddTab = async () => {
           const info = traverseInfo || { rounds: 1, oneRound: runTotal };
           // 池名一律打出来：跑之前一眼看清哪个池被当成「穷举」、哪个被当成「随机」，
           // 避免"我以为角色是 ∞ 实际却是 🎲"的误判（角色随机出图就是这里错了）。
-          const poolName = (p) => (p.display || p.tab) + (p.kind === 'chip' && p.path && p.path.length ? '/' + p.path[p.path.length - 1] : '');
+          const poolName = (p) => p.display || p.tab;
           const tNames = traversePoolItems().map(poolName);
           const rNames = randomPoolItems().map(poolName);
           showToast('遍历模式｜穷举池 ∞：' + (tNames.join('、') || '（无）')
@@ -4349,39 +4337,37 @@ const submitAddTab = async () => {
       await saveTabOrder('tab 顺序已保存');
     };
 
-    let chipDrag = { depth: -1, name: null, overName: null };
-    const onChipDragStart = (e, depth, name) => {
-      chipDrag = { depth, name, overName: null };
-      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', name); }
+    let chipDrag = { depth: -1, id: null, overId: null };
+    const onChipDragStart = (e, depth, chip) => {
+      chipDrag = { depth, id: chip ? String(chip.id) : null, overId: null };
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', chip ? String(chip.id) : ''); }
     };
-    const onChipDragOver = (e, depth, name) => {
+    const onChipDragOver = (e, depth, chip) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
       if (chipDrag.depth !== depth) return;
-      chipDrag.overName = name;
+      chipDrag.overId = chip ? String(chip.id) : null;
     };
     const onChipDragEnd = () => {
-      const { depth, name, overName } = chipDrag;
-      if (depth >= 0 && name && overName && overName !== name) {
+      const { depth, id, overId } = chipDrag;
+      if (depth >= 0 && id && overId && overId !== id) {
         const line = chipLines.value[depth] || [];
-        const from = line.indexOf(name);
-        const to = line.indexOf(overName);
+        const from = line.findIndex(c => String(c.id) === id);
+        const to = line.findIndex(c => String(c.id) === overId);
         if (from >= 0 && to >= 0 && from !== to) {
           const ordered = [...line];
           const [moved] = ordered.splice(from, 1);
           ordered.splice(to, 0, moved);
-          // 按「层级+父节点id」隔离记录显示名顺序（本地视图），再把这层的新顺序直接落库
-          const parentPath = chipParentPath(depth);
-          const parentId = parentPath
-            ? (chipIdFor(data.activeTab, parentPath.split('/').length - 2, parentPath) || parentPath)
-            : (tabIds.value[data.activeTab] || '');
-          chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentId]: ordered.map(dispKey) };
-          const ids = childLayerIds(data.activeTab, depth, parentId, ordered);
+          // 按「层级+父节点id」隔离记录顺序，再把这层的 id 新顺序直接落库
+          const parentId = chipParentId(depth) || '';
+          const orderedIds = ordered.map(c => String(c.id));
+          chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentId]: orderedIds };
+          const ids = childLayerIds(data.activeTab, depth, parentId, orderedIds);
           if (ids.length) postSortOrder({ [String(parentId)]: ids }, '分类顺序已保存');
           else showToast('分类顺序已调整（未取到该层节点 id，仅本地生效）', 'warn', 2600);
         }
       }
-      chipDrag = { depth: -1, name: null, overName: null };
+      chipDrag = { depth: -1, id: null, overId: null };
     };
 
     // ============ 排序落库：拖拽/交换即存，不再有单独的「排序保存」按钮 ============
@@ -4422,35 +4408,16 @@ const submitAddTab = async () => {
     // 顶层 tab 顺序 -> id 序列：用 tab_ids 全量映射，不依赖各 tab 卡片是否已懒加载
     const tabLayerIds = () => tabs.value.map(t => tabIds.value[t]).filter(Boolean).map(String);
 
-    // 某父节点下的子分类新顺序 -> id 序列：从已加载卡片反推「显示名 -> DB id」，
-    // 按拖拽后的显示名顺序重排；本层里没出现在卡片中的 id 原样补在末尾（空分类等）
-    const childLayerIds = (tab, depth, parentId, orderedNames) => {
-      const cards = bankData.value[tab] || [];
-      const tid = tabIds.value[tab] || '';
-      const byDisp = new Map();
-      const seq = [];
-      const seen = new Set();
-      cards.forEach(card => {
-        const keys = Array.isArray(card.chipKeys) ? card.chipKeys : [];
-        const ids = Array.isArray(card.chipIds) ? card.chipIds : [];
-        if (!keys[depth] || !ids[depth]) return;
-        const pid = depth === 0 ? tid : ids[depth - 1];
-        if (!pid || String(pid) !== String(parentId)) return;
-        const cid = String(ids[depth]);
-        if (seen.has(cid)) return;
-        seen.add(cid);
-        seq.push(cid);
-        const disp = dispKey(keys[depth]);
-        if (!byDisp.has(disp)) byDisp.set(disp, []);
-        byDisp.get(disp).push(cid);
-      });
+    // 某父节点下的子分类新顺序 -> id 序列：直接采用拖拽后的节点 id 顺序，
+    // 本层里没出现在左栏的节点（空分类等）从节点索引补在末尾
+    const childLayerIds = (tab, depth, parentId, orderedIds) => {
       const out = [];
       const used = new Set();
-      (orderedNames || []).forEach(n => {
-        const disp = dispKey(n);
-        (byDisp.get(disp) || []).forEach(cid => { if (!used.has(cid)) { out.push(cid); used.add(cid); } });
+      (orderedIds || []).forEach(raw => {
+        const id = String(raw || '');
+        if (id && !used.has(id)) { out.push(id); used.add(id); }
       });
-      seq.forEach(cid => { if (!used.has(cid)) { out.push(cid); used.add(cid); } });
+      siblingIdsOf(parentId, used).forEach(id => { out.push(id); used.add(id); });
       return out;
     };
 
