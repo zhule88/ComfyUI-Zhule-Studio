@@ -42,7 +42,7 @@ export default {
                @dragstart="onTabDragStart($event, name)"
                @dragover="onTabDragOver($event, name)"
                @drop.prevent="onTabDrop"
-               @dragend="onTabDragEnd">{{ tabLabel(name) }}</div>
+               @dragend="onTabDragEnd">{{ tabLabel(name) }}<span v-if="isCatMuted('tab', name)" class="chip-mute">🔇</span></div>
         </div>
           <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
           <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
@@ -89,7 +89,7 @@ export default {
                    @dragstart="onChipDragStart($event, depth, name)"
                    @dragover="onChipDragOver($event, depth, name)"
                    @drop.prevent
-                   @dragend="onChipDragEnd">{{ dispKey(name) }}</div>
+                   @dragend="onChipDragEnd">{{ dispKey(name) }}<span v-if="isCatMuted('chip', name)" class="chip-mute">🔇</span></div>
             </div>
           </div>
           <div v-show="!chipsCollapsed" class="chips-resize" data-tip="拖拽调整高度"
@@ -259,6 +259,9 @@ export default {
         <div class="ctx-menu" :style="{ left: catMenu.x + 'px', top: catMenu.y + 'px' }">
           <div class="ctx-title">{{ catMenu.title }}</div>
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCtxEditCategory">✎ 编辑分类</button>
+          <button type="button" class="ctx-item" :class="{ on: catMenu.muted }" @pointerdown.stop @click="toggleCatMute">
+            {{ catMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（含其下全部词条）' }}
+          </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'all' }"
                   @pointerdown.stop @click="onCtxPool('all')">🚫 不进池</button>
@@ -1281,6 +1284,10 @@ export default {
     const muteBusy = ref(false);
     const toggleMute = async (file) => {
       if (!file || !file.id || muteBusy.value) return;
+      if (file.muteFromCat) {
+        showToast('该词条所属分类已被静音，请先在分类右键菜单里取消该分类的静音', 'warn', 3400);
+        return;
+      }
       const target = !file.mute;
       muteBusy.value = true;
       try {
@@ -1719,6 +1726,8 @@ export default {
         normalizeImgIndices(!!force && !tabName);
         // 选区 id 自愈：修掉历史存档里 id 为空的条目（否则出图 tag 不带角色）
         healSelectedIds();
+        // 分类静音向下继承（必须在数据赋值之后、渲染之前）
+        inheritCategoryMute();
         loaded.value = true;
         // 已选列表中若含尚未加载的 tab，补拉数据以恢复完整内容（fire-and-forget）
         const need = new Set();
@@ -2455,7 +2464,7 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all' });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all', muted: false });
 
     // 路径（带编号的原始目录名链路，与 chips key 同口径）→ 节点属性：
     // 空分类目录还没生成任何词条卡片时，也能靠它精确定位分类节点。
@@ -2491,11 +2500,77 @@ const submitAddTab = async () => {
       catMenu.depth = depth;
       catMenu.title = kind === 'tab' ? tabLabel(key) : String(key).split('/').slice(1).map(dispKey).join(' / ');
       catMenu.pool = poolKindOf(kind, key, depth);
+      catMenu.muted = !!((nodeOfCat(kind, key) || {}).mute);
       // 贴边翻转，避免菜单跑出窗口
       catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
     };
     const closeCatMenu = () => { catMenu.open = false; };
+
+    // ============ 分类静音（自动继承到其下全部词条） ============
+    // 语义：分类节点 mute=1 → 其下所有词条在本页等效静音：不进随机/填充/遍历等自动选词，
+    // 开启「隐藏静音」时整组从卡片区与分类标签里消失。只在内存里向下传播、不写库，
+    // 每次 load 重算，取消分类静音后自然恢复；词条自身的 mute 字段不受破坏。
+    const catMuteBusy = ref(false);
+    const isCatMuted = (kind, key) => !!((nodeOfCat(kind, key) || {}).mute);
+    const catMutePaths = computed(() => {
+      const set = new Set();
+      const all = bankNodes.value || {};
+      Object.keys(all).forEach(id => {
+        const n = all[id];
+        if (n && n.mute && n.path) set.add(n.path);
+      });
+      return set;
+    });
+    // 分类节点 path 与卡片 relPath 同为「tab目录名/一级/二级...」口径，
+    // 因此按前缀判定子孙关系即可：静音顶层 tab 也自然覆盖其下全部词条。
+    const mutedByCat = (rel) => {
+      const paths = catMutePaths.value;
+      if (!paths.size || !rel) return '';
+      for (const p of paths) {
+        if (rel === p || rel.indexOf(p + '/') === 0) return p;
+      }
+      return '';
+    };
+    const inheritCategoryMute = () => {
+      if (!catMutePaths.value.size) return;
+      Object.keys(bankData.value || {}).forEach(tab => {
+        const list = bankData.value[tab];
+        if (!Array.isArray(list)) return;
+        list.forEach(f => {
+          if (f.mute) return;   // 词条自身已静音，保留原状
+          const hit = mutedByCat(f.relPath);
+          if (hit) { f.mute = 1; f.muteFromCat = hit; }
+        });
+      });
+    };
+    const toggleCatMute = async () => {
+      const kind = catMenu.kind;
+      const key = catMenu.key;
+      const title = catMenu.title;
+      const n = nodeOfCat(kind, key);
+      closeCatMenu();
+      if (!n || !n.id) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
+      if (catMuteBusy.value) return;
+      const target = !n.mute;
+      catMuteBusy.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/mute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: n.id, mute: target }),
+        });
+        const json = await resp.json();
+        if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
+        showToast((json.mute ? '已静音该分类：' : '已取消静音：') + title
+          + (json.mute ? '（其下全部词条都不再参与自动选词，手动点选仍可用）' : ''), 'success', 3000);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        catMuteBusy.value = false;
+      }
+    };
 
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
@@ -2506,7 +2581,7 @@ const submitAddTab = async () => {
       closeCatMenu();
       cardMenu.file = file;
       cardMenu.title = file.name || '';
-      cardMenu.muted = !!file.mute;
+      cardMenu.muted = !!file.mute && !file.muteFromCat;
       cardMenu.hasImages = !!(file.images && file.images.length);
       // 该卡片是否在框选集合里 → 决定右键菜单是否多出「凝结为池」两项
       cardMenu.picked = isPicked(file);
@@ -3974,6 +4049,7 @@ const submitAddTab = async () => {
       // 分类右键菜单 / 编辑分类
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab,
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
+    isCatMuted, toggleCatMute,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
       onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef,

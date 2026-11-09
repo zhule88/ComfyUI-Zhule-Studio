@@ -351,7 +351,7 @@ def _cards_from_tree(tree):
 
 
 def _nodes_index(tree):
-    """全树节点属性索引：{id: {id, parentId, type, name, path, en, cn, neg, override}}。
+    """全树节点属性索引：{id: {id, parentId, type, name, path, mute, en, cn, neg, override}}。
 
     供前端「编辑分类」弹层直接按 chipId / 分类路径取当前属性（无需再发请求），
     也让继承展开可以在任意节点上按 parentId 向上递归。分类/词条一律返回，
@@ -377,6 +377,8 @@ def _nodes_index(tree):
                 "type": n.get("type") or "",
                 "name": name,
                 "path": cur,
+                # 分类静音位：前端分类右键菜单据此显示「静音/恢复」，并按 path 向下继承
+                "mute": 1 if n.get("mute") else 0,
                 "en": n.get("en") or "",
                 "cn": n.get("cn") or "",
                 "neg": n.get("neg") or "",
@@ -475,10 +477,12 @@ async def post_rename(request):
     return web.json_response({"ok": True})
 
 async def post_wordbank_mute(request):
-    """静音（mute）开关（DB 版）：按词条 id 写 prompt.mute。
+    """静音（mute）开关（DB 版）：按节点 id 写 prompt.mute，词条与分类通用。
 
     mute=1：该词条在遍历模式、随机模式、单次随机等所有「自动选词」流程中被跳过，
     但用户手动点选卡片照常可用；mute=0：恢复正常参与。
+    分类节点（type=tab/chip，含空层占位）同样可静音：静音分类即其下全部词条等效静音，
+    由前端按节点路径向下继承，库里只改该分类节点自身的 mute 位。
     与 isdel 硬删互不影响（硬删走 wordbank/delete，卡片不再返回）。
     入参 {id, mute?}：mute 缺省时按当前值取反（前端快捷开关用）。
     """
@@ -490,8 +494,8 @@ async def post_wordbank_mute(request):
     if not raw_id:
         return web.json_response({"error": "缺少 id"}, status=400)
     node = db.node_by_id(raw_id)
-    if node is None or node.get("type") != "entry":
-        return web.json_response({"error": "词条不存在"}, status=404)
+    if node is None:
+        return web.json_response({"error": "节点不存在"}, status=404)
     if "mute" in body:
         mute = bool(body.get("mute"))
     else:

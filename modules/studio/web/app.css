@@ -204,6 +204,8 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .chip:hover { background: var(--card-hover); color: var(--text); }
 .chip.active { background: var(--primary-dim); color: #fff; border-color: var(--primary); }
 .chip.clear { color: var(--text-3); font-style: italic; }
+/* 分类被静音后的角标（词库 tab 与小分类通用） */
+.chip-mute { margin-left: 3px; font-size: 10px; line-height: 1; opacity: .85; }
 .chip.in-pool { border-color: var(--purple); color: var(--purple); font-weight: 600;
   box-shadow: inset 3px 0 0 0 var(--purple); padding-left: 14px; }
 .chip.in-pool.active { background: var(--purple-dim); border-color: var(--purple); color: #fff; }
