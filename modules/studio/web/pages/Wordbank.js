@@ -271,6 +271,12 @@ export default {
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
           <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
                   @pointerdown.stop @click="onCtxAddTab">＋ 新建大类</button>
+          <div class="ctx-sep"></div>
+          <!-- 删除分类：连同其下所有子分类与词条（软删，可恢复）。大类 Tab 根不提供删除（后端保护，防止误删整库） -->
+          <button type="button" class="ctx-item danger" :class="{ disabled: catMenu.kind === 'tab' }"
+                  :disabled="catMenu.kind === 'tab'"
+                  :data-tip="catMenu.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'"
+                  @pointerdown.stop @click="onCtxDeleteCategory">🗑 删除该分类</button>
         </div>
       </div>
 
@@ -345,6 +351,8 @@ export default {
             </label>
           </div>
           <div class="actions">
+            <button class="btn danger" @click="askDeleteCatFromEdit" :disabled="catSaving || catEdit.kind === 'tab'"
+                    :data-tip="catEdit.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'">删除</button>
             <button class="btn" @click="closeCatEdit">取消</button>
             <button class="btn primary" @click="submitCatEdit" :disabled="catSaving">保存</button>
           </div>
@@ -2634,6 +2642,56 @@ const submitAddTab = async () => {
       }
     };
 
+    // ---- 删除分类：连同其下所有子分类与词条（后端 delete_subtree 软删，isdel=1 可恢复） ----
+    // 入口两处：分类右键菜单的「🗑 删除该分类」与编辑分类弹层的「删除」按钮。
+    // 大类 Tab 根不提供删除（后端 post_wordbank_delete 明确拒绝，防止误删整库）。
+    const deletingCat = ref(false);
+    const askDeleteCat = (kind, key) => {
+      const n = nodeOfCat(kind, key);
+      if (!n) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
+      if (kind === 'tab') { showToast('大类（Tab 根）不可删除', 'warn', 2600); return; }
+      const label = String(key).split('/').slice(1).map(dispKey).join(' / ');
+      del.ask({
+        title: '确认删除分类',
+        message: '是否确认删除该分类「' + label + '」？它下面的所有子分类与词条会一并删除'
+          + '（数据仍保留在库中，可后续恢复）。相关参考图会归档到 zhule_reference/_trash，可在需要时找回。',
+        name: label,
+        run: () => deleteCatNow(n.id, label),
+      });
+    };
+    const deleteCatNow = async (id, label) => {
+      if (deletingCat.value) return;
+      deletingCat.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: String(id) }),
+        });
+        const json = await resp.json();
+        if (!resp.ok || json.error) { showToast('删除失败：' + (json.error || resp.status), 'error'); return; }
+        // 编辑弹层若正停在被删分类上，直接关掉
+        if (catEdit.open && String(catEdit.id) === String(id)) catEdit.open = false;
+        // 被删分类可能正处在左侧选区链上 → 逐层清空选区，避免停留在已失效目录
+        const sel = getSelections();
+        for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+        pageIndex.value = 0;
+        showToast('已删除分类：' + label + '（共 ' + (json.deleted || 0) + ' 项）'
+          + (json.refDirsPurged ? '，参考图已归档 ' + json.refDirsPurged + ' 个目录' : ''), 'success', 3000);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        deletingCat.value = false;
+      }
+    };
+    const onCtxDeleteCategory = () => {
+      const m = { kind: catMenu.kind, key: catMenu.key };
+      closeCatMenu();
+      askDeleteCat(m.kind, m.key);
+    };
+    const askDeleteCatFromEdit = () => askDeleteCat(catEdit.kind, catEdit.key);
+
     // ---- 菜单里的新建入口 ----
     const onCtxEditCategory = () => {
       const m = { kind: catMenu.kind, key: catMenu.key };
@@ -3915,6 +3973,7 @@ const submitAddTab = async () => {
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab,
+    deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
       onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef,
