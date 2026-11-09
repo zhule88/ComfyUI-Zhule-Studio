@@ -305,6 +305,30 @@ const App = {
       } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
       window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { searchByPath: v } }));
     }
+    // 词库设置「隐藏版本切换框」：默认关闭。开启后版本组卡片右上角不再显示「‹ 1/3 ›」，
+    // 卡面与参考图翻页条不再抢位；版本切换改走卡片右键「版本胶片条」。存储与下发方式同上。
+    const wordbankHideVgNav = ref(readWordbankHideVgNav());
+    function readWordbankHideVgNav() {
+      try {
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null');
+        if (p && typeof p.hideVgNav === 'boolean') return p.hideVgNav;
+      } catch (e) { /* ignore */ }
+      try {
+        const raw = JSON.parse(localStorage.getItem('zhule_wordbank_state_v2') || 'null');
+        if (raw && raw.pref && typeof raw.pref.hideVgNav === 'boolean') return raw.pref.hideVgNav;
+      } catch (e) { /* ignore */ }
+      return false;
+    }
+    function toggleWordbankHideVgNav() {
+      const v = !wordbankHideVgNav.value;
+      wordbankHideVgNav.value = v;
+      try {
+        const p = JSON.parse(localStorage.getItem('zhule_wordbank_pref_v1') || 'null') || {};
+        p.hideVgNav = v;
+        localStorage.setItem('zhule_wordbank_pref_v1', JSON.stringify(p));
+      } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
+      window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { hideVgNav: v } }));
+    }
     // 数据库重建：仅设置页保留入口，正常使用不需要触发
     const rebuilding = ref(false);
     const rebuildNotice = ref('');
@@ -375,7 +399,8 @@ const App = {
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
-      wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath, rebuilding, rebuildNotice, rebuildDB,
+      wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
+      wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB,
       wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
   },
   computed: {
@@ -604,6 +629,14 @@ const App = {
                   </label>
                 </div>
                 <div class="settings-hint">关闭时搜索只匹配词条名；开启后词条名或所在分类路径（含 tab 与各级分类）任一命中即算命中。</div>
+                <div class="settings-row">
+                  <span class="settings-label">隐藏版本切换框</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="wordbankHideVgNav" @change="toggleWordbankHideVgNav">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">开启后版本组卡片不再显示右上角「‹ 序号/总数 ›」翻页框，避免与参考图翻页条挤在一起；版本切换改在卡片上右键，用版本胶片条切换。</div>
                 <div class="settings-row">
                   <span class="settings-label">去中文清理</span>
                   <button class="btn" :disabled="wordbankCleaningCn" @click="wordbankCleanCn">{{ wordbankCleaningCn ? '清理中…' : '开始清理' }}</button>

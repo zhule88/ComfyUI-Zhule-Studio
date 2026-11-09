@@ -321,6 +321,55 @@ def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None, p
             conn.close()
 
 
+VG_SEP = "#"
+
+
+def split_vg_name(name):
+    """拆分「组名#版本名」形式的版本条目名，返回 (前缀, 版本名)。
+
+    没有 # 时前缀为空、版本名即原名（普通词条与老数据零影响）。
+    早期脏数据把 # 当装饰写在名字开头（如「#倚栏远望」），这种前缀同样视为空。
+    """
+    s = str(name or "")
+    i = s.find(VG_SEP)
+    if i < 0:
+        return "", s
+    return s[:i].strip(), s[i + 1:].strip()
+
+
+def cascade_vg_prefix(anchor_id, old_name, new_name):
+    """版本组锚点改名后，把它名下所有版本条目的名字前缀整组刷新。
+
+    版本条目名固定写成「锚点名#版本名」：前半段由锚点强制管理、用户在界面上改不了，
+    因此锚点一改名就必须连前缀一起改，否则组名与版本前缀会脱节（搜索、导出、标签全都会错）。
+    只换前缀，版本名部分原样保留；刻意不刷 updated_at（改名不改条目的编辑时间）。
+    返回被刷新的条目数，无命中或失败返回 0。
+    """
+    old_pre = str(old_name or "").strip()
+    new_pre = str(new_name or "").strip()
+    if not old_pre or not new_pre or old_pre == new_pre:
+        return 0
+    like = old_pre + VG_SEP + "%"
+    # substr 从 1 开始；cut = 旧前缀长度 + 1，正好落在分隔符 # 上，
+    # 保留「#版本名」整段拼到新前缀后面（传 cut+1 会把 # 一起切掉，变成「居家默认」）
+    cut = len(old_pre) + len(VG_SEP)
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET name = ? || substr(name, ?) "
+                "WHERE parent_id = ? AND isdel = 0 AND name LIKE ?".format(TABLE),
+                (new_pre, cut, int(anchor_id), like),
+            )
+            conn.commit()
+            _bump()
+            return cur.rowcount or 0
+        except sqlite3.Error:
+            return 0
+        finally:
+            conn.close()
+
+
 def set_mute(node_id, mute):
     """设置词条静音（mute）标记（1=静音 / 0=取消静音），返回是否成功。
 

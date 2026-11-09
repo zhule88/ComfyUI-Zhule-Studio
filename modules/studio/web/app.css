@@ -286,19 +286,30 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card.zhule-source { opacity: 0.35; }
 .card.image { padding: 0; }
 .card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
-  background: #0b0e13; overflow: hidden; }
+  background: #0b0e13; overflow: hidden;
+  /* 卡内浮层（参考图翻页条 / 版本切换框）尺寸随卡片宽度等比缩放：
+     以卡片宽度为容器查询基准，按钮边长约 9.5% 卡宽，最小 18px（窄卡仍可点）、最大 30px（大图不失控）。 */
+  container-type: inline-size;
+  --zh-nav-btn: clamp(18px, 9.5cqw, 30px);
+  --zh-nav-gap: clamp(3px, 1.6cqw, 6px);
+  --zh-nav-pady: clamp(2px, 1.2cqw, 5px);
+  --zh-nav-padx: clamp(4px, 2.4cqw, 9px);
+  --zh-nav-num: clamp(9px, 4.4cqw, 13px); }
 /* 图片与占位底板绝对铺满容器（容器高度由 padding-top 撑起，不依赖 aspect-ratio 兼容性），
    避免图标作为流内元素占位挤占图片空间 */
 .card-thumb, .card-thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
   transition: transform 0.4s ease; }
 /* 悬停轻微推近，强化「图片是主角」的作品集手感 */
 .card.image:hover .card-thumb { transform: scale(1.045); }
-/* 词条徽标：排除词 / 负面提示词（缩略图左上角，纯提示不拦交互） */
-.thumb-badge { position: absolute; left: 6px; z-index: 3; padding: 1px 6px; border-radius: 6px;
+/* 词条徽标：排除词 / 负面提示词（缩略图左上角纵向堆叠，纯提示不拦交互） */
+.thumb-badges { position: absolute; left: 6px; top: 6px; z-index: 3;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  pointer-events: none; }
+.thumb-badge { padding: 1px 6px; border-radius: 6px;
   font-size: 10px; font-weight: 600; line-height: 16px; pointer-events: none;
   background: rgba(12,16,24,0.78); border: 1px solid rgba(255,255,255,0.22); color: #cfe0f5; }
-.thumb-badge.ov { top: 6px; color: #ffd27a; border-color: rgba(255,210,122,0.5); }
-.thumb-badge.ng { top: 28px; color: #9fd4ff; border-color: rgba(159,212,255,0.5); }
+.thumb-badge.ov { color: #ffd27a; border-color: rgba(255,210,122,0.5); }
+.thumb-badge.ng { color: #9fd4ff; border-color: rgba(159,212,255,0.5); }
 /* 缩略图序号：并入底部说明条，作为名字右侧的小徽标 */
 .thumb-count { flex-shrink: 0;
   padding: 1px 6px; border-radius: 9px; background: rgba(0,0,0,0.55);
@@ -328,14 +339,24 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   opacity: 0; }
 .card-thumb-wrap .thumb-del:hover { background: rgba(214,69,69,0.9); color: #fff; }
 .card-thumb-wrap:hover .thumb-enter, .card-thumb-wrap:hover .thumb-zoom, .card-thumb-wrap:hover .thumb-del { opacity: 1; }
-.thumb-nav { position: absolute; bottom: 42px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 14px;
+/* 参考图翻页条：尺寸随卡片宽度缩放（变量见 .card-thumb-wrap），底边距自动跟着按钮高度走 */
+.thumb-nav { position: absolute; bottom: 42px; bottom: calc(var(--zh-nav-btn) + 20px);
+  left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: var(--zh-nav-gap);
+  padding: 3px 6px; padding: var(--zh-nav-pady) var(--zh-nav-padx); border-radius: 999px;
   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 6;
   opacity: 0; transition: opacity 0.15s; }
 .card.image:hover .thumb-nav { opacity: 1; }
-.thumb-nav button { width: 22px; height: 22px; padding: 0; border: none;
+/* 参考图翻页条让位版：这张卡同时显示版本切换框（vg-nav 在更下一层）时整体上移一层，
+   与下方版本框保持固定间距；隐藏版本切换框后不挂本类，自动落回原位。 */
+.thumb-nav.thumb-nav-up { bottom: 74px;
+  /* 下方版本框高 = 按钮高×0.92 + 上下内边距，再留 8px 空隙，保证两者永不重叠 */
+  bottom: calc(var(--zh-nav-btn) * 1.92 + var(--zh-nav-pady) * 2 + 28px); }
+.thumb-nav button { width: 22px; height: 22px; width: var(--zh-nav-btn); height: var(--zh-nav-btn);
+  padding: 0; border: none;
   background: transparent; color: #cfd7e3; cursor: pointer; border-radius: 50%;
-  font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  font-size: 13px; font-size: calc(var(--zh-nav-btn) * 0.62); line-height: 1;
+  display: flex; align-items: center; justify-content: center; }
 .thumb-nav button:hover { background: rgba(255,255,255,0.15); color: #fff; }
 
 /* 底部压暗渐变 + 名字：名字叠在图上，独占整行宽度，不再被图标挤到省略 */
@@ -355,6 +376,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   /* 仅名字恢复指针事件，便于悬停看完整名（点击仍冒泡到卡片，不打断选中/拖拽） */
   pointer-events: auto;
+}
+/* 版本组卡片标题里的「组名#」前缀：常驻显示、淡色靠后，版本段仍是主视觉，
+   两段拼起来就是库里完整的基础 name，不必悬停也能看清属于哪个组 */
+.card-name .card-name-grp {
+  color: #b7cdea; font-weight: 500;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.9);
 }
 
 /* 全库搜索：卡片可能不属于当前 tab，把真实分类链路（tab / 父类 / 子类）作为
@@ -569,6 +596,19 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 }
 .edit-dialog textarea { resize: vertical; }
 .edit-dialog input[type="text"] { font-weight: 600; letter-spacing: 0.2px; }
+/* 名字输入框的只读前缀「组名#」：版本组的前缀由锚点强制管理，
+   用户只能改 # 后面那段，前缀做成灰底标签贴在输入框左侧，点不动也改不了 */
+.name-with-prefix { display: flex; align-items: stretch; }
+.name-with-prefix .name-prefix {
+  flex: 0 0 auto; max-width: 46%;
+  display: inline-flex; align-items: center; padding: 0 10px;
+  font-size: 12px; font-weight: 600; color: #9fc3ff; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  background: rgba(79, 143, 247, 0.13);
+  border: 1px solid rgba(79, 143, 247, 0.3); border-right: none;
+  border-radius: 9px 0 0 9px; cursor: not-allowed; user-select: none;
+}
+.name-with-prefix input[type="text"] { flex: 1 1 auto; min-width: 0; width: auto; border-radius: 0 9px 9px 0; }
 /* 英文提示词走等宽，方便数逗号分段 */
 .edit-dialog .field.en textarea { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 12.5px; line-height: 1.72; }
@@ -1990,34 +2030,36 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
    单条分类（_vgCount<=1）不下发任何类名，整块样式不参与，等于关闭。
    ========================================================================== */
 
-/* ---- A：卡片内版本翻页器（与 thumb-nav 同款胶囊，压在名字条上方） ---- */
+/* ---- A：卡片内版本翻页器（与 thumb-nav 同款胶囊，压在名字条上方） ----
+   分层：版本切换框在下（最下一层），参考图翻页条让它一层（.thumb-nav.thumb-nav-up）。
+   隐藏版本切换框时参考图条自动落回最下。尺寸同样随卡片宽度等比缩放。 */
 .card.image .vg-nav {
-  position: absolute; left: 6px; right: 6px; bottom: 62px; z-index: 7;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 1px 4px; border-radius: 20px;
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 42px; bottom: calc(var(--zh-nav-btn) + 20px); z-index: 7;
+  display: flex; align-items: center; justify-content: center; gap: var(--zh-nav-gap);
+  padding: 1px 5px; padding: var(--zh-nav-pady) var(--zh-nav-padx); border-radius: 999px;
+  max-width: calc(100% - 16px);
   background: rgba(12, 18, 26, 0.82); border: 1px solid rgba(159, 208, 255, 0.26);
   backdrop-filter: blur(3px);
-  opacity: 0.55; transition: opacity 0.15s;
+  opacity: 0; transition: opacity 0.15s;
 }
 .card.image:hover .vg-nav { opacity: 1; }
 .vg-nav button {
-  width: 22px; height: 20px; padding: 0; border: none; border-radius: 50%;
+  width: 22px; height: 20px;
+  width: var(--zh-nav-btn); height: calc(var(--zh-nav-btn) * 0.92);
+  padding: 0; border: none; border-radius: 50%;
   background: transparent; color: #b9c8dc; cursor: pointer;
-  font-size: 13px; line-height: 1;
+  font-size: 13px; font-size: calc(var(--zh-nav-btn) * 0.6); line-height: 1;
   display: flex; align-items: center; justify-content: center;
 }
 .vg-nav button:hover { background: var(--primary-dim); color: #fff; }
 .vg-nav .vg-num {
-  font-size: 10px; color: var(--accent); letter-spacing: 0.5px;
+  font-size: 10px; font-size: var(--zh-nav-num); color: var(--accent); letter-spacing: 0.5px;
   pointer-events: none; white-space: nowrap;
+  display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden;
 }
-/* 翻页器里的「＋」：在版本组里就地新建一版，不用回左侧分类树 */
-.vg-nav button.vg-add {
-  margin-left: 3px; padding-left: 4px;
-  border-left: 1px solid rgba(159, 208, 255, 0.22); border-radius: 0 50% 50% 0;
-  font-size: 12px; font-weight: 700;
-}
-.vg-nav button.vg-add:hover { background: var(--primary-dim); color: #fff; }
+/* 组名与「＋新建版本」已从卡面移除：组名/新建版本/胶片条统一走卡片右键菜单，
+   卡面只保留 ‹ 序号/总数 › 这一个极简翻页胶囊，避免缩略图被工具栏挤掉。 */
 
 /* ---- C：已选标签上的三态徽标 ---- */
 .tag .vg-tag {
