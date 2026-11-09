@@ -170,6 +170,31 @@ const OutNode = {
   `,
 };
 
+// 图库卡片右键菜单（左右布局 / 上下布局共用同一份模板与状态）。
+// 卡片右侧竖排的选择/放大/删除图标在此完整复制一份，另加「进入详情」；
+// 开启通用设置「隐藏卡片上的图标」后，这里成为唯一入口（与词库卡片右键菜单同构）。
+export const CardCtxMenu = {
+  name: 'CardCtxMenu',
+  props: {
+    // { open, x, y, title, picked, selCount }
+    state: { type: Object, required: true },
+  },
+  emits: ['close', 'sel', 'zoom', 'detail', 'del', 'batch-del'],
+  template: `
+    <div v-if="state.open" class="ctx-layer" @pointerdown.self="emit('close')" @contextmenu.prevent.self="emit('close')">
+      <div class="ctx-menu" :style="{ left: state.x + 'px', top: state.y + 'px' }" @pointerdown.stop>
+        <div class="ctx-title">{{ state.title }}</div>
+        <button type="button" class="ctx-item" @click="emit('sel')">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
+        <button type="button" class="ctx-item" @click="emit('zoom')">🔍 放大预览</button>
+        <button type="button" class="ctx-item" @click="emit('detail')">→ 进入详情</button>
+        <div class="ctx-sep"></div>
+        <button type="button" class="ctx-item danger" @click="emit('del')">🗑 删除这张图</button>
+        <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="emit('batch-del')">🗑 删除选中的 {{ state.selCount }} 张</button>
+      </div>
+    </div>
+  `,
+};
+
 // 详情自定义标签层级树节点（递归）：custom_tag 按 parent_id 层级还原展示。
 // 叶子/带标签节点渲染为可交互 chip（左键编辑词条、右键删除，删除确认遵循 pref.common.noDeleteConfirm）；
 // 纯容器节点（仅路径中的中间层级）渲染分组标题，点击展开/收起。
@@ -868,6 +893,32 @@ export function useGalleryCommon(opts = {}) {
     applyFilter();
   }
   const detail = ref(null);
+
+  // ── 通用设置「隐藏卡片上的图标」：图库与词库读同一份 zhule_ui_pref.common ──────────
+  // 开启后卡片右侧竖排的 选择/放大/删除 图标整体隐藏，全部操作改走右键菜单（与词库卡片同构）
+  const hideCardIcons = computed(() => !!(pref.common && pref.common.hideCardIcons === true));
+
+  // ── 卡片右键菜单：左右布局与上下布局共用同一份状态 ───────────────────────────────
+  const cardCtx = reactive({ open: false, x: 0, y: 0, item: null, title: '', picked: false, selCount: 0 });
+  const closeCardCtx = () => { cardCtx.open = false; };
+  const openCardCtx = (evt, it) => {
+    if (!it) return;
+    cardCtx.item = it;
+    cardCtx.title = it.name || '';
+    cardCtx.picked = isSel(it.key);
+    cardCtx.selCount = selected.size;
+    // 贴边翻转，避免菜单跑出窗口（宽约 200 / 高约 250）
+    cardCtx.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
+    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 250));
+    cardCtx.open = true;
+  };
+  // 菜单项统一「先收菜单再执行」，避免遮罩层挡住后续弹窗与框选
+  const onCtxSel = () => { const it = cardCtx.item; closeCardCtx(); if (it) toggleSel(it.key); };
+  const onCtxZoom = () => { const it = cardCtx.item; closeCardCtx(); if (it) zoomView(imgUrl(it.key, it.mtime), it); };
+  const onCtxDetail = () => { const it = cardCtx.item; closeCardCtx(); if (it) openDetail(it); };
+  const onCtxDel = () => { const it = cardCtx.item; closeCardCtx(); if (it) askDelete(it); };
+  const onCtxBatchDel = () => { closeCardCtx(); askBatchDelete(); };
+
   // 详情弹层导航：命中池（当前筛选条件下的全部图）key 列表，用于图片两侧的上一张/下一张/骰子随机
   const hitIds = ref([]);
   const hitTotal = ref(0);
@@ -2034,6 +2085,8 @@ export function useGalleryCommon(opts = {}) {
     openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
+    hideCardIcons, cardCtx, openCardCtx, closeCardCtx,
+    onCtxSel, onCtxZoom, onCtxDetail, onCtxDel, onCtxBatchDel,
     cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

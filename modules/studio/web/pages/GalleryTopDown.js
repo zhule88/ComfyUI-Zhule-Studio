@@ -1,10 +1,10 @@
 import { ref, reactive, nextTick } from 'vue';
-import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, tagKey } from './galleryCommon.js';
+import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, CardCtxMenu, tagKey } from './galleryCommon.js';
 import { DeleteDialog } from './deleteConfirm.js';
 
 export default {
   name: 'GalleryTopDown',
-  components: { TagTreePanel, OutNode, DetailTagNode, DeleteDialog },
+  components: { TagTreePanel, OutNode, DetailTagNode, CardCtxMenu, DeleteDialog },
   template: `
     <div class="page active gallery-page gallery-td-page">
     <div class="zhg-toolbar">
@@ -111,11 +111,12 @@ export default {
     <div class="zhg-td-main" ref="mainEl">
       <div class="zhg-grid" ref="gridEl" :style="gridStyle" v-if="items.length" @pointerdown="onPointerDown">
         <div class="zhg-card" v-for="it in items" :key="it.key" :data-key="it.key"
-             :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)">
+             :class="{sel: isSel(it.key)}" @click="onCardClick(it, $event)"
+             @contextmenu.prevent="openCardCtx($event, it)">
           <div class="zhg-thumb-wrap" :title="cardTip(it)">
             <img class="zhg-thumb" draggable="false" loading="lazy" :src="thumbUrl(it.key, it.mtime)" :alt="it.name">
-            <!-- 右侧竖排操作：选择 / 放大 / 删除（悬停显现，永不挤压名字） -->
-            <div class="zhg-card-actions">
+            <!-- 右侧竖排操作：选择 / 放大 / 删除（悬停显现，永不挤压名字）；通用设置「隐藏卡片上的图标」开启后整组隐藏，改走右键菜单 -->
+            <div class="zhg-card-actions" v-if="!hideCardIcons">
               <button class="zhg-sel-toggle" :class="{on: isSel(it.key)}"
                       :data-tip="isSel(it.key) ? '取消选中' : '选中这张图（也可 Ctrl+点击 / 拖动框选）'"
                       @click.stop="toggleSel(it.key)">
@@ -265,6 +266,11 @@ export default {
     </div>
 
     <!-- 全屏查看：由公共模块 modules/common/zhule_fullviewer.js 命令式接管（非响应式） -->
+
+    <!-- 图库卡片右键菜单：卡片图标操作 + 进入详情的统一入口（隐藏图标后为唯一入口） -->
+    <card-ctx-menu :state="cardCtx" @close="closeCardCtx"
+                   @sel="onCtxSel" @zoom="onCtxZoom" @detail="onCtxDetail"
+                   @del="onCtxDel" @batch-del="onCtxBatchDel"></card-ctx-menu>
 
     <!-- 全站唯一删除确认弹框：图片/批量/标签/词条共用，设置里开启「删除免确认」则不弹 -->
     <delete-dialog :state="del.state" @confirm="del.confirm" @cancel="del.cancel"></delete-dialog>
