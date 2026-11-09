@@ -125,6 +125,8 @@ export default {
                   <button class="vg-prev" @click.stop="vgStep(file, -1)">‹</button>
                   <span class="vg-num">{{ file._vgIdx + 1 }}/{{ file._vgCount }}</span>
                   <button class="vg-next" @click.stop="vgStep(file, 1)">›</button>
+                  <button class="vg-add" @click.stop="openNewVersionFor(file)"
+                          data-tip="在版本组里新建一个版本（与组内合并成同一张卡）">＋</button>
                 </div>
                 <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
                 <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
@@ -316,7 +318,12 @@ export default {
                   @pointerdown.stop @click="onCardVgStrip">
             🎞 版本胶片条（{{ cardMenu.vgCount }} 版）
           </button>
-          <div class="ctx-sep" v-if="cardMenu.vgCount > 1"></div>
+          <!-- 版本组卡片：就地新建一个版本（落在同一分类下，自动成为组里的最新一版） -->
+          <button type="button" class="ctx-item vg-add-entry" v-if="cardMenu.isVg"
+                  @pointerdown.stop @click="onCardNewVersion">
+            ＋ 新建版本（并入本组）
+          </button>
+          <div class="ctx-sep" v-if="cardMenu.vgCount > 1 || cardMenu.isVg"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
           <template v-if="cardMenu.picked">
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
@@ -330,6 +337,11 @@ export default {
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
             {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
+          </button>
+          <!-- 普通分类卡片：一键把该分类标为版本组（不用再跑到左侧分类树上右键） -->
+          <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg"
+                  @pointerdown.stop @click="onCardMarkVg">
+            🗂 标为版本组（本分类多条合并一卡）
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
@@ -453,7 +465,10 @@ export default {
       <!-- 新增词条弹窗 -->
       <div v-if="addCardOpen" class="edit-overlay" @click.self="closeAddCard">
         <div class="edit-dialog">
-          <div class="title">增加词条</div>
+          <div class="title">{{ addCardLock ? '新建版本' : '增加词条' }}</div>
+          <div class="hint" v-if="addCardLock" style="margin:-4px 0 10px">
+            将并入版本组：<b>{{ addCardLock.label }}</b>（与组内其它词条合并成 1 张卡，可翻页切换）
+          </div>
           <div class="field">
             <label>名字</label>
             <input ref="addCardInput" type="text" v-model="addCardName"
@@ -1284,7 +1299,12 @@ export default {
       }
     };
 
-    const openAddCard = () => {
+    // 新建版本模式：{ parentId, label } —— parentId 锁死为版本组所在分类，忽略左侧选区
+    const addCardLock = ref(null);
+    const openAddCard = (lock) => {
+      addCardLock.value = (lock && lock.parentId)
+        ? { parentId: String(lock.parentId), label: lock.label || '' }
+        : null;
       addCardName.value = '';
       addCardContent.value = '';
       addCardContentCn.value = '';
@@ -1293,6 +1313,7 @@ export default {
     };
     const closeAddCard = () => {
       addCardOpen.value = false;
+      addCardLock.value = null;
       addCardName.value = '';
       addCardContent.value = '';
       addCardContentCn.value = '';
@@ -1307,9 +1328,11 @@ export default {
         for (let i = 0; i < maxDepth.value; i++) {
           if (Array.isArray(sel[i]) && sel[i].length) parentKey = sel[i][0];
         }
-        const parentId = parentKey
-          ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
-          : (tabIds.value[data.activeTab] || '');
+        const parentId = addCardLock.value
+          ? addCardLock.value.parentId
+          : (parentKey
+            ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
+            : (tabIds.value[data.activeTab] || ''));
         const body = { parentId, name };
         if (addCardContent.value) body.content = addCardContent.value;
         if (!addCardIsTxt.value && addCardContentCn.value) body.content_cn = addCardContentCn.value;
@@ -1320,12 +1343,21 @@ export default {
         });
         const json = await resp.json();
         if (!resp.ok) { showToast(json.error || '创建失败', 'error'); return; }
+        const lock = addCardLock.value;
         addCardOpen.value = false;
         addCardName.value = '';
         addCardContent.value = '';
         addCardContentCn.value = '';
-        showToast('词条已创建', 'success');
+        showToast(lock ? '版本已创建（已并入该版本组）' : '词条已创建', 'success');
+        addCardLock.value = null;
         await load(true);
+        // 新建的版本自动翻到它，免得用户再一页页找
+        if (lock) {
+          const vkey = String(data.activeTab || '') + '|' + lock.parentId;
+          const g = vgGroupMap.value[vkey] || [];
+          const vi = g.findIndex(c => String(c.id) === String(json.id));
+          if (vi >= 0) vgStateEnsure(vkey).idx = vi;
+        }
       } finally {
         addingCard.value = false;
       }
@@ -2839,7 +2871,7 @@ const submitAddTab = async () => {
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
     // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
-    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0 });
+    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0, isVg: false, canVg: false });
     const openCardMenu = (evt, file) => {
       if (!file) return;
       closeCatMenu();
@@ -2852,6 +2884,8 @@ const submitAddTab = async () => {
       cardMenu.pickCount = pickSel.size;
       // 版本组卡片才有「版本胶片条」入口；单条/非版本组恒为 0，菜单项自动隐藏
       cardMenu.vgCount = (file._vgVersions && file._vgVersions.length) || 0;
+      cardMenu.isVg = !!file._vgKey;
+      cardMenu.canVg = !!cardCatIdOf(file);
       cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
       cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 330));
       cardMenu.open = true;
@@ -2938,6 +2972,52 @@ const submitAddTab = async () => {
         if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
         showToast((json.vg ? '已标为版本组：' : '已取消版本组：') + title
           + (json.vg ? '（其下词条合并成 1 张卡，卡内翻页换版本）' : '（拆回每张词条一张卡）'), 'success', 3200);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        vgBusy.value = false;
+      }
+    };
+
+    // ---- 从卡片直接管版本：新建版本 / 一键标为版本组（不必再回左侧分类树右键） ----
+    // 卡片所属的最末级分类 id（必须真是分类节点，Tab 根与散卡返回空）
+    const cardCatIdOf = (card) => {
+      const ids = Array.isArray(card && card.chipIds) ? card.chipIds : [];
+      if (!ids.length) return '';
+      const id = ids[ids.length - 1];
+      const n = bankNodes.value[id];
+      if (!n || String(n.type || '') !== 'category') return '';
+      return String(id);
+    };
+    const openNewVersionFor = (f) => {
+      if (!f) return;
+      const catId = cardCatIdOf(f);
+      if (!catId) { showToast('这张卡不在分类下，先把词条放进分类再建版本', 'warn'); return; }
+      openAddCard({ parentId: catId, label: vgGroupTitle(f) });
+    };
+    const onCardNewVersion = () => {
+      const f = cardMenu.file;
+      closeCardMenu();
+      openNewVersionFor(f);
+    };
+    const onCardMarkVg = async () => {
+      const f = cardMenu.file;
+      closeCardMenu();
+      if (!f) return;
+      const catId = cardCatIdOf(f);
+      if (!catId) { showToast('这张卡不在分类下，无法标为版本组', 'warn'); return; }
+      if (vgBusy.value) return;
+      vgBusy.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/vg', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: catId, vg: true }),
+        });
+        const json = await resp.json();
+        if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
+        showToast('已标为版本组：' + vgGroupTitle(f) + '（本分类词条合并成 1 张卡，卡内翻页换版本）', 'success', 3400);
         await load(true);
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
@@ -4394,7 +4474,8 @@ const submitAddTab = async () => {
       canAddChip, chipParentLabel, addCardIsTxt,
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
-      addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard,
+      addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard, addCardLock,
+      onCardNewVersion, onCardMarkVg, openNewVersionFor,
       toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,

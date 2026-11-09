@@ -2011,6 +2011,13 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   font-size: 10px; color: var(--accent); letter-spacing: 0.5px;
   pointer-events: none; white-space: nowrap;
 }
+/* 翻页器里的「＋」：在版本组里就地新建一版，不用回左侧分类树 */
+.vg-nav button.vg-add {
+  margin-left: 3px; padding-left: 4px;
+  border-left: 1px solid rgba(159, 208, 255, 0.22); border-radius: 0 50% 50% 0;
+  font-size: 12px; font-weight: 700;
+}
+.vg-nav button.vg-add:hover { background: var(--primary-dim); color: #fff; }
 
 /* ---- C：已选标签上的三态徽标 ---- */
 .tag .vg-tag {
