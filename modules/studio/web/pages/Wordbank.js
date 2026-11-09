@@ -3561,8 +3561,22 @@ const submitAddTab = async () => {
         runNextInQueue();
         return;
       }
-      // 普通模式：占位符已填充（绑定抽中词条）时参与运行；未抽取的占位符跳过
+      // 普通模式：占位符已填充（绑定抽中词条）时参与运行；未抽取的占位符跳过。
+      // 但「只加了随机池、没点骰子」时整组会被静默跳过（看起来像随机池被忽略），
+      // 因此这里先自动补抽一次（等价于点一下 🎲）；已抽定的占位符保持不动，
+      // 想固定某个结果仍可先点骰子再运行。
       healSelectedIds();
+      if (data.randomPools.filter(it => !it.traverse).length
+          && data.selected.some(s => s._ph && !s._filled)) {
+        const ok = await ensurePoolData();
+        const autoPicked = ok ? pickFromEachPool() : null;
+        if (autoPicked) updateRandomResults(autoPicked);
+        else {
+          const dead = data.randomPools.filter(it => !it.traverse && !(poolCandidates(it) || []).length);
+          showToast('随机池 🎲 有 ' + dead.length + ' 个池抽不出词条（该分类下暂无词条或已全部静音），已跳过：'
+            + dead.map(it => it.display || it.tab).join('、'), 'warn', 4600);
+        }
+      }
       const readyItems = data.selected.filter(s => !s._ph || s._filled);
       if (!readyItems.length) return showToast('还没选任何提示词', 'warn');
       if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
