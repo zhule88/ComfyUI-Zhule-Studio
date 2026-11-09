@@ -96,7 +96,7 @@ def fetch_tree():
         conn = connect()
         try:
             rows = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, provide, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, provide, vg, updated_at "
                 "FROM {0} WHERE isdel=0 ORDER BY id".format(TABLE)
             ).fetchall()
         finally:
@@ -119,6 +119,8 @@ def fetch_tree():
                 "override": r["override"] or "",
                 "mute": r["mute"] or 0,
                 "provide": r["provide"] or 0,
+                # vg=1：该分类下的多条词条是同一提示词的多版本，前端合并成 1 张卡
+                "vg": r["vg"] or 0,
             }
             if r["sort_order"]:
                 node["sortOrder"] = r["sort_order"]
@@ -178,7 +180,7 @@ def node_by_id(node_id):
         conn = connect()
         try:
             r = conn.execute(
-                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, updated_at "
+                "SELECT id, parent_id, type, name, en, cn, neg, override, sort_order, mute, vg, updated_at "
                 "FROM {0} WHERE id=? AND isdel=0".format(TABLE),
                 (node_id,),
             ).fetchone()
@@ -194,6 +196,7 @@ def node_by_id(node_id):
                 "neg": r["neg"] or "",
                 "override": r["override"] or "",
                 "mute": r["mute"] or 0,
+                "vg": r["vg"] or 0,
                 "sortOrder": r["sort_order"],
                 "updatedAt": r["updated_at"] or 0,
             }
@@ -268,12 +271,13 @@ def insert_node(parent_id, type_, name, en="", cn="", so=None):
             conn.close()
 
 
-def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None, provide=None):
-    """编辑节点：可选更新 name/en/cn/neg/override/provide，并刷新 updated_at。
+def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None, provide=None, vg=None):
+    """编辑节点：可选更新 name/en/cn/neg/override/provide/vg，并刷新 updated_at。
 
     neg：该词条附带的负面提示词（选中时汇总进最终负面提示词）。
     override：排除词（命中其它词条产出的提示词段即删除该段，不含自身）。
     provide：0/1，该分类的 en/cn/neg/override 是否沿 parent_id 下传给后代（默认 1）。
+    vg：0/1，该分类是否为「版本组」（1 = 分类下多条词条合并成 1 张多版本卡）。
     """
     with _lock:
         conn = connect()
@@ -297,6 +301,9 @@ def update_node(node_id, name=None, en=None, cn=None, neg=None, override=None, p
             if provide is not None:
                 sets.append("provide=?")
                 vals.append(1 if provide else 0)
+            if vg is not None:
+                sets.append("vg=?")
+                vals.append(1 if vg else 0)
             if not sets:
                 return False
             sets.append("updated_at=?")
@@ -331,6 +338,34 @@ def set_mute(node_id, mute):
             cur = conn.execute(
                 "UPDATE {0} SET mute=? WHERE id=? AND isdel=0".format(TABLE),
                 (1 if mute else 0, node_id),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return False
+            _bump()
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+
+
+def set_vg(node_id, vg):
+    """设置分类的「版本组」标记（vg）（1=同分类多词条合并为多版本卡 / 0=拆回独立卡片）。
+
+    只写 vg 位、刻意不刷新 updated_at：标版本组不该改动该分类的编辑时间，
+    否则卡片按时间排序时会突然跳到最前/最后。
+    """
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET vg=? WHERE id=? AND isdel=0".format(TABLE),
+                (1 if vg else 0, node_id),
             )
             conn.commit()
             if not cur.rowcount:
@@ -643,6 +678,11 @@ def _ensure_prompt_schema(conn):
     # 由前端选中时临时拼接（不落库、不改子级 content）；默认 1 = 填了就往下传。
     # 只决定「自己给不给」，不阻断祖先内容穿过本层。
     _ensure_column(conn, TABLE, "provide", "INTEGER NOT NULL DEFAULT 1")
+    # 版本组（vg）列：1 = 该分类下的多条词条视为同一提示词的多个版本，
+    # 前端把整个分类合并成 1 张卡（卡内翻页 / 右键胶片条 / 标签随机·遍历三种用法共存）；
+    # 0 = 保持原样，同分类下每条词条各占一张卡。
+    # 只挂在分类节点（type=tab/chip）上，词条节点该列恒为 0。
+    _ensure_column(conn, TABLE, "vg", "INTEGER NOT NULL DEFAULT 0")
     # 一次性升级：provide 早期默认 0（填了也不下传），改成默认下传后把存量行统一补成 1。
     # 用 PRAGMA user_version 打一次标记，之后用户手动关掉的不会被反复覆盖。
     try:

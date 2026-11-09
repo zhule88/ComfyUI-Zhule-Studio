@@ -22,6 +22,7 @@ def register_routes():
     routes.post("/zhule_studio/api/rename")(api.post_rename)
     routes.post("/zhule_studio/api/wordbank/delete")(api.post_wordbank_delete)
     routes.post("/zhule_studio/api/wordbank/mute")(api.post_wordbank_mute)
+    routes.post("/zhule_studio/api/wordbank/vg")(api.post_wordbank_vg)
     routes.post("/zhule_studio/api/wordbank/tab")(api.post_wordbank_tab_create)
     routes.post("/zhule_studio/api/wordbank/chip")(api.post_wordbank_chip_create)
     routes.post("/zhule_studio/api/wordbank/card")(api.post_wordbank_card_create)

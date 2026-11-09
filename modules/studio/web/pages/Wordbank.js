@@ -118,6 +118,14 @@ export default {
                  @pointerdown="onCardPointerDown($event, file)"
                  @contextmenu.prevent="openCardMenu($event, file)">
               <div class="card-thumb-wrap">
+                <!-- 版本组角标：该分类被标为「版本组」时，整组只出这一张卡，卡内直接翻版本。
+                     单条分类（_vgCount<=1）什么角标都不出现，退化成原来的普通卡片。 -->
+                <div class="vg-nav" v-if="file._vgCount > 1" @pointerdown.stop
+                     :data-tip="'同一提示词的 ' + file._vgCount + ' 个版本（' + (file._vgIdx + 1) + '/' + file._vgCount + '）· 右键可呼出胶片条'">
+                  <button class="vg-prev" @click.stop="vgStep(file, -1)">‹</button>
+                  <span class="vg-num">{{ file._vgIdx + 1 }}/{{ file._vgCount }}</span>
+                  <button class="vg-next" @click.stop="vgStep(file, 1)">›</button>
+                </div>
                 <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
                 <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
                 <img v-if="file.images && file.images.length"
@@ -196,7 +204,7 @@ export default {
                     :class="{active: p === pageIndex}" :disabled="p < 0"
                     @click="goPage(p)">{{ p < 0 ? '…' : p + 1 }}</button>
             <button class="btn" :disabled="pageIndex >= pageCount - 1" @click="goNextPage">下一页 ›</button>
-            <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ listFiles.length }} 张</span>
+            <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ viewCards.length }} 张</span>
           </div>
         </div>
         </div>
@@ -220,6 +228,13 @@ export default {
                    @pointerdown.stop="onTagPointerDown($event, idx)">
                 <span>{{ item.name }}</span>
                 <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
+                <!-- 版本组标签徽标：🔒 锁当前版本 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
+                <span v-if="vgStateOf(item)"
+                      class="vg-tag"
+                      :class="'mode-' + vgStateOf(item).mode"
+                      :title="vgTagTip(item)"
+                      @pointerdown.stop
+                      @click.stop="vgCycleMode(item)">{{ vgTagLabel(item) }}</span>
                 <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
               </div>
             </div>
@@ -270,6 +285,15 @@ export default {
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
                   @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
           <div class="ctx-sep"></div>
+          <!-- 版本组开关：标上后该分类下的多条词条合并成 1 张卡（卡内翻页），
+               不标则每条词条各占一张卡。只对非 Tab 分类开放，避免把整个大类压成一张卡。 -->
+          <button type="button" class="ctx-item" :class="{ on: catMenu.vg }"
+                  v-if="catMenu.kind !== 'tab'"
+                  :data-tip="catMenu.vg ? '拆回独立卡片：分类下每条词条各占一张卡' : '合并为一张卡：分类下多条词条当作同一提示词的多个版本'"
+                  @pointerdown.stop @click="onCtxToggleVg">
+            {{ catMenu.vg ? '🗂 取消版本组（拆回独立卡片）' : '🗂 标为版本组（多条合并一卡）' }}
+          </button>
+          <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
           <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
@@ -287,6 +311,12 @@ export default {
       <div v-if="cardMenu.open" class="ctx-layer" @pointerdown.self="closeCardMenu" @contextmenu.prevent.self="closeCardMenu">
         <div class="ctx-menu" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px' }">
           <div class="ctx-title">{{ cardMenu.title }}</div>
+          <!-- 版本组卡片：右键即可把该卡的全部版本摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
+          <button type="button" class="ctx-item vg-strip-entry" v-if="cardMenu.vgCount > 1"
+                  @pointerdown.stop @click="onCardVgStrip">
+            🎞 版本胶片条（{{ cardMenu.vgCount }} 版）
+          </button>
+          <div class="ctx-sep" v-if="cardMenu.vgCount > 1"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
           <template v-if="cardMenu.picked">
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
@@ -308,6 +338,30 @@ export default {
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
           <button type="button" class="ctx-item" v-if="cardMenu.hasImages"
                   @pointerdown.stop @click="onCardDeleteRef">🗑 删除当前参考图</button>
+        </div>
+      </div>
+
+      <!-- 版本胶片条（方案 B）：从卡片右键菜单呼出，把该版本组全部版本横向摊开，
+           点一帧 = 把卡片切到该版本（与卡内 ‹ › 翻页改的是同一个游标，两处始终同步）。 -->
+      <div v-if="vgStrip.open" class="vg-strip-layer" @pointerdown.self="closeVgStrip">
+        <div class="vg-strip">
+          <div class="vg-strip-head">
+            <span class="vg-strip-title">{{ vgStrip.title }}</span>
+            <span class="vg-strip-count">{{ vgStrip.idx + 1 }} / {{ vgStrip.versions.length }}</span>
+            <button type="button" class="vg-strip-close" @click="closeVgStrip">×</button>
+          </div>
+          <div class="vg-strip-body">
+            <div v-for="(v, i) in vgStrip.versions" :key="v.relPath + '#' + i"
+                 class="vg-frame" :class="{ active: i === vgStrip.idx, muted: v.mute }"
+                 :data-tip="v.name" @click="pickVgStrip(i)">
+              <div class="vg-frame-img">
+                <img v-if="v.images && v.images.length" :src="imageUrl(v.images[0])" :alt="v.name">
+                <div v-else class="vg-frame-ph"><img :src="defaultImageUrl" alt=""></div>
+                <span class="vg-frame-num">{{ i + 1 }}</span>
+              </div>
+              <div class="vg-frame-name">{{ v.name }}</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -762,7 +816,7 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined }),
+        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined }),
         randomPools: data.randomPools,
         // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
         // 2 起区分 fillMode（填充）/traverseMode（遍历）；旧存档无 modeVer。
@@ -936,8 +990,8 @@ export default {
             if (!s.tab || !s.relPath) return;
             const cards = bankData.value[s.tab] || [];
             const card = cards.find(c => c.relPath === s.relPath);
-            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined });
-            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined });
+            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '' });
+            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '' });
           });
           data.selected = rebuilt;
           // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
@@ -2008,13 +2062,221 @@ export default {
       if (searchQ.value && searchScope.value === 'all') ensureSearchAll();
     });
 
+    // ============ 版本组（同一提示词的多版本） ============
+    // 数据侧：分类节点 prompt.vg=1 → 该分类下所有词条视为「同一提示词的多个版本」。
+    // 前端三种用法共用同一个游标 vgState[key].idx，互不打架：
+    //   A 常规：整组只出 1 张卡，卡面 ‹ › 翻页换版本（不用翻页器找"同一张脸"）
+    //   B 右键：卡片右键「版本胶片条」，把全部版本横向摊开，点哪帧切哪版
+    //   C 已选：标签上挂三态徽标 —— 🔒 锁定当前版（默认）/ 🎲 每次随机 / ∞ 顺序轮转
+    const vgState = reactive({});   // { [vgKey]: { mode: 'locked'|'random'|'traverse', idx: 0, cursor: 0 } }
+    // 三态独立存档：不能塞进 saveState —— saveState 在 setup 早期就会被调用，
+    // 那时 vgState 尚未初始化（const 暂时性死区），引用会直接抛错。这里用独立 key + watch 落盘。
+    const VG_STORE_KEY = 'zhule_wb_vg_state';
+    try {
+      const sv = JSON.parse(localStorage.getItem(VG_STORE_KEY) || '{}');
+      Object.keys(sv || {}).forEach((k) => {
+        const v = sv[k];
+        if (!v || typeof v !== 'object') return;
+        vgState[k] = {
+          mode: ['locked', 'random', 'traverse'].includes(v.mode) ? v.mode : 'locked',
+          idx: Number(v.idx) || 0,
+          cursor: Number(v.cursor) || 0,
+        };
+      });
+    } catch (e) { /* 存档损坏：忽略，回到默认锁定 */ }
+    watch(vgState, () => {
+      try { localStorage.setItem(VG_STORE_KEY, JSON.stringify(vgState)); } catch (e) { /* 忽略 */ }
+    }, { deep: true });
+    const VG_MODE_NEXT = { locked: 'random', random: 'traverse', traverse: 'locked' };
+    // 卡片所属的最末级分类若被标为版本组，返回该分类节点（否则 null，走原来的独立卡片逻辑）
+    const vgNodeOf = (card) => {
+      const ids = Array.isArray(card && card.chipIds) ? card.chipIds : [];
+      if (!ids.length) return null;
+      const n = bankNodes.value[ids[ids.length - 1]];
+      return (n && n.vg) ? n : null;
+    };
+    // 版本组键 = tab + 分类 id：跨 tab 同 id 不会撞车，且分类改名/改路径不影响已选标签挂靠
+    const vgKeyOf = (card) => {
+      const n = vgNodeOf(card);
+      return n ? String(card.tab || '') + '|' + String(n.id) : '';
+    };
+    const vgStateEnsure = (key) => {
+      if (!vgState[key]) vgState[key] = { mode: 'locked', idx: 0, cursor: 0 };
+      return vgState[key];
+    };
+    // 全量版本索引（不受当前筛选/搜索影响）：已选标签的版本池要能自解释，不能因切了筛选就失效
+    const vgGroupMap = computed(() => {
+      const map = {};
+      for (const t of Object.keys(bankData.value)) {
+        for (const raw of (bankData.value[t] || [])) {
+          const c = raw.tab ? raw : Object.assign({ tab: t }, raw);
+          const k = vgKeyOf(c);
+          if (!k) continue;
+          (map[k] || (map[k] = [])).push(c);
+        }
+      }
+      // 「默认」条目必须固定当 version 1：它就是这条提示词的基准场景（纯环境描述、无动作），
+      // 其余动作变体跟在后面。sort 稳定，非默认版本之间仍保持库里的原顺序。
+      Object.keys(map).forEach((k) => {
+        map[k].sort((a, b) => {
+          const da = String(a && a.name || '').trim() === '默认' ? 0 : 1;
+          const db = String(b && b.name || '').trim() === '默认' ? 0 : 1;
+          return da - db;
+        });
+      });
+      return map;
+    });
+    const vgVersionsOf = (item) => {
+      const key = item && item._vgKey;
+      if (!key) return null;
+      const g = vgGroupMap.value[key];
+      return (g && g.length > 1) ? g : null;
+    };
+    // 当前可见卡片按版本组归并：组内只保留一张代表卡，其余版本挂在 _vgVersions 上随卡走
+    const viewCards = computed(() => {
+      const src = listFiles.value || [];
+      const groups = new Map();
+      for (const c of src) {
+        const k = vgKeyOf(c);
+        if (!k) continue;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(c);
+      }
+      const out = [];
+      const done = new Set();
+      for (const c of src) {
+        const k = vgKeyOf(c);
+        if (!k) { out.push(c); continue; }       // 非版本组：原样输出，零影响
+        if (done.has(k)) continue;
+        done.add(k);
+        // 版本池取全量索引（已把「默认」排到 version 1），不受当前筛选/搜索影响：
+        // 同一提示词的动作变体被筛选条件滤掉时，卡内翻版本仍应能翻到它。
+        const vs = (vgGroupMap.value[k] && vgGroupMap.value[k].length) ? vgGroupMap.value[k] : (groups.get(k) || [c]);
+        const st = vgState[k];
+        const raw = st ? Number(st.idx) || 0 : 0;
+        const idx = Math.min(Math.max(raw, 0), vs.length - 1);
+        out.push(Object.assign({}, vs[idx], {
+          _vgKey: k, _vgVersions: vs, _vgIdx: idx, _vgCount: vs.length,
+        }));
+      }
+      return out;
+    });
+    // 手动翻页：只挪游标（不改用户设的三态模式，避免静默推翻他的设置）
+    const vgStep = (file, d) => {
+      const key = file && file._vgKey;
+      const vs = (file && file._vgVersions) || [];
+      if (!key || vs.length < 2) return;
+      const st = vgStateEnsure(key);
+      const cur = Math.min(Math.max(Number(st.idx) || 0, 0), vs.length - 1);
+      st.idx = ((cur + d) % vs.length + vs.length) % vs.length;
+    };
+    const vgGroupTitle = (file) => {
+      const chips = (file && Array.isArray(file.chips)) ? file.chips : [];
+      return [file && file.tab].concat(chips).filter(Boolean).join(' / ');
+    };
+    // ---- B：胶片条 ----
+    const vgStrip = reactive({ open: false, key: '', title: '', idx: 0, versions: [] });
+    const openVgStrip = (file) => {
+      if (!file || !file._vgKey) return;
+      const vs = file._vgVersions || [];
+      if (vs.length < 2) return;
+      const st = vgStateEnsure(file._vgKey);
+      vgStrip.open = true;
+      vgStrip.key = file._vgKey;
+      vgStrip.title = vgGroupTitle(file);
+      vgStrip.versions = vs;
+      vgStrip.idx = Math.min(Math.max(Number(st.idx) || 0, 0), vs.length - 1);
+    };
+    const closeVgStrip = () => { vgStrip.open = false; };
+    const pickVgStrip = (i) => {
+      if (!vgStrip.versions[i]) return;
+      vgStateEnsure(vgStrip.key).idx = i;
+      vgStrip.idx = i;
+    };
+    // ---- C：已选标签三态 ----
+    const vgStateOf = (item) => {
+      const key = item && item._vgKey;
+      if (!key) return null;
+      const vs = vgVersionsOf(item);
+      if (!vs) return null;
+      return vgStateEnsure(key);
+    };
+    const vgCurIdxOf = (item) => {
+      const vs = vgVersionsOf(item) || [];
+      const st = item && item._vgKey ? vgState[item._vgKey] : null;
+      if (!vs.length) return 0;
+      return Math.min(Math.max(st ? Number(st.idx) || 0 : 0, 0), vs.length - 1);
+    };
+    const vgTagLabel = (item) => {
+      const st = vgStateOf(item);
+      if (!st) return '';
+      const vs = vgVersionsOf(item) || [];
+      if (st.mode === 'random') return '🎲';
+      if (st.mode === 'traverse') return '∞';
+      return '🔒' + (vgCurIdxOf(item) + 1) + '/' + vs.length;
+    };
+    const vgTagTip = (item) => {
+      const st = vgStateOf(item);
+      return vgTagTip_text(st);
+    };
+    const vgTagTip_text = (st) => {
+      if (!st) return '';
+      if (st.mode === 'random') return '随机版本：预览/运行时每次从这一组里随机取一版（点击 → 切换为顺序轮转）';
+      if (st.mode === 'traverse') return '轮转版本：预览/运行时按顺序一版一版轮着走（点击 → 切回锁定）';
+      return '锁定版本：固定用卡片当前这一版（点击 → 切换为随机）';
+    };
+    const vgCycleMode = (item) => {
+      const st = vgStateOf(item);
+      if (!st) return;
+      st.mode = VG_MODE_NEXT[st.mode] || 'locked';
+      if (st.mode === 'locked') st.cursor = 0;
+    };
+    // 运行出口取版本：locked 用当前版；random 每次随机；traverse 顺序轮转并推进游标。
+    // 自动模式下一律跳过已静音的版本（整组都静音则不过滤，保证总有版本可用）。
+    const resolveVgForRun = (item) => {
+      const vs = vgVersionsOf(item);
+      if (!vs) return item;
+      const st = vgStateEnsure(item._vgKey);
+      const n = vs.length;
+      let idx;
+      if (st.mode === 'locked') {
+        idx = Math.min(Math.max(Number(st.idx) || 0, 0), n - 1);
+      } else {
+        let pool = [];
+        for (let i = 0; i < n; i++) { if (!vs[i].mute) pool.push(i); }
+        if (!pool.length) { for (let i = 0; i < n; i++) pool.push(i); }
+        if (st.mode === 'random') {
+          idx = pool[Math.floor(Math.random() * pool.length)];
+        } else {
+          let cursor = ((Number(st.cursor) || 0) % pool.length + pool.length) % pool.length;
+          idx = pool[cursor];
+          st.cursor = (cursor + 1) % pool.length;
+        }
+        st.idx = idx;   // 让卡片与标签上的编号跟着跑，所见即所用
+      }
+      return Object.assign({}, vs[idx], {
+        _vgKey: item._vgKey, _vgIdx: idx, _vgCount: n, _vgVersions: vs,
+      });
+    };
+    // 预览出口取版本：随机模式下也不抖 —— 只按当前游标展示，不推进游标
+    const resolveVgForPreview = (item) => {
+      const vs = vgVersionsOf(item);
+      if (!vs) return item;
+      const idx = vgCurIdxOf(item);
+      return Object.assign({}, vs[idx], {
+        _vgKey: item._vgKey, _vgIdx: idx, _vgCount: vs.length, _vgVersions: vs,
+      });
+    };
+    // 提交前统一过一遍：锁定的换成那一版，随机的每次抽一版，轮转的顺序推进一格
+    const applyVgToItems = (list) => (Array.isArray(list) ? list.map(s => resolveVgForRun(s)) : list);
+
     // ============ 卡片分页（懒渲染）：每页固定数量，避免全量 DOM 膨胀 ============
     const PAGE_SIZE = 80;
     const pageIndex = ref(0);
-    const pageCount = computed(() => Math.max(1, Math.ceil(listFiles.value.length / PAGE_SIZE)));
+    const pageCount = computed(() => Math.max(1, Math.ceil(viewCards.value.length / PAGE_SIZE)));
     const visibleFiles = computed(() => {
       const start = pageIndex.value * PAGE_SIZE;
-      return listFiles.value.slice(start, start + PAGE_SIZE);
+      return viewCards.value.slice(start, start + PAGE_SIZE);
     });
     const pageNumbers = computed(() => {
       const total = pageCount.value;
@@ -2164,7 +2426,7 @@ export default {
     const previewText = computed(() => {
       if (data.fillMode || data.traverseMode) {
         const modeName = data.traverseMode ? '遍历' : '填充';
-        const filled = data.selected.filter(s => !s._ph || s._filled);
+        const filled = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
         if (filled.length) {
           return modeName + '抽取：' + withRemoved(composePreview(filled));
         }
@@ -2188,7 +2450,7 @@ export default {
         }
         return modeName + '模式已开，但池子为空。右键 tab / chip 加入随机池，再右键可改成遍历池 ∞';
       }
-      const picked = data.selected.filter(s => !s._ph || s._filled);
+      const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
       if (!picked.length) return '（空）';
       return withRemoved(composePreview(picked));
     });
@@ -2200,7 +2462,7 @@ export default {
           || data.randomPools.length > 0;
         return hasNeg ? '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）' : '';
       }
-      const picked = data.selected.filter(s => !s._ph || s._filled);
+      const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
       if (!picked.length) return '';
       return joinInherit(expandItems(picked).map(s => s.neg));
     });
@@ -2464,7 +2726,7 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all', muted: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', depth: 0, title: '', pool: 'all', muted: false, vg: false });
 
     // 路径（带编号的原始目录名链路，与 chips key 同口径）→ 节点属性：
     // 空分类目录还没生成任何词条卡片时，也能靠它精确定位分类节点。
@@ -2501,6 +2763,8 @@ const submitAddTab = async () => {
       catMenu.title = kind === 'tab' ? tabLabel(key) : String(key).split('/').slice(1).map(dispKey).join(' / ');
       catMenu.pool = poolKindOf(kind, key, depth);
       catMenu.muted = !!((nodeOfCat(kind, key) || {}).mute);
+      // 版本组开关的当前值（只对非 tab 分类有意义）
+      catMenu.vg = !!((nodeOfCat(kind, key) || {}).vg);
       // 贴边翻转，避免菜单跑出窗口
       catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
@@ -2575,7 +2839,7 @@ const submitAddTab = async () => {
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
     // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
-    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0 });
+    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0 });
     const openCardMenu = (evt, file) => {
       if (!file) return;
       closeCatMenu();
@@ -2586,6 +2850,8 @@ const submitAddTab = async () => {
       // 该卡片是否在框选集合里 → 决定右键菜单是否多出「凝结为池」两项
       cardMenu.picked = isPicked(file);
       cardMenu.pickCount = pickSel.size;
+      // 版本组卡片才有「版本胶片条」入口；单条/非版本组恒为 0，菜单项自动隐藏
+      cardMenu.vgCount = (file._vgVersions && file._vgVersions.length) || 0;
       cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
       cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 330));
       cardMenu.open = true;
@@ -2599,6 +2865,7 @@ const submitAddTab = async () => {
     const onCardGallery = () => { const f = cardMenu.file; closeCardMenu(); if (f) goToGallery(f); };
     const onCardZoom = () => { const f = cardMenu.file; closeCardMenu(); if (f) zoomCardImage(f); };
     const onCardDeleteRef = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteRef(f); };
+    const onCardVgStrip = () => { const f = cardMenu.file; closeCardMenu(); if (f) openVgStrip(f); };
 
     // ---- 框选凝结成池 ----
     // 与 tab / chip 池完全同构的自定义池（kind:'list'）：同样有 traverse 区分 🎲 随机池 / ∞ 遍历池，
@@ -2647,6 +2914,36 @@ const submitAddTab = async () => {
       const m = { kind: catMenu.kind, key: catMenu.key, depth: catMenu.depth };
       closeCatMenu();
       setPoolBy(m.kind, m.key, m.depth, want);
+    };
+
+    // ---- 版本组开关：一个分类的多条词条要不要合并成 1 张多版本卡 ----
+    const vgBusy = ref(false);
+    const onCtxToggleVg = async () => {
+      const kind = catMenu.kind;
+      const key = catMenu.key;
+      const title = catMenu.title;
+      const n = nodeOfCat(kind, key);
+      closeCatMenu();
+      if (!n || !n.id) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
+      if (vgBusy.value) return;
+      const target = !n.vg;
+      vgBusy.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/vg', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: n.id, vg: target }),
+        });
+        const json = await resp.json();
+        if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
+        showToast((json.vg ? '已标为版本组：' : '已取消版本组：') + title
+          + (json.vg ? '（其下词条合并成 1 张卡，卡内翻页换版本）' : '（拆回每张词条一张卡）'), 'success', 3200);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        vgBusy.value = false;
+      }
     };
 
     // ---- 编辑分类弹层：分类自己的 en / cn / neg / 排除，子级词条自动继承 ----
@@ -3009,10 +3306,10 @@ const submitAddTab = async () => {
       if (file.images && file.images.length) fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
       else fullViewer.open(defaultImageUrl, (file.name || '') + '（暂无参考图）');
     };
-    // 切换提示词：以当前列表（分类浏览结果或搜索结果）为范围，dir=±1 上下一条
+    // 切换提示词：以当前可见卡片（分类浏览结果或搜索结果，已按版本组归并）为范围，dir=±1 上下一条
     const zoomWordAt = (dir) => {
       const cur = zoomCtx.file;
-      const list = listFiles.value;
+      const list = viewCards.value;
       if (!cur || !list.length) return;
       let idx = list.findIndex(f => f.relPath === cur.relPath);
       if (idx < 0) idx = 0;
@@ -3153,7 +3450,7 @@ const submitAddTab = async () => {
     // 随机/遍历时从每个子池各取 1 条再组合（如角色/神态/身材/姿势各抽一）。
     // 静音（mute=1）：被标记的词条不进入任何自动选词流程——单次随机、随机模式、
     // 遍历模式全部跳过；用户手动点选卡片时走 data.selected，不经过本函数，故不受影响。
-    const poolCandidates = (item) => {
+    const poolCandidatesRaw = (item) => {
       // 凝结池（框选生成）：候选就是框选时点名的这批卡片，按 tab + relPath 实时回查，
       // 词条改名/移动不影响，被删或被静音则自动跳过（与 tab 池的静音语义一致）
       if (item.kind === 'list') {
@@ -3183,6 +3480,23 @@ const submitAddTab = async () => {
       if (!id) { zhuleLog('poolCandidates: chip池缺chipId（旧存档未迁移，请重新右键加入随机池）', 'tab=', item.tab, 'path=', item.path || []); return []; }
       const out = alive.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(id));
       zhuleLog('poolCandidates: chip池', 'tab=', item.tab, 'chipId=', id, 'count=', out.length, 'total=', files.length, 'sampleChipIds=', files.slice(0, 3).map(f => f.chipIds));
+      return out;
+    };
+    // 版本组在池子里只算「一个可抽项」：同组多版本折叠成 1 条代表（带上 _vgKey），
+    // 抽中后由该组的三态（锁定当前版 / 每次随机 / 顺序轮转）决定最终用哪一版。
+    // 不折叠的话，一个 6 版本分类会在随机池里被当成 6 条不同提示词，抽重率被放大 6 倍。
+    const poolCandidates = (item) => {
+      const raw = poolCandidatesRaw(item);
+      if (!raw || !raw.length) return raw;
+      const seen = new Set();
+      const out = [];
+      for (const f of raw) {
+        const k = f ? vgKeyOf(f) : '';
+        if (!k) { out.push(f); continue; }
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(Object.assign({}, f, { _vgKey: k }));
+      }
       return out;
     };
 
@@ -3243,7 +3557,7 @@ const submitAddTab = async () => {
         if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'path=', item.path || []); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true });
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true, _vgKey: file._vgKey || '' });
       }
       return picks;
     };
@@ -3283,7 +3597,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey })));
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey, _vgKey: e.file._vgKey || '' })));
     };
 
     // 旧存档 chip 池一次性补 DB id（不再归一化路径）：按 path（完整键链或显示名链）反查
@@ -3440,7 +3754,7 @@ const submitAddTab = async () => {
         type: 'zhule:run',
         bindId: linkParams.bind,
         seq: ++runSeq,
-        items: expandItems(items).map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
+        items: expandItems(applyVgToItems(items)).map(s => ({ id: s.id || '', name: s.name, content: s.content, neg: s.neg || '', override: s.override || '' })),
         count: 1,
       });
       let done = false;
@@ -3584,7 +3898,8 @@ const submitAddTab = async () => {
         return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
       }
       // 运行前统一展开继承：分类链上的 en/cn/neg/override 逐层拼到词条自己身上
-      const expanded = expandItems(readyItems);
+      // 版本组在这里定版：锁定=当前版、随机=这次抽一版、轮转=顺序推进一格（一次点运行定一次）
+      const expanded = expandItems(applyVgToItems(readyItems));
       const text = expanded.map(s => s.content).join(', ');
       // 通过 BroadcastChannel 广播运行指令，节点 _selected 直接承载词条。
       ensureRunChannel();
@@ -3767,7 +4082,7 @@ const submitAddTab = async () => {
         togglePick(file);
         return;
       }
-      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-act') || e.target.closest('.thumb-enter') || e.target.closest('.thumb-del')) return;
+      if (e.target.closest('.thumb-zoom') || e.target.closest('.thumb-nav') || e.target.closest('.card-act') || e.target.closest('.thumb-enter') || e.target.closest('.thumb-del') || e.target.closest('.vg-nav')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
@@ -3777,7 +4092,8 @@ const submitAddTab = async () => {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
         // tab 以卡片自带的为准（全库搜索结果里卡片可能不属于当前 activeTab）
-        item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [] },
+        // _vgKey：版本组键，随已选项一起带走，标签三态与运行取版本都靠它回查版本池
+        item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _vgKey: file._vgKey || '' },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -3787,7 +4103,8 @@ const submitAddTab = async () => {
     };
 
     const onTagPointerDown = (e, idx) => {
-      if (e.button !== 0 || e.target.closest('.close')) return;
+      // .vg-tag 是标签上的版本三态徽标，点它切模式，不能触发标签拖拽
+      if (e.button !== 0 || e.target.closest('.close') || e.target.closest('.vg-tag')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
@@ -3930,7 +4247,7 @@ const submitAddTab = async () => {
           else t = fromIdx < idx ? idx : idx + 1;
           data.selected.splice(t, 0, moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
           const existIdx = data.selected.findIndex(s => sameCard(s, item));
           let targetIdx = idx;
           if (existIdx >= 0) {
@@ -3948,7 +4265,7 @@ const submitAddTab = async () => {
           const [moved] = data.selected.splice(p.sourceIdx, 1);
           data.selected.push(moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
           if (data.selected.some(s => sameCard(s, item))) return;
           data.selected.push(item);
         }
@@ -3963,7 +4280,7 @@ const submitAddTab = async () => {
         const target = rel ? listFiles.value.find(x => x.relPath === rel && (!tabAttr || String(x.tab || '') === tabAttr)) : null;
         if (!target) return;
         const targetIdx = data.selected.findIndex(s => sameCard(s, target));
-        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [] };
+        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
@@ -3982,6 +4299,8 @@ const submitAddTab = async () => {
         neg: file.neg || '', override: file.override || '',
         // 父级分类属性链随选区一起存快照：运行/预览都按它递归继承，历史选区也能自解释
         anc: file.anc || [],
+        // 版本组键：标签三态与运行时取版本靠它回查版本池（非版本组为空串，逻辑全跳过）
+        _vgKey: file._vgKey || '',
       });
     };
 
@@ -4050,6 +4369,9 @@ const submitAddTab = async () => {
       showCardTab, cardTabLabel,
       listCountLabel, emptyText, searchPh, searchTip, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
       pageIndex, pageCount, pageNumbers, visibleFiles, goPrevPage, goNextPage, goPage,
+      // 版本组（同一提示词的多版本）：A 卡片翻页 / B 右键胶片条 / C 已选标签三态
+      viewCards, vgStep, vgState, vgStateOf, vgTagLabel, vgTagTip, vgCycleMode,
+      vgStrip, openVgStrip, closeVgStrip, pickVgStrip, onCardVgStrip,
       getSelections,
       chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
       selectedCollapsed, toggleSelectedCollapsed,
@@ -4061,7 +4383,7 @@ const submitAddTab = async () => {
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
-      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab,
+      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToggleVg,
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
     isCatMuted, toggleCatMute,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」

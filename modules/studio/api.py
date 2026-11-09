@@ -385,6 +385,8 @@ def _nodes_index(tree):
                 "override": n.get("override") or "",
                 # 1 = 本节点属性可向下继承（编辑分类弹层里的「向下继承」开关）
                 "provide": 1 if n.get("provide") else 0,
+                # 1 = 本分类是「版本组」：其下多条词条是同一提示词的多版本，前端合并成 1 张卡
+                "vg": 1 if n.get("vg") else 0,
             }
             walk(n.get("children"), cur)
     walk(tree, "")
@@ -503,6 +505,35 @@ async def post_wordbank_mute(request):
     if not db.set_mute(int(node["id"]), mute):
         return web.json_response({"error": "设置失败"}, status=500)
     return web.json_response({"ok": True, "id": node["id"], "mute": 1 if mute else 0})
+
+
+async def post_wordbank_vg(request):
+    """版本组（vg）开关（DB 版）：按分类节点 id 写 prompt.vg。
+
+    vg=1：该分类下的多条词条视为同一提示词的不同版本，前端把整个分类合并成 1 张卡，
+    卡片内翻页（默认）/ 右键呼出胶片条 / 已选标签切随机·遍历，三种用法同时可用。
+    vg=0：拆回原样，同分类下每条词条各占一张卡（默认行为，老数据零影响）。
+    入参 {id, vg?}：vg 缺省时按当前值取反（前端右键一键切换用）。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    raw_id = str(body.get("id") or "").strip()
+    if not raw_id:
+        return web.json_response({"error": "缺少 id"}, status=400)
+    node = db.node_by_id(raw_id)
+    if node is None:
+        return web.json_response({"error": "节点不存在"}, status=404)
+    if node.get("type") == "entry":
+        return web.json_response({"error": "版本组只能标在分类上"}, status=400)
+    if "vg" in body:
+        vg = bool(body.get("vg"))
+    else:
+        vg = not bool(node.get("vg"))
+    if not db.set_vg(int(node["id"]), vg):
+        return web.json_response({"error": "设置失败"}, status=500)
+    return web.json_response({"ok": True, "id": node["id"], "vg": 1 if vg else 0})
 
 
 async def post_wordbank_delete(request):

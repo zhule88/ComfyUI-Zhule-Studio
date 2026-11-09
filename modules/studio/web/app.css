@@ -1982,3 +1982,111 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   z-index: 1;
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.22), transparent 22px);
 }
+
+
+/* ==========================================================================
+   提示词多版本组（A 卡内翻页 / B 胶片条 / C 标签三态）
+   —— A 默认生效；B 从卡片右键菜单呼出；C 挂在已选标签上点一下循环切换。
+   单条分类（_vgCount<=1）不下发任何类名，整块样式不参与，等于关闭。
+   ========================================================================== */
+
+/* ---- A：卡片内版本翻页器（与 thumb-nav 同款胶囊，压在名字条上方） ---- */
+.card.image .vg-nav {
+  position: absolute; left: 6px; right: 6px; bottom: 62px; z-index: 7;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1px 4px; border-radius: 20px;
+  background: rgba(12, 18, 26, 0.82); border: 1px solid rgba(159, 208, 255, 0.26);
+  backdrop-filter: blur(3px);
+  opacity: 0.55; transition: opacity 0.15s;
+}
+.card.image:hover .vg-nav { opacity: 1; }
+.vg-nav button {
+  width: 22px; height: 20px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; color: #b9c8dc; cursor: pointer;
+  font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.vg-nav button:hover { background: var(--primary-dim); color: #fff; }
+.vg-nav .vg-num {
+  font-size: 10px; color: var(--accent); letter-spacing: 0.5px;
+  pointer-events: none; white-space: nowrap;
+}
+
+/* ---- C：已选标签上的三态徽标 ---- */
+.tag .vg-tag {
+  flex-shrink: 0;
+  padding: 0 5px; border-radius: 4px;
+  font-size: 10px; line-height: 15px; font-weight: 700;
+  border: 1px solid transparent; cursor: pointer;
+  transition: filter 0.12s;
+}
+.tag .vg-tag:hover { filter: brightness(1.3); }
+/* 锁定：绿 = 稳（默认态） */
+.tag .vg-tag.mode-locked { background: rgba(74, 222, 128, 0.16); color: #b7f7c9; border-color: rgba(74, 222, 128, 0.45); }
+/* 随机：黄 = 每次不一样 */
+.tag .vg-tag.mode-random { background: rgba(250, 204, 21, 0.16); color: #ffe9a8; border-color: rgba(250, 204, 21, 0.45); }
+/* 轮转：紫 = 顺序走一遍 */
+.tag .vg-tag.mode-traverse { background: rgba(167, 139, 250, 0.18); color: #ded0ff; border-color: rgba(167, 139, 250, 0.5); }
+
+/* ---- B：胶片条弹层 ---- */
+.vg-strip-layer {
+  position: fixed; inset: 0; z-index: 3000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(6, 9, 13, 0.68); backdrop-filter: blur(3px);
+}
+.vg-strip {
+  width: min(880px, 94vw); max-height: 84vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.62);
+}
+.vg-strip-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-2);
+  font-size: 13px;
+}
+.vg-strip-title {
+  flex: 1; min-width: 0; color: var(--text); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vg-strip-count {
+  flex-shrink: 0; padding: 1px 8px; border-radius: 20px;
+  font-size: 11px; color: #c4b2ff;
+  background: rgba(167, 139, 250, 0.12); border: 1px solid var(--purple-dim);
+}
+.vg-strip-close {
+  flex-shrink: 0; width: 24px; height: 24px;
+  border: none; border-radius: 50%; background: transparent;
+  color: var(--text-2); font-size: 16px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.vg-strip-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.vg-strip-body {
+  display: flex; gap: 10px; padding: 14px;
+  overflow-x: auto; overflow-y: hidden;
+}
+.vg-frame { width: 118px; flex: 0 0 auto; cursor: pointer; }
+.vg-frame-img {
+  position: relative; width: 100%; padding-top: 133.33%;
+  border-radius: 8px; overflow: hidden;
+  background: #10141a; border: 2px solid transparent;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.vg-frame-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vg-frame-ph { position: absolute; inset: 0; }
+.vg-frame-ph img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.35; }
+.vg-frame-num {
+  position: absolute; left: 5px; top: 5px; z-index: 2;
+  padding: 0 5px; border-radius: 4px;
+  font-size: 10px; color: var(--text-2);
+  background: rgba(10, 14, 20, 0.82);
+}
+.vg-frame:hover .vg-frame-img { border-color: var(--border); }
+.vg-frame.active .vg-frame-img { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-dim); }
+.vg-frame.active .vg-frame-num { background: var(--primary); color: #fff; }
+.vg-frame.muted .vg-frame-img { opacity: 0.45; }
+.vg-frame-name {
+  margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--text-2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vg-frame.active .vg-frame-name { color: var(--text); }
