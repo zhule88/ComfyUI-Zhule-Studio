@@ -1330,9 +1330,20 @@ export default {
       addingChip.value = true;
       try {
         const parentKey = chipParentPath(addChipDepth.value);
-        const parentId = parentKey
-          ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
-          : (tabIds.value[data.activeTab] || '');
+        // 与新建词条同一套兜底：卡片反查 → nodes 按路径反查 → 当前 tab 根
+        let parentId = '';
+        if (parentKey) {
+          parentId = chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey)
+            || nodeIdByPath(parentKey)
+            || '';
+          if (!parentId) parentId = tabIds.value[data.activeTab] || '';
+        } else {
+          parentId = tabIds.value[data.activeTab] || '';
+        }
+        if (!parentId) {
+          showToast('没找到父级：请先在左侧选中一个分类（或某个大类）再新建', 'warn', 3200);
+          return;
+        }
         const resp = await fetch('/zhule_studio/api/wordbank/chip', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1388,11 +1399,25 @@ export default {
         for (let i = 0; i < maxDepth.value; i++) {
           if (Array.isArray(sel[i]) && sel[i].length) parentKey = sel[i][0];
         }
-        const parentId = addCardLock.value
-          ? addCardLock.value.parentId
-          : (parentKey
-            ? (chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey) || '')
-            : (tabIds.value[data.activeTab] || ''));
+        // 父级 id 三级兜底：① 版本组锁定的锚点 id；② 选中的分类——先从卡片链反查，
+        // 反查不到（该分类下还没有任何卡片 / 卡片懒加载未到位）再用全树 nodes 索引按路径查，
+        // 「测试」这类空分类、孤立顶层分类都靠这一步才能建得进去；③ 整层没选分类时落到当前 tab 根。
+        let parentId = '';
+        if (addCardLock.value) {
+          parentId = addCardLock.value.parentId;
+        } else if (parentKey) {
+          parentId = chipIdFor(data.activeTab, parentKey.split('/').length - 2, parentKey)
+            || nodeIdByPath(parentKey)
+            || '';
+          if (!parentId) parentId = tabIds.value[data.activeTab] || '';
+        } else {
+          parentId = tabIds.value[data.activeTab] || '';
+        }
+        if (!parentId) {
+          addingCard.value = false;
+          showToast('没找到父级：请先在左侧选中一个分类（或某个大类）再新建', 'warn', 3200);
+          return;
+        }
         const body = { parentId, name: fullName };
         if (addCardContent.value) body.content = addCardContent.value;
         if (!addCardIsTxt.value && addCardContentCn.value) body.content_cn = addCardContentCn.value;
@@ -2734,6 +2759,20 @@ export default {
       if (!f) return '';
       const ids = f.chipIds || [];
       return ids[depth] || '';
+    };
+
+    // 按「完整相对路径」在全树 nodes 索引里反查 DB id：chipIdFor 只能从已加载卡片反推，
+    // 空分类（像「测试」这种一条卡片都没挂的顶层分类）反查必然是空，这里用后端给的
+    // nodes[id].path（与卡片 chipKeys 同为带编号原始目录名口径）兜住。
+    const nodeIdByPath = (path) => {
+      const want = String(path || '');
+      if (!want) return '';
+      const idx = bankNodes.value || {};
+      for (const id of Object.keys(idx)) {
+        const n = idx[id];
+        if (n && n.path === want) return String(n.id || id);
+      }
+      return '';
     };
 
     const chipParentPath = (depth) => {
