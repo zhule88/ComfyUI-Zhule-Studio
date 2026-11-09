@@ -1928,7 +1928,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .ctx-item.primary:hover { background: rgba(79, 143, 247, 0.22); }
 /* 危险项（删除类）与分组分隔线：图库卡片菜单 / 词库分类菜单共用 */
 .ctx-item.danger { color: #ff9d9d; }
-.ctx-item.danger:hover { background: rgba(244, 91, 91, 0.20); color: #fff; }
+.ctx-item.danger:hover { background: rgba(244, 91, 91, 0.30); color: #fff; }
 .ctx-item.disabled, .ctx-item:disabled { color: var(--text-3); opacity: 0.55; cursor: not-allowed; }
 .ctx-item.disabled:hover, .ctx-item:disabled:hover { background: transparent; color: var(--text-3); }
 .ctx-sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.07); }

@@ -356,11 +356,11 @@ export default {
             🗂 标为版本组（本分类多条合并一卡）
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
+          <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 进入详情页</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
-          <button type="button" class="ctx-item" v-if="cardMenu.hasImages"
+          <button type="button" class="ctx-item danger" v-if="cardMenu.hasImages"
                   @pointerdown.stop @click="onCardDeleteRef">🗑 删除当前参考图</button>
         </div>
       </div>
