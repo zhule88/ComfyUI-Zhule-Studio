@@ -1515,7 +1515,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .color-popup-hint { font-size: 11px; color: var(--text-2); margin-top: 10px; line-height: 1.6; }
 .color-popup-level-hint { font-size: 11px; color: var(--text-2); margin: 8px 0 2px; line-height: 1.6; }
 /* ===== Tooltip 统一（data-tip 驱动，替代原生 title 白底气泡）===== */
-[data-tip] { position: relative; }
+/* 兜底定位必须放在 :where() 里（特异度 0）：早前是 [data-tip] { position: relative; }，
+   与 .thumb-badge / .card-act 等单类选择器同为 (0,1,0) 且本规则在文件末尾，
+   会把本该 absolute 的元素改成 relative —— 词库卡片「排除/负面」徽标因此变成块级流内元素，
+   撑高缩略图容器 20px，同行卡片被 grid 拉伸后底部留出空白。
+   放进 :where() 后，只有自身没有定位声明的元素才拿到 relative 兜底，已定位元素不受影响。 */
+:where([data-tip]) { position: relative; }
 [data-tip]::after {
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 7px);
