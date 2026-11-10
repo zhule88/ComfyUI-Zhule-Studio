@@ -2023,6 +2023,8 @@ export function useGalleryCommon(opts = {}) {
       showToast(d.count
         ? `已导出 ${d.count} 张（硬链接 ${d.created.length}${cop}） -> ${d.target}`
         : '没有可导出的图片');
+      // 导出完成后清空已选中，方便继续下一次挑选
+      if (d.count) selected.clear();
     } catch (e) {
       showToast('批量导出失败：' + (e.message || ''), 'error');
     }
