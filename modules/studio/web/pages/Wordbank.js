@@ -35,9 +35,10 @@ export default {
                data-tip="还没有大类，右键新建" @contextmenu.prevent="openAddTab">（无大类）右键新建</div>
           <div v-for="name in tabs" :key="name"
                class="tab"
-               :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'has-selected': tabHasSelected(name)}"
+               :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'cat-picked': isTabCatPicked(name), 'has-selected': tabHasSelected(name)}"
                draggable="true"
-               @click="switchTab(name)"
+               :data-tip="'左键：切到此大类　Ctrl/⌘+左键：把整个大类下的词条整类选中（可连续点多选，再点一次取消）'"
+               @click="onTabClick($event, name)"
                @contextmenu.prevent="openCatMenu($event, 'tab', name)"
                @dragstart="onTabDragStart($event, name)"
                @dragover="onTabDragOver($event, name)"
@@ -82,10 +83,11 @@ export default {
               <!-- 分类 chip 自带 { id, parentId, name }：选中/拖拽/池/右键全按节点 id，不再有路径 key -->
               <div v-for="chip in line" :key="chip.id"
                    class="chip"
-                   :class="[chipThemeClass, {active: getSelections()[depth].includes(chip.id), 'in-pool': isChipTraversePool(chip), 'in-pool-random': isChipInPool(chip) && !isChipTraversePool(chip)}]"
+                   :class="[chipThemeClass, {active: getSelections()[depth].includes(chip.id), 'in-pool': isChipTraversePool(chip), 'in-pool-random': isChipInPool(chip) && !isChipTraversePool(chip), 'cat-picked': isChipCatPicked(chip)}]"
                    :style="chipStyle(chip.name)"
                    draggable="true"
-                   @click="toggleChip(depth, chip)"
+                   :data-tip="'左键：筛选此分类　Ctrl/⌘+左键：把整个分类（含子分类）的词条整类选中（可连续点多选，再点一次取消）'"
+                   @click="onChipClick($event, depth, chip)"
                    @contextmenu.prevent="openCatMenu($event, 'chip', chip, depth)"
                    @dragstart="onChipDragStart($event, depth, chip)"
                    @dragover="onChipDragOver($event, depth, chip)"
@@ -100,9 +102,11 @@ export default {
         <div class="main">
           <!-- 框选状态条：只在有框选时出现，给计数与取消入口（凝结按钮统一在卡片右键菜单里） -->
           <div class="pick-bar" v-if="pickSel.size">
-            <span class="pick-count">框选 <b>{{ pickSel.size }}</b> 项</span>
-            <span class="pick-tip">右键其中任一卡片 → 凝结为遍历池 ∞ / 随机池 🎲</span>
-            <button class="btn pick-clear" @click="clearPick">取消框选</button>
+            <span class="pick-count">已选 <b>{{ pickSel.size }}</b> 项<span v-if="catPickSel.size" class="pick-cat">（含 {{ catPickSel.size }} 个整类分类）</span></span>
+            <span class="pick-tip">Ctrl+左键点分类＝整类全选，点卡片＝单条增删；选完凝结成池</span>
+            <button class="btn pick-condense" @click="onCardCondense(true)">∞ 凝结为遍历池</button>
+            <button class="btn pick-condense" @click="onCardCondense(false)">🎲 凝结为随机池</button>
+            <button class="btn pick-clear" @click="clearPick">取消选择</button>
           </div>
           <div class="grid" ref="gridEl" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }"
                @pointerdown="onGridPointerDown">
@@ -766,17 +770,94 @@ export default {
     // key 与卡片 DOM 上的 data-tab + data-rel 严格同构，composable 拿到的 key 可直接回喂本集合
     const pickKey = (file) => (file.tab || '') + '||' + (file.relPath || '');
     const isPicked = (file) => pickSel.has(pickKey(file));
-    const clearPick = () => pickSel.clear();
+    const clearPick = () => { pickSel.clear(); catPickSel.clear(); };
     const togglePick = (file) => {
       const k = pickKey(file);
       if (pickSel.has(k)) pickSel.delete(k); else pickSel.add(k);
+      // 手工增删卡片后回校整类选中态：某分类不再被完整覆盖时，自动摘掉它的✓标记
+      // （剩下的词条照旧保留在已选里，用户可以继续挑，最后一起凝结）
+      pruneCatPick();
     };
-    // key 反查卡片对象：框选只可能命中当前可见网格，可见列表即是全集
+    // key 反查卡片对象：已选集合可能来自其它大类（分类整类选中 / 跨大类挑卡片），
+    // 不能只查当前可见网格，否则切过大类后凝结会丢项。这里按「已加载的全部大类数据」建索引，
+    // 当前可见列表兜底（承载版本组折叠等临时字段）。
     const pickedFiles = () => {
-      const byKey = new Map((visibleFiles.value || []).map(f => [pickKey(f), f]));
+      const byKey = new Map();
+      const all = bankData.value || {};
+      Object.keys(all).forEach(t => {
+        (all[t] || []).forEach(f => {
+          if (!f || !f.relPath) return;
+          byKey.set(pickKey({ tab: f.tab || t, relPath: f.relPath }), f);
+        });
+      });
+      (visibleFiles.value || []).forEach(f => {
+        const k = pickKey(f);
+        if (!byKey.has(k)) byKey.set(k, f);
+      });
       const out = [];
       pickSel.forEach(k => { const f = byKey.get(k); if (f) out.push(f); });
       return out;
+    };
+
+    // ============ 分类整类选中（Ctrl/⌘ + 左键点大类 tab 或分类 chip）============
+    // 语义：等价于「把该分类（含全部子分类）下的每条提示词都手动 Ctrl 点成已选中」，
+    // 与卡片框选/Ctrl 点多选共用同一个 pickSel，所以二者完全互通：
+    //   · 整类选中后，仍可 Ctrl+左键点单张卡片把它剔掉；
+    //   · 仍可去别的分类/别的大类继续整类选中或单独挑几张；
+    //   · 最后统一走同一个出口「凝结为池」（卡片右键，或已选状态条上的按钮）。
+    // 注意：这里**不**产生 tab 池 / chip 池，也不涉及 ∞ / 🎲，池类型只在凝结那一刻决定。
+    // catPickSel 只记录「哪些分类正处于整类选中态」，用于 chip 高亮与再点一次整体取消。
+    const catPickSel = reactive(new Set());
+    const catPickKey = (tab, id) => String(tab || '') + '||' + String(id || '');
+    // 某分类下的全部词条：id 为空 = 整个大类；否则按 chipIds 祖先链命中（含所有后代子分类）
+    const catFilesOf = (tab, id) => {
+      const files = (bankData.value || {})[tab] || [];
+      if (!id) return files.slice();
+      const sid = String(id);
+      return files.filter(f => Array.isArray(f.chipIds) && f.chipIds.includes(sid));
+    };
+    const isTabCatPicked = (name) => catPickSel.has(catPickKey(name, ''));
+    const isChipCatPicked = (chip) => catPickSel.has(catPickKey(data.activeTab, (chip && chip.id) || ''));
+    const toggleCatPick = (kind, key, name) => {
+      const tab = kind === 'tab' ? key : data.activeTab;
+      const id = kind === 'tab' ? '' : String(key || '');
+      const ck = catPickKey(tab, id);
+      const label = name || (kind === 'tab' ? tabLabel(tab) : '');
+      // 大类数据是懒加载的：Ctrl 点一个没打开过的大类先补拉一次，拉完再点即可
+      if (!Array.isArray((bankData.value || {})[tab])) {
+        load(false, tab);
+        return showToast(`正在加载「${label}」的词条，稍等再点一次即可整类选中`, 'warn', 2600);
+      }
+      const files = catFilesOf(tab, id);
+      if (catPickSel.has(ck)) {
+        let n = 0;
+        files.forEach(f => { if (pickSel.delete(pickKey({ tab: f.tab || tab, relPath: f.relPath }))) n++; });
+        catPickSel.delete(ck);
+        zhuleLog('toggleCatPick: 取消整类选中', { kind, tab, id, removed: n }, 'picked=', pickSel.size);
+        showToast(`「${label}」已取消整类选中（-${n}），当前已选 ${pickSel.size} 项`, 'warn', 2600);
+        return;
+      }
+      if (!files.length) return showToast(`「${label}」下还没有词条，无法整类选中`, 'warn');
+      files.forEach(f => pickSel.add(pickKey({ tab: f.tab || tab, relPath: f.relPath })));
+      catPickSel.add(ck);
+      zhuleLog('toggleCatPick: 整类选中', { kind, tab, id, added: files.length }, 'picked=', pickSel.size);
+      showToast(`「${label}」整类已选中 +${files.length}，共 ${pickSel.size} 项（Ctrl 再点可整类取消，也可 Ctrl 点单张剔除）`, 'success', 2800);
+    };
+    // 整类选中态的实时回校：只在「该分类仍被已选集合完整覆盖」时才保留 ✓ 标记，
+    // 一旦用户手工 Ctrl 剔掉其中某张卡片，分类高亮自动降级（已选的其余词条照旧保留）。
+    const pruneCatPick = () => {
+      if (!catPickSel.size) return;
+      const drop = [];
+      catPickSel.forEach(ck => {
+        const p = ck.indexOf('||');
+        const tab = ck.slice(0, p);
+        const id = ck.slice(p + 2);
+        const files = catFilesOf(tab, id);
+        if (!files.length) { drop.push(ck); return; }
+        const partial = files.some(f => !pickSel.has(pickKey({ tab: f.tab || tab, relPath: f.relPath })));
+        if (partial) drop.push(ck);
+      });
+      drop.forEach(ck => catPickSel.delete(ck));
     };
     const { onPointerDown: onPickPointerDown } = useMarqueeSelect({
       getContainer: () => gridEl.value,
@@ -794,8 +875,9 @@ export default {
       },
       onUpdate: (hits, ctx) => {
         // 不按 Ctrl：替换式框选；按住 Ctrl：并集追加（Set 去重，不重复添加）
-        if (!(ctx && ctx.additive)) pickSel.clear();
+        if (!(ctx && ctx.additive)) { pickSel.clear(); catPickSel.clear(); }
         hits.forEach(k => pickSel.add(k));
+        pruneCatPick();
       },
       onEnd: ({ cancelled, initialKeys }) => {
         if (!cancelled) return;
@@ -974,7 +1056,7 @@ export default {
           const clean = [];
           if (Array.isArray(state.randomPools)) {
             clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string'
-              && (it.kind !== 'chip' || it.chipId || Array.isArray(it.path))));
+              && (it.kind !== 'chip' || it.chipId)));
           } else if (typeof state.randomPools === 'object') {
             // 兼容旧版按 tab 分桶的存档
             Object.keys(state.randomPools).forEach(t => {
@@ -988,12 +1070,10 @@ export default {
             });
           }
           clean.forEach(it => {
-            // 池的 chip 身份统一为节点 id：旧存档只有路径，按 nodes[].path 反查迁移，反查不到丢弃
-            if (it.kind !== 'chip') return;
-            if (!it.chipId && Array.isArray(it.path)) it.chipId = nodeIdByPath(it.path.join('/')) || '';
+            // 池的 chip 身份即节点 id（后端已不再下发 path，路径存档早于本版即作废）
             delete it.path;
+            if (it.kind !== 'chip') return;
             if (!it.chipId) it.dead = true;
-            // 显示名统一按节点名重算（旧存档可能存的是路径串）
             else it.display = nodeNameOf(it.chipId) || it.display || String(it.chipId);
           });
           // 凝结池（kind:'list'）校验：items 必须是有 tab + relPath 的数组，池子空了就丢弃
@@ -1036,10 +1116,9 @@ export default {
               const v = arr[i];
               const one = Array.isArray(v) ? v.filter(x => x)[0] : v;   // 互斥单选：旧多选只保留首个
               if (!one) continue;
-              // 选区现在存节点 id：旧存档存的是路径 key，按 nodes[].path 反查迁移
-              let id = String(one);
-              if (!(bankNodes.value || {})[id]) id = nodeIdByPath(id);
-              if (id) data.selections[t][i] = [id];
+              // 选区身份即节点 id，非 id 值（旧路径 key）直接丢弃
+              const id = String(one);
+              if ((bankNodes.value || {})[id]) data.selections[t][i] = [id];
             }
           });
         }
@@ -2776,18 +2855,6 @@ export default {
     // 分类显示路径（顶层 / … / 自身）：只用于菜单标题、弹层与提示文案，不再当逻辑键
     const nodePathOf = (id) => nodeIdChainById(id).map(x => nodeNameOf(x)).filter(Boolean).join(' / ');
 
-    // 存档迁移兜底：旧存档的选区存的是「完整相对路径」key，这里按 nodes[].path 反查回节点 id
-    const nodeIdByPath = (path) => {
-      const want = String(path || '');
-      if (!want) return '';
-      const idx = bankNodes.value || {};
-      for (const id of Object.keys(idx)) {
-        const n = idx[id];
-        if (n && n.path === want) return String(n.id || id);
-      }
-      return '';
-    };
-
     // 当前选中链上第 depth 层的父节点 id（depth 0 的父 = 当前大类 Tab 根）
     const chipParentId = (depth) => {
       if (depth <= 0) return String(tabIds.value[data.activeTab] || '');
@@ -3031,33 +3098,36 @@ const submitAddTab = async () => {
     // 每次 load 重算，取消分类静音后自然恢复；词条自身的 mute 字段不受破坏。
     const catMuteBusy = ref(false);
     const isCatMuted = (kind, key) => !!((nodeOfCat(kind, key) || {}).mute);
-    const catMutePaths = computed(() => {
+    const catMuteIds = computed(() => {
       const set = new Set();
       const all = bankNodes.value || {};
       Object.keys(all).forEach(id => {
         const n = all[id];
-        if (n && n.mute && n.path) set.add(n.path);
+        if (n && n.mute) set.add(String(n.id || id));
       });
       return set;
     });
-    // 分类节点 path 与卡片 relPath 同为「tab目录名/一级/二级...」口径，
-    // 因此按前缀判定子孙关系即可：静音顶层 tab 也自然覆盖其下全部词条。
-    const mutedByCat = (rel) => {
-      const paths = catMutePaths.value;
-      if (!paths.size || !rel) return '';
-      for (const p of paths) {
-        if (rel === p || rel.indexOf(p + '/') === 0) return p;
-      }
+    // 分类静音按 id 祖先链判定：词条 id 上溯链路命中任一静音分类即视为被分类静音，
+    // 静音顶层 tab 也自然覆盖其下全部词条（与旧的路径前缀判定等价，但不再依赖 path 字段）。
+    const mutedByCat = (id, tab) => {
+      const ids = catMuteIds.value;
+      if (!ids.size) return '';
+      // 大类 Tab 根不在 id 祖先链里（链路遇到无父即止），单独按卡片所属 tab 判一次
+      const rootId = tab ? String(tabIds.value[tab] || '') : '';
+      if (rootId && ids.has(rootId)) return rootId;
+      if (!id) return '';
+      const chain = nodeIdChainById(id);
+      for (const x of chain) if (ids.has(String(x))) return String(x);
       return '';
     };
     const inheritCategoryMute = () => {
-      if (!catMutePaths.value.size) return;
+      if (!catMuteIds.value.size) return;
       Object.keys(bankData.value || {}).forEach(tab => {
         const list = bankData.value[tab];
         if (!Array.isArray(list)) return;
         list.forEach(f => {
           if (f.mute) return;   // 词条自身已静音，保留原状
-          const hit = mutedByCat(f.relPath);
+          const hit = mutedByCat(f.id, f.tab);
           if (hit) { f.mute = 1; f.muteFromCat = hit; }
         });
       });
@@ -3134,7 +3204,7 @@ const submitAddTab = async () => {
     const onCardCondense = (traverse) => {
       closeCardMenu();
       const files = pickedFiles();
-      if (!files.length) { showToast('框选已失效，请重新框选', 'warn'); return; }
+      if (!files.length) { showToast('已选项已失效，请重新选择', 'warn'); return; }
       const items = files.map(f => ({ tab: f.tab || data.activeTab, relPath: f.relPath, id: f.id || '', name: f.name }));
       const sig = condenseSig(items);
       const label = traverse ? '遍历池 ∞' : '随机池 🎲';
@@ -3530,6 +3600,26 @@ const submitAddTab = async () => {
       showToast('「' + disp + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
     const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
+
+    // ============ Ctrl/⌘ + 左键点分类：整类批量选中（不是入池）============
+    // 与右键三态池（🎲 随机池 → ∞ 遍历池 → 移出池）完全解耦：Ctrl+左键只改「已选集合」，
+    // 把该分类下所有词条等价地置为被选中状态，池子由后续「凝结」一步生成（类型那时再定）。
+    // 普通左键的筛选语义完全不变。
+    // 大类 / 分类 chip 的统一左键入口：Ctrl（或 Mac 的 ⌘）按下即整类选中/取消，否则走原来的筛选
+    const onTabClick = (e, name) => {
+      if (e && (e.ctrlKey || e.metaKey)) {
+        if (e.preventDefault) e.preventDefault();
+        return toggleCatPick('tab', name, tabLabel(name));
+      }
+      switchTab(name);
+    };
+    const onChipClick = (e, depth, chip) => {
+      if (e && (e.ctrlKey || e.metaKey)) {
+        if (e.preventDefault) e.preventDefault();
+        return toggleCatPick('chip', (chip && chip.id) || '', (chip && chip.name) || '');
+      }
+      toggleChip(depth, chip);
+    };
 
     // ============ 占位符（右键 tab / chip 进池时同步出现在已选列表，类名即占位名；遍历/随机出词后填充该位置） ============
     // 池的唯一键：tab:大类名 / list:池id / chip:大类名|分类节点id（分类身份即节点 id，已无路径概念）
@@ -4735,9 +4825,12 @@ const submitAddTab = async () => {
       imageUrl, getImgIdx, displayContent, isFileSelected,
       // 卡片框选（右键长按）+ Ctrl 左键多选，凝结成池
       pickSel, gridEl, isPicked, clearPick, togglePick, onGridPointerDown, onCardCondense,
+      // 分类整类选中（Ctrl+左键）：与卡片已选集合共用同一出口，可供模板高亮
+      catPickSel, isTabCatPicked, isChipCatPicked,
       defaultImageUrl,
       isTabInPool, isChipInPool, isTabTraversePool, isChipTraversePool, tabHasSelected,
       switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
+      onTabClick, onChipClick,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToggleVg,
