@@ -288,22 +288,64 @@ const DEFAULT_PREF = {
         wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
       },
     },
-    // 链接相关（与 main.js 设置面板同构）：dir 目标根目录 / nameMode 子文件夹命名方式 / sep 标签连接符 / custom 分层模板
-    link: { dir: '', nameMode: 'time', sep: '@', custom: [] },
+    // 链接相关（与 main.js 设置面板同构）：dir 目标根目录 / nameMode 子文件夹命名方式
+    // timeFmt：按时间命名时的目录名格式（预设键，见 LINK_TIME_PRESETS）
+    // sep 标签隔离符号 / custom 分层模板（{type:'tag'|'text', value, rel, cat}，cat=整类分类层）
+    // hideGear：隐藏图库页「自定义分层」呼出齿轮（别人用图库时不必看到这个入口）
+    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
   },
   common: {
     noDeleteConfirm: false,
   },
 };
 
+// 标签树瘦身：只保留选择器需要的字段（名字/完整路径/图数/子节点）
+// 「整类可选」的判定就靠 children 是否为空：有子节点 = 分类节点
+export function normalizeTree(ns) {
+  if (!Array.isArray(ns)) return [];
+  return ns.map((n) => ({
+    name: String((n && n.name) || ''),
+    rel: String((n && n.rel) || (n && n.name) || ''),
+    count: (n && typeof n.count === 'number') ? n.count : null,
+    children: normalizeTree(n && n.children),
+  })).filter((n) => n.name);
+}
+
+// 快捷导出「按时间」命名的时间格式预设：key 存进 pref，label 是给人的样例
+export const LINK_TIME_PRESETS = [
+  { key: 'ymd_hms', label: '20261110_153012', tip: '日期_时分秒（最不容易重名）' },
+  { key: 'ymd-hms', label: '2026-11-10_15-30-12', tip: '带横线的日期_时分秒' },
+  { key: 'ymd', label: '20261110', tip: '只到日期（同一天多次导出自动加 _1/_2）' },
+  { key: 'ymd-dash', label: '2026-11-10', tip: '只到日期，日期带横线' },
+];
+// 按预设生成这次的目录名：只用本地时间，纯字符串（不含 / \ 等会被后端清洗的字符）
+export function linkTimeName(key, d) {
+  const t = (d instanceof Date) ? d : new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const y = String(t.getFullYear());
+  const m = p(t.getMonth() + 1);
+  const dd = p(t.getDate());
+  const H = p(t.getHours());
+  const M = p(t.getMinutes());
+  const S = p(t.getSeconds());
+  switch (key) {
+    case 'ymd-hms': return y + '-' + m + '-' + dd + '_' + H + '-' + M + '-' + S;
+    case 'ymd': return y + m + dd;
+    case 'ymd-dash': return y + '-' + m + '-' + dd;
+    default: return y + m + dd + '_' + H + M + S;
+  }
+}
+
 // 链接配置归一化：设置面板写盘的结构在旧存档里可能缺失，这里补齐默认值
 function normalizeLink(lk) {
-  const out = Object.assign({ dir: '', nameMode: 'time', sep: '@', custom: [] },
+  const out = Object.assign({ dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
     (lk && typeof lk === 'object') ? lk : {});
   if (typeof out.dir !== 'string') out.dir = '';
   if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
+  if (!LINK_TIME_PRESETS.some((p) => p.key === out.timeFmt)) out.timeFmt = 'ymd_hms';
   if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
   if (!Array.isArray(out.custom)) out.custom = [];
+  out.hideGear = out.hideGear === true;
   return out;
 }
 
@@ -807,6 +849,8 @@ export function useGalleryCommon(opts = {}) {
   const tagTreeKidsMap = ref({});
   // 树节点元信息（name -> {id, isCustom}）：外部区点击/老状态回填时按名字找回 id，供 SQL 过滤
   const tagKidMeta = ref({});
+  // 标签树原始层级（整棵）：给「自定义分层」浮层选择器用，能按「角色 → 胡桃」逐级钻取、也能整类选取
+  const tagTreeRoots = ref([]);
   // 词条 id -> 显示名：URL 带 id 筛选时（词库跳转）用它把数字回显成词条名
   const tagIdNameMap = ref({});
   const expandedTags = ref(new Set());
@@ -846,6 +890,8 @@ export function useGalleryCommon(opts = {}) {
         tagTreeKidsMap.value = map;
         tagIdNameMap.value = idMap;
         tagKidMeta.value = kidMeta;
+        // 只挑整层选择器需要的字段，避免把后端整包数据挂在响应式里
+        tagTreeRoots.value = normalizeTree(d.tree);
         backfillTagIds();
       }
     } catch (e) { /* 静默失败，右键展开无子标签可显示 */ }
@@ -2026,13 +2072,16 @@ export function useGalleryCommon(opts = {}) {
       .filter(Boolean);
   }
   // 计算导出子文件夹层级：返回空数组 = 交给后端按时间戳命名
-  //   time   按时间
-  //   tags   按过滤标签：启用标签用 @ 连接成一段（凌乱发@璃月）
-  //   custom 自定义分层：模板每项一层（text 文本层 / tag 标签层，标签层只在标签当前启用时继承）
+  //   time   按时间：用设置里的时间格式拼一段（只此一层）
+  //   tags   按过滤标签：启用标签用隔离符号连成一段（凌乱发@璃月）
+  //   custom 自定义分层：模板每项一层（text 文本层 / tag 标签层 / cat 整类分类层）
   function linkNameSegments() {
     const lk = (pref.gallery && pref.gallery.link) || {};
     const sep = lk.sep || '@';
     const actives = activeTagNames();
+    if (lk.nameMode === 'time') {
+      return [linkTimeName(lk.timeFmt)];
+    }
     if (lk.nameMode === 'tags') {
       return actives.length ? [actives.join(sep)] : [];
     }
@@ -2042,6 +2091,8 @@ export function useGalleryCommon(opts = {}) {
       for (const it of lk.custom) {
         const v = String((it && it.value) || '').trim();
         if (!v) continue;
+        // 整类分类层是结构层，不跟启用标签走，永远输出
+        if (it.type === 'tag' && it.cat) { segs.push(v); continue; }
         // 本应是标签层、该标签也确实在标签库里、但现在没启用 → 缺这一段，跳过（导出前已被 pending 拦下）
         if (it.type === 'tag' && !actives.includes(v) && known.includes(v)) continue;
         segs.push(v);
@@ -2075,18 +2126,21 @@ export function useGalleryCommon(opts = {}) {
     return Array.from(set);
   });
   // pending 层数：自定义分层里 type=tag、标签在库里但现在没启用的层（这些层导出时缺目录，必须先修）
+  // 整类分类层（cat）是结构层，不随启用标签变化，永远不算失效
   const linkPending = computed(() => {
     const lk = (pref.gallery && pref.gallery.link) || {};
     if (lk.nameMode !== 'custom' || !Array.isArray(lk.custom)) return 0;
     const act = activeTagNames();
     const known = knownTagNames.value;
     return lk.custom.filter((it) => {
-      if (!it || it.type !== 'tag') return false;
+      if (!it || it.type !== 'tag' || it.cat) return false;
       const v = String(it.value || '').trim();
       if (!v) return false;
       return known.includes(v) && !act.includes(v);
     }).length;
   });
+  // 图库页是否隐藏「自定义分层」呼出齿轮：别人借用图库时不希望工具栏多这个入口，可在设置里关掉
+  const hideLinkGear = computed(() => !!((pref.gallery && pref.gallery.link) || {}).hideGear);
   async function openLinkDialog(mode) {
     linkDlgMode.value = mode === 'export' ? 'export' : 'cfg';
     linkDlgOpen.value = true;
@@ -2098,8 +2152,7 @@ export function useGalleryCommon(opts = {}) {
   // 否则用户改了层却仍按时间命名，会以为没生效（要回按时间就去设置页改回）。
   function onLinkSaved(cfg) {
     const lk = pref.gallery.link;
-    lk.dir = String((cfg && cfg.dir) || '');
-    lk.sep = String((cfg && cfg.sep) || '@');
+    // 目录与隔离符号属于「一次性配置」，统一归设置页管；弹框只负责分层内容，不再回写这两项
     lk.custom = (cfg && Array.isArray(cfg.custom)) ? cfg.custom : [];
     lk.nameMode = 'custom';
     try {
@@ -2237,14 +2290,18 @@ export function useGalleryCommon(opts = {}) {
     selected, selCount, isSel, onPointerDown, onCardClick,
     askBatchDelete, batchLink,
     linkDlgOpen, linkDlgMode, activeTags, knownTagNames, linkPending,
+    tagTreeRoots, hideLinkGear,
     openLinkDialog, closeLinkDialog, onLinkSaved,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 快捷导出 · 自定义分层弹框（原型 v3 落地）
-// 层行不再用「上移/下移」小按钮，改成按住左侧手柄拖动来换顺序（HTML5 draggable，
-// 插入式移动：拖到哪一层就插到那一层的位置，不是两两交换，长列表上更符合直觉）。
+// 快捷导出 · 自定义分层弹框（v4 落地：浮层气泡版标签选择器）
+// 与原型 v3 的差别：
+//   1. 标签层不再用原生下拉框，改成点 chip 弹出浮层：支持面包屑逐级钻取、搜索、
+//      整类选取（选「胡桃」这一层时可以直接用「凌乱发」这种父级分类作一层目录）。
+//   2. 链接目录 / 标签隔离符号已挪到设置页，弹框只管「层级怎么拼」，不再回写这两项。
+// 层顺序仍是按住 ⠿ 拖动（插入式移动，不是两两交换）。
 // mode=cfg 只改配置；mode=export 是导出被拦后进来修标签失效层。
 // ─────────────────────────────────────────────────────────────────────────────
 export const LinkDialog = {
@@ -2254,36 +2311,177 @@ export const LinkDialog = {
     mode: { type: String, default: 'cfg' },
     activeTags: { type: Array, default: () => [] },
     knownTags: { type: Array, default: () => [] },
+    // 标签树（整棵，从 tagtree 接口瘦身而来）：浮层选择器靠它钻取分类 / 选整类
+    tree: { type: Array, default: () => [] },
     link: { type: Object, default: () => ({}) },
   },
   emits: ['close', 'saved', 'export'],
   setup(props, { emit }) {
-    const draft = reactive({ dir: '', sep: '@', custom: [] });
+    const draft = reactive({ custom: [] });
     const err = ref('');
     const dragFrom = ref(-1);
     const dragTo = ref(-1);
     let uidSeq = 0;
 
+    // ── 浮层选择器状态 ──────────────────────────────────────────────────────
+    const popRef = ref(null);
+    const pk = reactive({ open: false, idx: -1, q: '', hi: 0, top: 0, left: 0, crumbs: [] });
+
+    // 树叶兜底：万一树没拉到（首次进图库直接点齿轮），用当前启用标签铺一层，至少能选
+    const roots = computed(() => {
+      const t = Array.isArray(props.tree) ? props.tree : [];
+      if (t.length) return t;
+      if (!props.activeTags.length) return [];
+      return [{
+        name: '启用标签', rel: '', count: props.activeTags.length,
+        children: props.activeTags.map((n) => ({ name: n, rel: n, count: null, children: [] })),
+      }];
+    });
+    function nodeOf(crumbs) {
+      let list = roots.value;
+      let cur = null;
+      for (const c of crumbs) {
+        cur = (list || []).find((n) => (n.rel || n.name) === (c.rel || c.name)) || null;
+        if (!cur) return null;
+        list = cur.children || [];
+      }
+      return cur;
+    }
+    // 搜索：整树拍平后按名字/路径模糊匹配，最多 50 条
+    function flatMatch(q) {
+      const lq = String(q).toLowerCase();
+      const out = [];
+      (function walk(ns) {
+        for (const n of ns || []) {
+          if (String(n.name || '').toLowerCase().includes(lq)
+            || String(n.rel || '').toLowerCase().includes(lq)) out.push(n);
+          if (n.children && n.children.length) walk(n.children);
+        }
+      })(roots.value);
+      return out.slice(0, 50);
+    }
+    const pkKids = computed(() => {
+      if (String(pk.q || '').trim()) return flatMatch(pk.q.trim());
+      const cur = nodeOf(pk.crumbs);
+      return cur ? (cur.children || []) : roots.value;
+    });
+    const pkCurName = computed(() => {
+      const last = pk.crumbs[pk.crumbs.length - 1];
+      return last ? last.name : '';
+    });
+    function closePicker() {
+      pk.open = false;
+      pk.idx = -1;
+      pk.q = '';
+      pk.hi = 0;
+      pk.crumbs = [];
+    }
+    // 打开浮层：定位到当前行 chip 的正下方；下方放不下就翻到上方
+    function openPicker(i, ev) {
+      if (pk.open && pk.idx === i) { closePicker(); return; }
+      pk.idx = i;
+      pk.open = true;
+      pk.q = '';
+      pk.hi = 0;
+      pk.crumbs = [];
+      const it = draft.custom[i];
+      // 该层已经选过：把面包屑还原到它的父级，方便顺着原路径改
+      if (it && it.type === 'tag' && it.rel) {
+        const segs = String(it.rel).split('/').filter(Boolean);
+        let list = roots.value;
+        const acc = [];
+        for (let k = 0; k < segs.length - 1; k++) {
+          const hit = (list || []).find((n) => n.name === segs[k]);
+          if (!hit) break;
+          acc.push({ name: hit.name, rel: hit.rel || hit.name });
+          list = hit.children || [];
+        }
+        pk.crumbs = acc;
+      }
+      const el = ev && (ev.currentTarget || ev.target);
+      if (el && el.getBoundingClientRect) {
+        const r = el.getBoundingClientRect();
+        const W = 440;
+        const H = 336;
+        pk.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 12));
+        let top = r.bottom + 6;
+        if (top + H > window.innerHeight - 12) top = Math.max(12, r.top - H - 6);
+        pk.top = top;
+      }
+    }
+    // 选中一项：有子节点 = 分类，落成「整类层」（目录名就是这个分类名）
+    function applyPick(node) {
+      if (!node) return;
+      const it = draft.custom[pk.idx];
+      if (it) {
+        it.type = 'tag';
+        it.value = node.name;
+        it.rel = node.rel || node.name;
+        it.cat = !!(node.children && node.children.length);
+      }
+      closePicker();
+    }
+    function applyWhole() { applyPick(nodeOf(pk.crumbs)); }
+    function enterNode(node) {
+      if (!node || !(node.children && node.children.length)) return;
+      pk.crumbs = pk.crumbs.concat([{ name: node.name, rel: node.rel || node.name }]);
+      pk.q = '';
+      pk.hi = 0;
+    }
+    function scrollHi() {
+      nextTick(() => {
+        const box = popRef.value && popRef.value.querySelector('.zhg-lkd-pop-list');
+        const row = box && box.querySelectorAll('.zhg-lkd-pop-item')[pk.hi];
+        if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    function onDocDown(e) {
+      if (!pk.open) return;
+      const pop = popRef.value;
+      if (pop && pop.contains(e.target)) return;
+      // 点别的层的 chip 交给它自己的 click 去切换，不在这里先关
+      if (e.target && e.target.closest && e.target.closest('.zhg-lkd-chip')) return;
+      closePicker();
+    }
+    function onDocKey(e) {
+      if (!pk.open) return;
+      if (e.key === 'Escape') { e.stopPropagation(); closePicker(); return; }
+      const n = pkKids.value.length;
+      if (e.key === 'ArrowDown') { e.preventDefault(); pk.hi = n ? (pk.hi + 1) % n : 0; scrollHi(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); pk.hi = n ? (pk.hi - 1 + n) % n : 0; scrollHi(); }
+      else if (e.key === 'Enter') { e.preventDefault(); applyPick(pkKids.value[pk.hi]); }
+      else if (e.key === 'Backspace' && !pk.q && pk.crumbs.length) { e.preventDefault(); pk.crumbs.pop(); }
+    }
+    onMounted(() => {
+      document.addEventListener('mousedown', onDocDown, true);
+      document.addEventListener('keydown', onDocKey, true);
+    });
+    onBeforeUnmount(() => {
+      document.removeEventListener('mousedown', onDocDown, true);
+      document.removeEventListener('keydown', onDocKey, true);
+    });
+
     // 每次打开都从 pref 深拷贝一份草稿，取消即丢弃；uid 只用于 v-for key，保存时剔除
     function reset() {
-      draft.dir = String(props.link.dir || '');
-      draft.sep = String(props.link.sep || '@');
       draft.custom = (Array.isArray(props.link.custom) ? props.link.custom : []).map((it) => ({
         uid: 'L' + (++uidSeq),
         type: it && it.type === 'tag' ? 'tag' : 'text',
         value: String((it && it.value) || ''),
+        rel: String((it && it.rel) || ''),
+        cat: !!(it && it.cat),
       }));
       err.value = '';
       dragFrom.value = -1;
       dragTo.value = -1;
+      closePicker();
     }
     watch(() => props.open, (v) => { if (v) reset(); });
 
-    // 标签层当前是否已失效：标签在过滤区被停用/移除 → 该层导不出目录，标红等用户修
-    // 失效 = 这层是标签层、该标签确实存在于标签库、但现在没启用（被停用/移除）。
-    // 手输一个库里没有的名字不算失效，保存时会被规范化成文字层，当固定目录名用。
+    // 失效 = 这层是普通标签层、该标签确实存在于标签库、但现在没启用。
+    // 整类层（cat）是结构层，不随启用标签变化，永远有效；
+    // 手输一个库里没有的名字也不算失效，保存时会被规范化成文字层，当固定目录名用。
     function isBad(it) {
-      if (!it || it.type !== 'tag') return false;
+      if (!it || it.type !== 'tag' || it.cat) return false;
       const v = String(it.value || '').trim();
       if (!v) return false;
       return props.knownTags.includes(v) && !props.activeTags.includes(v);
@@ -2296,18 +2494,21 @@ export const LinkDialog = {
     });
 
     function addLayer(type) {
-      draft.custom.push({ uid: 'L' + (++uidSeq), type: type === 'tag' ? 'tag' : 'text', value: '' });
+      draft.custom.push({
+        uid: 'L' + (++uidSeq), type: type === 'tag' ? 'tag' : 'text', value: '', rel: '', cat: false,
+      });
     }
-    function removeLayer(i) { draft.custom.splice(i, 1); }
+    function removeLayer(i) {
+      if (pk.open && pk.idx === i) closePicker();
+      draft.custom.splice(i, 1);
+    }
+    // 切类型：切到文字层就丢掉标签身份（不再是整类层），切回标签层则重选
     function toggleType(i) {
       const it = draft.custom[i];
-      if (it) it.type = it.type === 'tag' ? 'text' : 'tag';
-    }
-    function pickTag(i, e) {
-      const it = draft.custom[i];
-      const v = e && e.target ? e.target.value : '';
-      if (it && v) it.value = v;
-      if (e && e.target) e.target.value = '';
+      if (!it) return;
+      it.type = it.type === 'tag' ? 'text' : 'tag';
+      if (it.type === 'text') { it.cat = false; it.rel = ''; }
+      if (pk.open && pk.idx === i) closePicker();
     }
 
     // ── 拖拽排序 ────────────────────────────────────────────────────────────
@@ -2342,41 +2543,39 @@ export const LinkDialog = {
 
     function save(doExport) {
       err.value = '';
-      const dir = String(draft.dir || '').trim();
-      if (dir && !/^([A-Za-z]:[\\/]|\\\\)/.test(dir)) {
-        err.value = '链接目录要填绝对路径，例如 D:\\zhule_link；留空则用默认目录';
-        return;
-      }
       const custom = draft.custom
         .map((it) => {
           const value = String(it.value || '').trim();
           let type = it.type === 'tag' ? 'tag' : 'text';
-          // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
-          if (type === 'tag' && value && !props.activeTags.includes(value) && !props.knownTags.includes(value)) {
-            type = 'text';
+          let cat = false;
+          if (type === 'tag' && value) {
+            if (it.cat) cat = true;
+            // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
+            else if (!props.activeTags.includes(value) && !props.knownTags.includes(value)) type = 'text';
           }
-          return { type, value };
+          return { type, value, rel: cat || type === 'tag' ? String(it.rel || '') : '', cat };
         })
         .filter((it) => it.value)
         .slice(0, 12);
       if (badCount.value > 0) {
-        err.value = '还有 ' + badCount.value + ' 层标签已停用：改成文字层、换个标签或删掉这一层';
+        err.value = '还有 ' + badCount.value + ' 层标签已停用：换个标签 / 改成整类 / 改成文字层或删掉这一层';
         return;
       }
       if (doExport && !custom.length) {
         err.value = '至少要留一层，或者去设置页改成按时间 / 按过滤标签命名';
         return;
       }
-      const sep = String(draft.sep || '').trim().slice(0, 2) || '@';
-      emit('saved', { dir, sep, custom });
+      // 只交分层模板：目录与隔离符号在设置页配置，不经这里改动
+      emit('saved', { custom });
       if (doExport) emit('export');
       emit('close');
     }
 
     return {
-      draft, err, dragFrom, dragTo, badCount, preview,
-      isBad, addLayer, removeLayer, toggleType, pickTag,
-      onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, save,
+      draft, err, dragFrom, dragTo, badCount, preview, pk, popRef, pkKids, pkCurName,
+      isBad, addLayer, removeLayer, toggleType, openPicker, closePicker,
+      applyPick, applyWhole, enterNode, save,
+      onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
     };
   },
   template: `
@@ -2387,16 +2586,6 @@ export const LinkDialog = {
           <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')">✕</button>
         </div>
         <div class="zhg-lkd-body">
-          <div class="zhg-lkd-line">
-            <span class="zhg-lkd-k">链接目录</span>
-            <input class="zhg-lkd-input zhg-lkd-dir" v-model="draft.dir" spellcheck="false"
-                   placeholder="留空 = output/zhule_studio/zhule_link">
-          </div>
-          <div class="zhg-lkd-line">
-            <span class="zhg-lkd-k">标签连接符</span>
-            <input class="zhg-lkd-input zhg-lkd-sep" v-model="draft.sep" maxlength="2" spellcheck="false" placeholder="@">
-            <span class="zhg-lkd-note">只在「按过滤标签」命名时用</span>
-          </div>
           <div class="zhg-lkd-lh">分层顺序（从上到下 = 由外到内，按住 ⠿ 拖动换顺序）</div>
           <div class="zhg-lkd-layers">
             <div v-for="(it, i) in draft.custom" :key="it.uid" class="zhg-lkd-layer"
@@ -2409,12 +2598,14 @@ export const LinkDialog = {
               <button class="zhg-lkd-type" :class="{ tag: it.type === 'tag' }"
                       data-tip="点击切换：标签层跟着启用的过滤标签走 / 文字层就是固定目录名"
                       @click="toggleType(i)">{{ it.type === 'tag' ? '标签' : '文字' }}</button>
-              <input class="zhg-lkd-input" v-model="it.value" spellcheck="false"
-                     :placeholder="it.type === 'tag' ? '标签名，如 凌乱发' : '固定目录名，如 出图'">
-              <select v-if="it.type === 'tag'" class="zhg-lkd-pick" @change="pickTag(i, $event)">
-                <option value="">启用标签…</option>
-                <option v-for="t in activeTags" :key="t" :value="t">{{ t }}</option>
-              </select>
+              <button v-if="it.type === 'tag'" class="zhg-lkd-chip" :class="{ empty: !it.value }"
+                      data-tip="点击选标签或整类分类（可逐级钻取、可搜索）" @click="openPicker(i, $event)">
+                <span class="zhg-lkd-chip-nm">{{ it.value || '点这里选标签 / 整类…' }}</span>
+                <span v-if="it.cat" class="zhg-lkd-chip-tag">整类</span>
+                <span class="zhg-lkd-chip-cv">▾</span>
+              </button>
+              <input v-else class="zhg-lkd-input" v-model="it.value" spellcheck="false"
+                     placeholder="固定目录名，如 出图">
               <span v-if="isBad(it)" class="zhg-lkd-bad">已停用</span>
               <button class="zhg-lkd-del" data-tip="删除这一层" @click="removeLayer(i)">✕</button>
             </div>
@@ -2427,13 +2618,53 @@ export const LinkDialog = {
           </div>
           <div class="zhg-lkd-prev"><span class="zhg-lkd-k">预览</span><code>{{ preview }}</code></div>
           <div v-if="err" class="zhg-lkd-err">{{ err }}</div>
-          <div v-else-if="badCount" class="zhg-lkd-err">{{ badCount }} 层标签已停用：改成文字层、换个标签或删掉，否则这次不导出</div>
+          <div v-else-if="badCount" class="zhg-lkd-err">{{ badCount }} 层标签已停用：换个标签 / 改成整类 / 改成文字层或删掉，否则这次不导出</div>
         </div>
         <div class="zhg-lkd-foot">
           <button class="btn zhg-mini" @click="$emit('close')">取消</button>
           <button class="btn zhg-mini" v-if="mode === 'cfg'" @click="save(false)">保存</button>
           <button class="btn zhg-mini zhg-rename-confirm" v-if="mode === 'export'"
                   :disabled="badCount > 0" @click="save(true)">保存并导出</button>
+        </div>
+      </div>
+
+      <!-- 浮层气泡：点 chip 现建，定位在那一行正下方；点外部 / Esc 关闭 -->
+      <div v-if="pk.open" ref="popRef" class="zhg-lkd-pop" :style="{ left: pk.left + 'px', top: pk.top + 'px' }"
+           @mousedown.stop>
+        <div class="zhg-lkd-pop-search">
+          <input class="zhg-lkd-pop-input" v-model="pk.q" spellcheck="false"
+                 placeholder="搜标签 / 分类名…（↑↓ 选，回车确定，Esc 关闭）" @input="pk.hi = 0">
+          <span class="zhg-lkd-pop-esc">Esc</span>
+        </div>
+        <div v-if="!pk.q" class="zhg-lkd-pop-crumbs">
+          <button class="zhg-lkd-crumb" @click="pk.crumbs = []">全部</button>
+          <template v-for="(c, ci) in pk.crumbs" :key="c.rel + '_' + ci">
+            <span class="zhg-lkd-crumbsep">/</span>
+            <button class="zhg-lkd-crumb" :class="{ cur: ci === pk.crumbs.length - 1 }"
+                    @click="pk.crumbs = pk.crumbs.slice(0, ci + 1)">{{ c.name }}</button>
+          </template>
+        </div>
+        <div v-if="!pk.q && pk.crumbs.length" class="zhg-lkd-pop-whole" @click="applyWhole">
+          <span class="ok">✓</span> 就用这一层：<b>{{ pkCurName }}</b>
+          <span class="hint">整类（子分类全算进来）</span>
+        </div>
+        <div class="zhg-lkd-pop-list">
+          <div v-for="(n, ni) in pkKids" :key="(n.rel || n.name) + '_' + ni" class="zhg-lkd-pop-item"
+               :class="{ hi: ni === pk.hi }" @mouseenter="pk.hi = ni" @click="applyPick(n)">
+            <span class="ic">{{ n.children && n.children.length ? '▸' : '·' }}</span>
+            <span class="nm">
+              <b>{{ n.name }}</b>
+              <i v-if="n.children && n.children.length">{{ n.children.length }} 个子分类</i>
+            </span>
+            <span v-if="n.count !== null && n.count !== undefined" class="cnt">{{ n.count }}</span>
+            <button v-if="n.children && n.children.length" class="enter" data-tip="往下钻一层"
+                    @click.stop="enterNode(n)">›</button>
+          </div>
+          <div v-if="!pkKids.length" class="zhg-lkd-pop-empty">没有匹配的标签 / 分类</div>
+        </div>
+        <div class="zhg-lkd-pop-foot">
+          <span>点整行 = 直接选这一项</span>
+          <span>行右侧 › = 往下钻</span>
         </div>
       </div>
     </div>

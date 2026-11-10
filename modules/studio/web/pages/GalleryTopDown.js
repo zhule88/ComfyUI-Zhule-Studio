@@ -20,8 +20,10 @@ export default {
               :data-tip="'快捷导出选中的图片：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库同一磁盘分区），按当前命名设置直接导出；自定义分层里有标签失效时会弹框让你先修。当前目录：' + (pref.gallery.link.dir || 'output/zhule_studio/zhule_link')" @click="batchLink">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path></svg>
       </button>
-      <button class="btn zhg-link-cfg-btn" :class="{ warn: linkPending > 0 }"
-              :data-tip="'配置导出子文件夹的分层与链接目录（层顺序可拖动调整）' + (linkPending > 0 ? '；当前有 ' + linkPending + ' 层标签已停用，导出会被拦下' : '')"
+      <!-- 设置页可关掉这个入口（hideGear）：别人用图库时不必看到「自定义分层」；
+           分层里真有失效标签时仍然强制亮出来，否则出问题却没有修的地方 -->
+      <button v-if="!hideLinkGear || linkPending > 0" class="btn zhg-link-cfg-btn" :class="{ warn: linkPending > 0 }"
+              :data-tip="'配置导出子文件夹的分层（层顺序可拖动调整、标签可整类选取）' + (linkPending > 0 ? '；当前有 ' + linkPending + ' 层标签已停用，导出会被拦下' : '')"
               @click="openLinkDialog('cfg')">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9z"></path></svg>
       </button>
@@ -342,7 +344,8 @@ export default {
       </div>
     </transition>
 
-    <LinkDialog :open="linkDlgOpen" :mode="linkDlgMode" :active-tags="activeTags" :known-tags="knownTagNames" :link="pref.gallery.link"
+    <LinkDialog :open="linkDlgOpen" :mode="linkDlgMode" :active-tags="activeTags" :known-tags="knownTagNames"
+                :tree="tagTreeRoots" :link="pref.gallery.link"
                 @close="closeLinkDialog" @saved="onLinkSaved" @export="batchLink" />
   </div>
   `,

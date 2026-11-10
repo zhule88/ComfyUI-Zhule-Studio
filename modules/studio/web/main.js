@@ -3,6 +3,8 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import Wordbank from './pages/Wordbank.js';
 import Gallery from './pages/Gallery.js';
 import GalleryTopDown from './pages/GalleryTopDown.js';
+// 分层弹框与图库页共用同一份组件 + 时间格式预设，设置页调用时视觉与图库完全一致
+import { LinkDialog, LINK_TIME_PRESETS, linkTimeName, normalizeTree } from './pages/galleryCommon.js';
 
 const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
@@ -30,9 +32,12 @@ const DEFAULT_PREF = {
     // dir：文件链接地址，留空 = output/zhule_studio/zhule_link；只接受绝对路径（D:\xxx 或 \\nas\share）
     // nameMode：time 按时间（时间戳子文件夹）/ tags 按过滤标签（启用的标签用 sep 连成一段，如 凌乱发@璃月）
     //           / custom 自定义分层（多层目录，模板见 custom）
-    // sep：按过滤标签命名时标签之间的连接符
-    // custom：自定义分层模板，元素 { type: 'text' | 'tag', value: '凌乱发' }，数组顺序即目录层级（无限层）
-    link: { dir: '', nameMode: 'time', sep: '@', custom: [] },
+    // timeFmt：按时间命名时的目录名格式（预设键，见 LINK_TIME_PRESETS）
+    // sep：按过滤标签命名时标签之间的隔离符号
+    // custom：自定义分层模板，元素 { type: 'text' | 'tag', value: '凌乱发', rel, cat }，
+    //         数组顺序即目录层级；cat=true 表示整类分类层（目录名就是分类名，不随启用标签变化）
+    // hideGear：隐藏图库页「自定义分层」呼出齿轮，别人用图库时不会看到这个入口
+    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
   },
   wordbank: { autoSelectParent: true },
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
@@ -101,14 +106,32 @@ function normalizeTagColor(tc) {
 }
 
 // 链接相关配置归一化：兼容旧存档（无 link 字段）与残缺数据，
-// dir 只保留字符串、nameMode 非法回落 time、sep 空则用 @、custom 必须是数组
+// dir 只保留字符串、nameMode 非法回落 time、timeFmt 非法回落 ymd_hms、
+// sep 空则用 @、custom 必须是数组、hideGear 只认 true
 function normalizeLink(lk) {
   const out = Object.assign({}, DEFAULT_PREF.gallery.link, (lk && typeof lk === 'object') ? lk : {});
   if (typeof out.dir !== 'string') out.dir = '';
   if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
+  if (!LINK_TIME_PRESETS.some((p) => p.key === out.timeFmt)) out.timeFmt = 'ymd_hms';
   if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
   if (!Array.isArray(out.custom)) out.custom = [];
+  out.hideGear = out.hideGear === true;
   return out;
+}
+
+// 读图库外部过滤区当前「启用」的标签名（与图库页共用同一份 localStorage 存档）。
+// 设置页要用它判断自定义分层里哪一层标签已经失效（在库里但现在没启用）。
+function readGalleryActiveTags() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('zhule_gallery_tags') || 'null');
+    const list = (raw && Array.isArray(raw.tags)) ? raw.tags : [];
+    const out = [];
+    for (const t of list) {
+      if (!t || typeof t.name !== 'string' || !t.name.trim()) continue;
+      if (t.active === true && !t.hidden && out.indexOf(t.name) < 0) out.push(t.name);
+    }
+    return out;
+  } catch (e) { return []; }
 }
 
 function loadPref() {
@@ -147,9 +170,15 @@ const router = createRouter({
 
 const App = {
   name: 'App',
+  // 设置页的「自定义分层」弹框直接复用图库那份组件（视觉/交互/拖拽全部一致）
+  components: {ZhgLinkDialog: LinkDialog},
   setup() {
     const showSettings = ref(false);
     const pref = ref(loadPref());
+    // 设置页里的「自定义分层」弹框：与图库复用同一组件，故这里也备一份树与标签集合
+    const linkDlgOpen = ref(false);
+    const linkTree = ref([]);
+    const linkActiveTags = ref([]);
     function savePref() {
       localStorage.setItem(PREF_KEY, JSON.stringify(pref.value));
       window.dispatchEvent(new CustomEvent('zhule-pref-changed', { detail: pref.value }));
@@ -194,6 +223,61 @@ const App = {
       pref.value.gallery.link.nameMode = mode;
       savePref();
     }
+    // 按时间命名的时间格式：切换后同一设置页里的样例即时跟着变
+    function setLinkTimeFmt(key) {
+      if (!LINK_TIME_PRESETS.some((p) => p.key === key)) return;
+      pref.value.gallery.link.timeFmt = key;
+      savePref();
+    }
+    // 标签隔离符号：最多 2 个字符，清空回落 @
+    function setLinkSep(v) {
+      pref.value.gallery.link.sep = String(v == null ? '' : v).trim().slice(0, 2) || '@';
+      savePref();
+    }
+    // 图库页齿轮开关：关掉 = 图库工具栏不再出现自定义分层入口（存档里记 hideGear）
+    function toggleHideLinkGear() {
+      pref.value.gallery.link.hideGear = pref.value.gallery.link.hideGear !== true;
+      savePref();
+    }
+    // 设置页里「自定义分层」的编辑入口：直接复用图库那套弹框组件，
+    // 只改分层模板本身（目录与隔离符号是上面两项各自的设置，不由弹框回写）
+    function openLinkDlg() {
+      // 每次打开都重新读一次启用标签：图库那边刚改过也能反映到失效判定里
+      linkActiveTags.value = readGalleryActiveTags();
+      linkDlgOpen.value = true;
+      if (!linkTree.value.length) loadLinkTree();
+    }
+    function closeLinkDlg() { linkDlgOpen.value = false; }
+    // 标签树：设置页独立于图库页，自己拉一份（与图库同接口，结构瘦身规则也共用）
+    async function loadLinkTree() {
+      try {
+        const r = await fetch('/zhule_studio/api/gallery/tagtree', { headers: { 'Cache-Control': 'no-cache' } });
+        const d = await r.json();
+        if (d && d.ok) linkTree.value = normalizeTree(d.tree);
+      } catch (e) { linkTree.value = []; }
+    }
+    function onLinkDlgSaved(cfg) {
+      pref.value.gallery.link.custom = Array.isArray(cfg && cfg.custom) ? cfg.custom : [];
+      // 在设置页保存分层，就意味着想用自定义分层，顺手把模式切过去
+      pref.value.gallery.link.nameMode = 'custom';
+      savePref();
+    }
+    // 全库标签名（把树拍平）：只用于区分「标签被停用」和「手填的固定目录名」
+    const linkKnownTags = computed(() => {
+      const out = [];
+      (function walk(ns) {
+        for (const n of ns || []) {
+          if (n && n.name && out.indexOf(n.name) < 0) out.push(n.name);
+          if (n && n.children && n.children.length) walk(n.children);
+        }
+      })(linkTree.value);
+      return out;
+    });
+    // 已配置的层数（只数有内容的层，空层保存时本来就会丢）
+    const linkLayerCount = computed(() => (pref.value.gallery.link.custom || [])
+      .filter((it) => it && String(it.value || '').trim()).length);
+    // 时间格式样例：切换格式后当场能看到这次的目录长什么样
+    const linkTimeSample = computed(() => linkTimeName(pref.value.gallery.link.timeFmt, new Date()));
     // 图片上的图标大小：写 :root 的 --zh-act-size，图库/词库卡片操作图标即时跟随（无需刷新页面）
     function applyIconSize(px) {
       const raw = Number(px);
@@ -438,6 +522,8 @@ const App = {
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
+      LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, linkTimeSample,
+      linkDlgOpen, linkTree, linkActiveTags, linkKnownTags, linkLayerCount, openLinkDlg, closeLinkDlg, onLinkDlgSaved,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
@@ -644,8 +730,53 @@ const App = {
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'custom' }" @click="setLinkNameMode('custom')">自定义分层</button>
                   </div>
                 </div>
-                <div class="settings-hint">按过滤标签：把当前启用的过滤标签用 @ 连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发@璃月；没有启用标签时自动回退按时间。</div>
-                <div class="settings-hint">自定义分层：多层目录（凌乱发/璃月/出图 这样一层层往下）。层的内容与顺序在图库工具栏下载按钮旁的齿轮按钮里编辑（支持拖动排序）；某层的标签在过滤区被停用时，下载会被拦下并弹框让你先修。</div>
+
+                <!-- 通用项（三种模式都显示）：图库页下载按钮旁的呼出图标要不要露出来 -->
+                <div class="settings-row">
+                  <span class="settings-label">显示呼出图标</span>
+                  <label class="settings-switch" data-tip="关掉后图库工具栏不再出现齿轮入口，别人用这台电脑的图库时看不到、也不会误改分层">
+                    <input type="checkbox" :checked="pref.gallery.link.hideGear !== true" @change="toggleHideLinkGear">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-hint">呼出图标 = 图库页下载按钮旁的齿轮，点开就能现场改分层。别人可能有自己的用法、不需要一直改，关掉后图库页只留下载按钮；要改时回来打开即可，已保存的分层不受影响。</div>
+
+                <!-- 按时间：下面只多一个「时间格式」，切格式当场给样例 -->
+                <template v-if="pref.gallery.link.nameMode === 'time'">
+                  <div class="settings-row settings-row-stack">
+                    <span class="settings-label">时间格式</span>
+                    <div class="settings-seg settings-seg-wrap">
+                      <button v-for="p in LINK_TIME_PRESETS" :key="p.key" class="settings-seg-btn"
+                              :class="{ on: pref.gallery.link.timeFmt === p.key }"
+                              :data-tip="p.tip" @click="setLinkTimeFmt(p.key)">{{ p.label }}</button>
+                    </div>
+                  </div>
+                  <div class="settings-hint">这次的子文件夹名会像 <b>{{ linkTimeSample }}</b>。同一天多次导出时后端会自动加 _1 / _2 区分，不会覆盖上一次。</div>
+                </template>
+
+                <!-- 按过滤标签：下面只多一个「标签隔离符号」 -->
+                <template v-else-if="pref.gallery.link.nameMode === 'tags'">
+                  <div class="settings-row">
+                    <span class="settings-label">标签隔离符号</span>
+                    <input class="settings-seed-input settings-link-sep" :value="pref.gallery.link.sep"
+                           maxlength="2" spellcheck="false" placeholder="@"
+                           data-tip="多个启用标签拼成一段文件夹名时的分隔符，例如 凌乱发@璃月；最多 2 个字符，留空回退 @"
+                           @change="setLinkSep($event.target.value)">
+                  </div>
+                  <div class="settings-hint">把当前启用的过滤标签用「{{ pref.gallery.link.sep }}」连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发{{ pref.gallery.link.sep }}璃月；没有启用标签时自动回退按时间。</div>
+                </template>
+
+                <!-- 自定义分层：分层内容编辑入口（呼出图标开关是上面的通用项） -->
+                <template v-else>
+                  <div class="settings-row">
+                    <span class="settings-label">分层内容</span>
+                    <button class="settings-seg-btn on settings-link-edit" @click="openLinkDlg">
+                      编辑分层<span v-if="linkLayerCount"> · 当前 {{ linkLayerCount }} 层</span>
+                    </button>
+                  </div>
+                  <div class="settings-hint">分层内容：多层目录（凌乱发/璃月/出图 这样一层层往下）。可点上面按钮编辑，图库页下载按钮旁的齿轮也能打开同一个弹框；支持拖动排序、整类选取（直接拿「凌乱发」这种分类当一层目录）。</div>
+                </template>
+                <div class="settings-hint">某层普通标签在过滤区被停用时，下载会被拦下并弹框让你先修（改成整类 / 换标签 / 转文字层）。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-timefmt') }">
@@ -799,6 +930,11 @@ const App = {
           </div>
         </div>
       </div>
+
+      <!-- 设置页调起的「自定义分层」弹框：与图库页共用同一组件，改完就地写盘 -->
+      <ZhgLinkDialog :open="linkDlgOpen" mode="cfg" :active-tags="linkActiveTags" :known-tags="linkKnownTags"
+                     :tree="linkTree" :link="pref.gallery.link"
+                     @close="closeLinkDlg" @saved="onLinkDlgSaved" />
     </div>
   `,
 };
