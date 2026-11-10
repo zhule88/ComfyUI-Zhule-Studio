@@ -638,10 +638,8 @@ def _tag_name_index():
             and _TAG_NAME_CACHE["sig"] == sig \
             and (now - _TAG_NAME_CACHE["ts"]) < _TREE_TTL:
         return _TAG_NAME_CACHE["data"]
-    # 由 db 的 name->id 索引反置；同名的以先出现的为准
-    data = {}
-    for n, i in db.tag_id_index().items():
-        data.setdefault(str(i), n)
+    # 按 id 直取（不做同名去重）：同名词条存在于多个分支时，非首个 id 也必须能还原
+    data = db.tag_name_by_id_index()
     _TAG_NAME_CACHE.update({"ts": now, "sig": sig, "data": data})
     return data
 

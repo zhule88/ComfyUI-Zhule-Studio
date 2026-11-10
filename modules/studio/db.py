@@ -632,6 +632,29 @@ def tag_id_index():
     return data
 
 
+def tag_name_by_id_index():
+    """词条 id(str) -> 显示名；**按 id 直取，不做同名去重**。
+
+    与 tag_id_index()（name->id，同名取树序第一个）方向相反：图库侧把
+    gallery_tag.prompt_id 反查成标签名时必须按 id 直取。若沿用 name->id
+    反置，同一名字存在于多个分支时（如 角色/原神/挪德卡莱/少女 与
+    身材/…/年龄骨架/少女），非首个 id 会反查不到名字，导致图片详情/列表
+    静默丢标签（图上仍按 id 关联、按父级过滤也能筛出来）。
+    """
+    with _lock:
+        conn = connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, name FROM {0} WHERE type='entry' AND name<>''".format(TABLE)
+            ).fetchall()
+        finally:
+            conn.close()
+    data = {}
+    for r in rows:
+        data[str(r["id"])] = r["name"]
+    return data
+
+
 def tag_cn_index():
     """词条显示名 -> cn 首行（用于图库详情中文标签填充）。
 
@@ -1500,9 +1523,7 @@ def tag_refs(ids):
 
     n 是写盘那一刻的名字快照，作兜底：词条后来被删了，读取侧按 id 查不到时用它。
     """
-    idx = {}
-    for n, i in tag_id_index().items():
-        idx.setdefault(str(i), n)
+    idx = tag_name_by_id_index()
     out = []
     for x in ids or []:
         s = str(x).strip()
@@ -1559,9 +1580,7 @@ def gallery_load_records(ids=None):
     get_gallery_detail 实时读 PNG workflow 推导为准。
     读取失败（表缺失等）返回 None（调用方按索引不可用处理）；空库返回 []。
     """
-    id_name = {}
-    for n, i in tag_id_index().items():
-        id_name[i] = n
+    id_name = tag_name_by_id_index()
     # 自定义标签按 id 反查**完整路径**（层级化：'角色/绝区零/尼克'；顶层节点路径即自身名）
     cid_name = custom_tag_path_index()
     # 模型表一次取回：model_id / lora_id 按 id 反查当前名，改名后自动跟随
