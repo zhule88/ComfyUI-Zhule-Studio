@@ -4,7 +4,7 @@ import Wordbank from './pages/Wordbank.js';
 import Gallery from './pages/Gallery.js';
 import GalleryTopDown from './pages/GalleryTopDown.js';
 // 分层弹框与图库页共用同一份组件 + 时间格式预设，设置页调用时视觉与图库完全一致
-import { LinkDialog, LINK_TIME_PRESETS, linkTimeName, normalizeTree } from './pages/galleryCommon.js';
+import { LinkDialog, LINK_TIME_PRESETS, linkTimeName, normalizeTree, fmtTime } from './pages/galleryCommon.js';
 
 const PREF_KEY = 'zhule_ui_pref';
 const DEFAULT_PREF = {
@@ -203,8 +203,17 @@ const App = {
       pref.value.gallery[key] = !pref.value.gallery[key];
       savePref();
     }
+    // 点一下展开的选择器：同一时刻只开一个（'linkTime' / 'galleryTime'），点别处或选中即收起
+    const pickOpen = ref('');
+    function togglePick(key) {
+      pickOpen.value = pickOpen.value === key ? '' : key;
+    }
+    function closePick() {
+      pickOpen.value = '';
+    }
     function setTimeFmt(fmt) {
       pref.value.gallery.timeFmt = fmt;
+      pickOpen.value = '';
       savePref();
     }
     function setTagTheme(theme) {
@@ -239,6 +248,7 @@ const App = {
     function setLinkTimeFmt(key) {
       if (!LINK_TIME_PRESETS.some((p) => p.key === key)) return;
       pref.value.gallery.link.timeFmt = key;
+      pickOpen.value = '';
       savePref();
     }
     // 标签隔离符号：最多 2 个字符，清空回落 @
@@ -290,6 +300,15 @@ const App = {
       .filter((it) => it && String(it.value || '').trim()).length);
     // 时间格式样例：切换格式后当场能看到这次的目录长什么样
     const linkTimeSample = computed(() => linkTimeName(pref.value.gallery.link.timeFmt, new Date()));
+    // 触发按钮上显示的当前预设（样例串 + 说明），点开才看到全部预设
+    // 每个格式给一条真实样例（fmtTime 吃的是秒级时间戳）
+    function timeFmtSample(f) {
+      return fmtTime(Math.floor(Date.now() / 1000), f);
+    }
+    const linkTimePresetLabel = computed(() => {
+      const hit = LINK_TIME_PRESETS.find((p) => p.key === pref.value.gallery.link.timeFmt);
+      return hit ? hit.label : pref.value.gallery.link.timeFmt;
+    });
     // 图片上的图标大小：写 :root 的 --zh-act-size，图库/词库卡片操作图标即时跟随（无需刷新页面）
     function applyIconSize(px) {
       const raw = Number(px);
@@ -582,6 +601,7 @@ const App = {
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, toggleHideHints,
       panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+      pickOpen, togglePick, closePick, linkTimePresetLabel, timeFmtSample,
       setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
       LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, linkTimeSample,
       linkDlgOpen, linkTree, linkActiveTags, linkKnownTags, linkLayerCount, openLinkDlg, closeLinkDlg, onLinkDlgSaved,
@@ -635,7 +655,7 @@ const App = {
             <span class="settings-title">设置</span>
             <button class="settings-close" @click="showSettings = false">✕</button>
           </div>
-          <div class="settings-body">
+          <div class="settings-body" @click="closePick">
             <!-- 通用设置：对所有页面生效 -->
             <div class="settings-group" :class="{ 'collapsed': isCollapsed('common') }">
               <div class="settings-group-title" @click="toggleCollapse('common')">
@@ -791,9 +811,9 @@ const App = {
                          data-tip="导出的目标根目录。可填绝对路径（如 D:\\zhule_link 或 \\\\nas\\share\\link）；留空则用默认目录 output/zhule_studio/zhule_link。只能填绝对路径，且不能是磁盘根或系统目录。"
                          @change="setLinkDir($event.target.value)" spellcheck="false">
                 </div>
-                <div class="settings-row">
+                <div class="settings-row settings-row-stack">
                   <span class="settings-label">多选子文件夹命名</span>
-                  <div class="settings-seg">
+                  <div class="settings-seg settings-seg-fill">
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'time' }" @click="setLinkNameMode('time')">按时间</button>
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'tags' }" @click="setLinkNameMode('tags')">按过滤标签</button>
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'custom' }" @click="setLinkNameMode('custom')">自定义分层</button>
@@ -814,10 +834,18 @@ const App = {
                 <template v-if="pref.gallery.link.nameMode === 'time'">
                   <div class="settings-row settings-row-stack">
                     <span class="settings-label">时间格式</span>
-                    <div class="settings-seg settings-seg-wrap">
-                      <button v-for="p in LINK_TIME_PRESETS" :key="p.key" class="settings-seg-btn"
-                              :class="{ on: pref.gallery.link.timeFmt === p.key }"
-                              :data-tip="p.tip" @click="setLinkTimeFmt(p.key)">{{ p.label }}</button>
+                    <div class="settings-pick-wrap" @click.stop>
+                      <button class="settings-pick" :class="{ open: pickOpen === 'linkTime' }" @click="togglePick('linkTime')">
+                        <span class="settings-pick-val">{{ linkTimePresetLabel }}</span>
+                        <span class="settings-pick-caret">▼</span>
+                      </button>
+                      <div class="settings-pick-pop" v-if="pickOpen === 'linkTime'">
+                        <div v-for="p in LINK_TIME_PRESETS" :key="p.key" class="settings-pick-item"
+                             :class="{ on: pref.gallery.link.timeFmt === p.key }" @click="setLinkTimeFmt(p.key)">
+                          <span class="settings-pick-item-val">{{ p.label }}</span>
+                          <span class="settings-pick-item-tip">{{ p.tip }}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div class="settings-hint">这次的子文件夹名会像 <b>{{ linkTimeSample }}</b>。同一天多次导出时后端会自动加 _1 / _2 区分，不会覆盖上一次。</div>
@@ -854,9 +882,20 @@ const App = {
                   <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </div>
                 <div class="settings-group-body" v-show="!isCollapsed('gallery-timefmt')">
-                <select class="settings-select" :value="pref.gallery.timeFmt" @change="setTimeFmt($event.target.value)">
-                  <option v-for="f in TIME_FMTS" :key="f" :value="f">{{ f }}</option>
-                </select>
+                <div class="settings-pick-wrap" @click.stop>
+                  <button class="settings-pick" :class="{ open: pickOpen === 'galleryTime' }" @click="togglePick('galleryTime')">
+                    <span class="settings-pick-val">{{ pref.gallery.timeFmt }}</span>
+                    <span class="settings-pick-caret">▼</span>
+                  </button>
+                  <div class="settings-pick-pop" v-if="pickOpen === 'galleryTime'">
+                    <div v-for="f in TIME_FMTS" :key="f" class="settings-pick-item"
+                         :class="{ on: pref.gallery.timeFmt === f }" @click="setTimeFmt(f)">
+                      <span class="settings-pick-item-val">{{ f }}</span>
+                      <span class="settings-pick-item-tip">样例 {{ timeFmtSample(f) }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-hint">卡片上显示的时间就用这个格式，点一下选一个，选完立刻生效。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-db') }">

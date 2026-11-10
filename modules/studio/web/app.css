@@ -1470,6 +1470,18 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   width: 7px; height: 54px; border-radius: 4px; cursor: col-resize; touch-action: none;
   background: var(--border-2); opacity: 0.5; transition: height 0.15s, opacity 0.15s, background 0.15s; }
 .settings-resizer:hover, .settings-resizer:active { height: 92px; opacity: 1; background: var(--accent, #4f8cff); }
+/* 握把加强：面板里滚动条占了右缘，原来 7px 半透明握把几乎看不出来，改成常显双竖纹握把 + 内缘高亮条 */
+.settings-resizer { right: -6px; width: 12px; height: 64px; opacity: 1; background: transparent;
+  border-radius: 6px; z-index: 5; }
+.settings-resizer::before { content: ''; position: absolute; left: 50%; top: 6px; bottom: 6px; width: 7px;
+  transform: translateX(-50%); border-radius: 4px;
+  background: repeating-linear-gradient(to right, var(--border-2) 0 2px, transparent 2px 5px);
+  transition: background 0.15s; }
+.settings-resizer:hover::before, .settings-resizer:active::before {
+  background: repeating-linear-gradient(to right, var(--accent, #4f8cff) 0 2px, transparent 2px 5px); }
+.settings-resizer:hover, .settings-resizer:active { height: 104px; background: transparent; }
+/* 面板右缘提示线：告诉用户这一侧可以拖 */
+.settings-shell:hover .settings-panel { border-right-color: var(--text-3); }
 /* 隐藏设置注释：解释性说明行整行不占位，操作结果回执（.keep-hint）仍保留；标签颜色弹窗内说明同样隐藏 */
 .settings-panel.hide-hints .settings-hint:not(.keep-hint) { display: none; }
 .color-popup.hide-hints .color-popup-hint { display: none; }
@@ -1529,6 +1541,36 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border: none; border-radius: 6px; cursor: pointer; transition: all 0.12s; white-space: nowrap; }
 .settings-seg-btn:hover { color: var(--text); background: var(--card-hover); }
 .settings-seg-btn.on { background: var(--primary, #4f8cff); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+/* 撑满整行的分段按钮：设置面板只有 320px 起，三个中文按钮横排会挤成一团，改为整行铺开 + 自动换行 */
+.settings-seg-fill { width: 100%; box-sizing: border-box; flex: 1 1 auto; flex-wrap: wrap; }
+.settings-seg-fill .settings-seg-btn { flex: 1 1 0; min-width: 88px; text-align: center; padding: 6px 8px; }
+.settings-seg-wrap { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
+/* 点一下展开的选择器：替掉原生下拉（原生 select 在暗色面板里又丑又不跟风格） */
+.settings-pick { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; box-sizing: border-box; padding: 7px 10px; font-size: 12.5px; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s; text-align: left; }
+.settings-pick:hover { border-color: var(--text-3); }
+.settings-pick.open, .settings-pick:focus-visible { border-color: var(--accent, #4f8cff); outline: none; }
+.settings-pick-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: ui-monospace, Consolas, monospace; }
+.settings-pick-caret { flex: none; color: var(--text-3); font-size: 10px; transition: transform 0.18s; }
+.settings-pick.open .settings-pick-caret { transform: rotate(180deg); color: var(--accent, #4f8cff); }
+.settings-pick-pop { margin-top: 6px; padding: 4px; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 10px; display: flex; flex-direction: column; gap: 2px; }
+.settings-pick-item { display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  position: relative; padding: 7px 24px 7px 9px; border-radius: 7px; cursor: pointer;
+  font-size: 12.5px; color: var(--text-2); transition: background 0.12s, color 0.12s; }
+.settings-pick-item.on::after { content: '✓'; position: absolute; right: 9px; top: 50%;
+  transform: translateY(-50%); color: var(--accent, #4f8cff); font-size: 12px; }
+.settings-pick-item:hover { background: var(--card-hover); color: var(--text); }
+.settings-pick-item.on { color: var(--text); background: rgba(79, 140, 255, 0.16); }
+.settings-pick-item-val { font-family: ui-monospace, Consolas, monospace; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.settings-pick-item-tip { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+/* 行内选择器要占满整行，右侧不再跟 label 挤 */
+.settings-pick-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.settings-row-stack .settings-pick-wrap { width: 100%; }
 /* 设置子类标题：通用设置内的小分组（如“标签”） */
 .settings-subgroup-title { font-size: 11px; color: var(--text-2); letter-spacing: .5px; margin: 10px 0 2px; }
 /* 通用设置下的可折叠小类：标题行沿用分组标题样式，仅字号更小、左侧带缩进竖线 */
