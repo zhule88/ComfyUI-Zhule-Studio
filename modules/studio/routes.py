@@ -23,6 +23,8 @@ def register_routes():
     routes.post("/zhule_studio/api/wordbank/delete")(api.post_wordbank_delete)
     routes.post("/zhule_studio/api/wordbank/mute")(api.post_wordbank_mute)
     routes.post("/zhule_studio/api/wordbank/vg")(api.post_wordbank_vg)
+    # 提示词（单个 / 多选）右键「并入版本组」：弹框输组名，一次性把选的卡固化成同组多版本
+    routes.post("/zhule_studio/api/wordbank/vg-join")(api.post_wordbank_vg_join)
     routes.post("/zhule_studio/api/wordbank/tab")(api.post_wordbank_tab_create)
     routes.post("/zhule_studio/api/wordbank/chip")(api.post_wordbank_chip_create)
     routes.post("/zhule_studio/api/wordbank/card")(api.post_wordbank_card_create)

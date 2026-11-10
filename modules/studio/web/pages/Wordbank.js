@@ -300,12 +300,18 @@ export default {
                   @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
           <div class="ctx-sep"></div>
           <!-- 版本组开关：标上后该分类下的多条词条合并成 1 张卡（卡内翻页），
-               不标则每条词条各占一张卡。只对非 Tab 分类开放，避免把整个大类压成一张卡。 -->
-          <button type="button" class="ctx-item" :class="{ on: catMenu.vg }"
+               只对「非 Tab 且自己没有子分类」的末级分类开放：分类名直接当组名，
+               其下每条提示词成为同组的一个版本。带子分类的分类不给标，
+               否则会把整棵子树的词条压进一张卡、子分类也失去入口。 -->
+          <button type="button" class="ctx-item" :class="{ on: catMenu.vg, disabled: !catMenu.vg && catMenu.hasChildCat }"
                   v-if="catMenu.kind !== 'tab'"
-                  :data-tip="catMenu.vg ? '拆回独立卡片：分类下每条词条各占一张卡' : '合并为一张卡：分类下多条词条当作同一提示词的多个版本'"
+                  :disabled="!catMenu.vg && catMenu.hasChildCat"
+                  :data-tip="catMenu.vg ? '拆回独立卡片：分类下每条词条各占一张卡'
+                    : (catMenu.hasChildCat ? '该分类下还有子分类，只有末级分类才能标为版本组' : '以分类名当组名：分类下每条提示词成为同一版本组里的一版')"
                   @pointerdown.stop @click="onCtxToggleVg">
-            {{ catMenu.vg ? '🗂 取消版本组（拆回独立卡片）' : '🗂 标为版本组（多条合并一卡）' }}
+            <template v-if="catMenu.vg">🗂 取消版本组（拆回独立卡片）</template>
+            <template v-else-if="catMenu.hasChildCat">🗂 标为版本组（仅末级分类可用）</template>
+            <template v-else>🗂 标为版本组（分类名作组名）</template>
           </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
@@ -349,16 +355,20 @@ export default {
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
               🎲 凝结为随机池（{{ cardMenu.pickCount }} 项）
             </button>
+            <!-- 多选态新增：与单卡同一入口，弹框输入总名后这批提示词一起进同一个版本组 -->
+            <button type="button" class="ctx-item" @pointerdown.stop @click="onCardVgJoin">
+              🗂 并入版本组…（{{ cardMenu.pickCount }} 项）
+            </button>
             <div class="ctx-sep"></div>
           </template>
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
             {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
           </button>
-          <!-- 普通分类卡片：一键把该分类标为版本组（不用再跑到左侧分类树上右键） -->
-          <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg"
-                  @pointerdown.stop @click="onCardMarkVg">
-            🗂 标为版本组（本分类多条合并一卡）
+          <!-- 提示词卡片：弹框输一个总名，自己成为「总名#自己的名字」并进该组；多选时整批一起进 -->
+          <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg && !cardMenu.picked"
+                  @pointerdown.stop @click="onCardVgJoin">
+            🗂 并入版本组…（弹框输组名）
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
@@ -652,7 +662,35 @@ export default {
         </div>
       </div>
 
-      <!-- 全站唯一删除确认弹框：与图库删除共用（设置里开启「删除免确认」则不弹） -->
+      <!-- 并入版本组（提示词入口）：弹框输入一个总名当组名，被选中的每条提示词各自成为
+           这个组里的一个版本，名字统一固化成「总名#自己现在的名字」，一起挂到组头下面。 -->
+      <div v-if="vgJoin.open" class="edit-overlay">
+        <div class="edit-dialog vg-rename-dialog">
+          <div class="title"><span class="title-text">并入版本组</span></div>
+          <div class="edit-body">
+            <div class="hint" style="margin:0 0 10px">
+              输一个总名当组名，下面 <b>{{ vgJoin.items.length }}</b> 条提示词会各自成为这个组的一个版本，
+              名字统一改成「总名#自己现在的名字」，之后在同一张卡里翻页切换。
+            </div>
+            <div class="field">
+              <label>组名（总名）</label>
+              <input type="text" v-model="vgJoin.name" :placeholder="vgJoin.suggest || '如 居家生活'" spellcheck="false"
+                     @keydown.enter="submitVgJoin">
+            </div>
+            <div class="hint" v-if="vgJoinPreview" style="margin-top:8px">
+              版本名示例：<b>{{ vgJoinPreview }}</b>
+            </div>
+            <div class="hint" v-if="vgJoin.items.length > 1" style="margin-top:8px">
+              本次并入的版本名：{{ vgJoinNames }}
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" @click="closeVgJoin">取消</button>
+            <button class="btn primary" @click="submitVgJoin" :disabled="vgJoin.busy">并入</button>
+          </div>
+        </div>
+      </div>
+
       <delete-dialog :state="del.state" @confirm="del.confirm" @cancel="del.cancel"></delete-dialog>
 
       <!-- 全屏查看 -->
@@ -1463,6 +1501,11 @@ export default {
       let shortName = name;
       if (pre && shortName.startsWith(pre + '#')) shortName = shortName.slice(pre.length + 1).trim();
       if (!shortName) { showToast('请输入版本名', 'warn'); return; }
+      // 只校验用户真正敲进去的这一段：组名前缀是库里既有名字（可能自带 /），不该连累它报错
+      if (/[\\/:*?"<>|]/.test(shortName)) {
+        showToast('名字不能包含 \\ / : * ? " < > |', 'warn', 3600);
+        return;
+      }
       const fullName = pre ? (pre + '#' + shortName) : name;
       addingCard.value = true;
       try {
@@ -1891,14 +1934,10 @@ export default {
       Object.values(bankData.value).forEach(cards => {
         cards.forEach(c => {
           let n = (c.chips && c.chips.length) || 0;
-          // 版本组的「组名」是卡片标签、不是分类层，不能算进层级深度：
-          // ① 卡片自己是锚点（vg=1）→ 卡片层不该占分类位
-          // ② 末级分类被标了 vg → 这一层是组名，等同不存在
+          // 只有「卡片自己是锚点」这种情况要减掉一层：卡片级锚点是组头，不占分类位。
+          // 分类级 vg（末级分类被标版本组）**仍然是一个真实分类层**，
+          // 它只决定「其下词条合并成一张卡」，不该从层级/左栏里消失，所以不再减层。
           if (c.vg) n -= 1;
-          else if (Array.isArray(c.chipIds) && c.chipIds.length) {
-            const last = bankNodes.value[c.chipIds[c.chipIds.length - 1]];
-            if (last && last.vg) n -= 1;
-          }
           if (n > max) max = n;
         });
       });
@@ -1907,7 +1946,7 @@ export default {
       Object.keys(idx).forEach(id => {
         const n = idx[id];
         if (!n) return;
-        if ((n.type || 'category') !== 'category' || n.vg) return;
+        if ((n.type || 'category') !== 'category') return;
         const len = nodeIdChainById(id).length;
         if (len > max) max = len;
       });
@@ -2053,14 +2092,15 @@ export default {
       const sel = data.selections[tab] || [];
       const lines = [];
       if (!rootId) return lines;
-      // parentId -> 子分类；跳过 Tab 根、词条节点与版本组组名层（组名只是卡片标签，不是分类层）
+      // parentId -> 子分类；跳过 Tab 根、词条节点（空壳锚点/版本条目的 type 不是 category，天然过滤）。
+      // 注意：分类级 vg（末级分类标了版本组）**仍然是分类层**，必须照常出现在左栏，
+      // 它只影响「其下词条合并成一张卡」，不能连分类一起隐藏，否则用户会以为分类丢了。
       const kids = new Map();
       Object.keys(idx).forEach(id => {
         const n = idx[id];
         if (!n) return;
         if (String(id) === rootId) return;
         if ((n.type || 'category') !== 'category') return; // 词条 / 空壳锚点不进分类栏
-        if (n.vg) return;
         const p = String(n.parentId || '');
         if (!p) return;
         if (!kids.has(p)) kids.set(p, []);
@@ -2135,15 +2175,21 @@ export default {
       const sel = data.selections[data.activeTab] || [];
       const cur = DEFAULT_TAB_SORT;
       const mul = cur.dir === 'desc' ? -1 : 1;
+      // 每层的已选分类预先转成字符串 Set：下面每张卡片都要比对，避免反复 map
+      const pickSets = (sel || []).map(a => (Array.isArray(a) && a.length) ? new Set(a.map(String)) : null);
       const result = files.filter(f => {
         // 通用设置开启时隐藏已静音词条（仅影响列表展示，不影响词库数据与手动编辑）
         if (hideMuted.value && f.mute) return false;
+        const ids = f.chipIds || [];
         for (let i = 0; i < maxDepth.value; i++) {
-          const picks = sel[i];
-          if (!Array.isArray(picks) || !picks.length) continue;
-          const ids = f.chipIds || [];
-          if (!ids[i]) continue;
-          if (!picks.map(String).includes(String(ids[i]))) return false;
+          const set = pickSets[i];
+          if (!set) continue;
+          const id = ids[i];
+          // 该层有筛选时，词条必须在这一层有自己的分类归属才可能命中：
+          // 只挂在大类下、没归到任何子分类的词条（chipIds 更短 / 该层为空）不属于所筛分类，
+          // 一律排除。早期这里写的是 continue，导致这类"直挂大类"的词条在任何子分类筛选下常驻不消失。
+          if (!id) return false;
+          if (!set.has(String(id))) return false;
         }
         return true;
       }).sort((a, b) => {
@@ -2340,6 +2386,13 @@ export default {
       const i = s.indexOf('#');
       return i >= 0 ? s.slice(i + 1) : s;
     };
+    // 组名段（# 前面那截）：卡片级锚点自己的名字也是「组名#版本名」两段，
+    // 它既当组头、又是组里的一版，所以取组名必须拆 #，不能直接拿全名。
+    const vgNameHead = (name) => {
+      const s = String(name || '');
+      const i = s.indexOf('#');
+      return i > 0 ? s.slice(0, i).trim() : '';
+    };
     // 卡片标题用名：版本组卡片标题拆成两段常驻展示——前缀（组名）走 cardNamePrefix，
     // 版本段走 cardDisplayName，合起来就是库里的完整基础 name「组名#版本名」。
     const cardDisplayName = (file) => {
@@ -2405,28 +2458,44 @@ export default {
           (map[k] || (map[k] = [])).push(c);
         }
       }
-      // 排序口径：空壳锚点永远排最前（它只是组头，不参与翻页编号），
-      // 其次「默认」条目当 version 1（纯环境描述、无动作的基准场景），其余动作变体按库里原顺序。
-      // sort 稳定，非默认版本之间保持原顺序。
+      // 排序口径：空壳锚点永远排最前（它只是组头，不参与翻页编号）；
+      // 卡片级锚点（自己就是组里的一版，名字也是「组名#版本名」）紧随其后当 version 1，
+      // 因为它是用户右键为组头的那张卡，理应排第一；剩下「默认」条目当第二，
+      // 其余动作变体按库里原顺序（sort 稳定）。
       Object.keys(map).forEach((k) => {
         map[k].sort((a, b) => {
           // 版本名固化成「组名#版本名」后，比“默认”必须比 # 后那段，否则基准版会被当成普通动作排到后面
-          const ra = vgIsShell(a) ? 0 : (vgNameTail(a && a.name).trim() === '默认' ? 1 : 2);
-          const rb = vgIsShell(b) ? 0 : (vgNameTail(b && b.name).trim() === '默认' ? 1 : 2);
-          return ra - rb;
+          const rank = (c) => {
+            if (vgIsShell(c)) return 0;
+            if (vgIsCardAnchor(c)) return 1;
+            return vgNameTail(c && c.name).trim() === '默认' ? 2 : 3;
+          };
+          return rank(a) - rank(b);
         });
       });
       return map;
     });
     // 组内「真实版本」= 全量里剔除空壳锚点卡。锚点只提供组名与分组关系，
     // 因此翻页编号、出词、随机/遍历池一律只看 real，锚点天然被跳过（不需要额外的 mute 特判）。
+    // 组头（head）优先取空壳锚点；没有空壳时取卡片级锚点——它自己就是组里的一版，
+    // 这时 head 既是组名的来源、也仍是 real 里的一个版本（不再被排除在翻页之外）。
     const vgRealMap = computed(() => {
       const m = {};
       Object.keys(vgGroupMap.value).forEach((k) => {
         const all = vgGroupMap.value[k] || [];
-        const head = all.find(c => vgIsShell(c)) || null;
+        const head = all.find(c => vgIsShell(c)) || all.find(c => vgIsCardAnchor(c)) || null;
         const real = all.filter(c => !vgIsShell(c));
-        m[k] = { head, real, title: (head && head.name) || '' };
+        // 组名只取 # 前那段：head 自己是「组名#版本名」时，整串当组名会把版本名也塞进翻页条
+        let title = head ? (vgNameHead(head.name) || head.name || '') : '';
+        if (!title) {
+          // 分类级版本组（老形态）没有卡片锚点，组名就是那个被标 vg 的分类名
+          const s = String(k);
+          const bar = s.indexOf('|');
+          const cid = bar >= 0 ? s.slice(bar + 1) : '';
+          const cnode = cid ? (bankNodes.value[cid] || null) : null;
+          title = String((cnode && cnode.name) || '');
+        }
+        m[k] = { head, real, title };
       });
       return m;
     });
@@ -2469,8 +2538,8 @@ export default {
         const head = grp.head;
         out.push(Object.assign({}, base, {
           _vgKey: k, _vgVersions: vs, _vgIdx: idx, _vgCount: vs.length,
-          // 组名取空壳锚点的名字：卡片显示「组名 · 当前版本」，锚点自身永远不单独出卡
-          _vgTitle: (head && head.name) || '',
+          // 组名取组头的「组名」段：卡片级锚点自己名字里带版本名，整串当组名会把版本名带上
+          _vgTitle: (head && (vgNameHead(head.name) || head.name)) || '',
           // 版本条目在库里的链路比锚点多一层（锚点名），合并成一张卡后统一用锚点的链路，
           // 这样左侧筛选、全库搜索的「所在分类」与合并后的卡一致，不会露出锚点名这一层
           chips: head ? head.chips : base.chips,
@@ -2496,6 +2565,18 @@ export default {
       if (file && file._vgTitle) return file._vgTitle;
       const chips = (file && Array.isArray(file.chips)) ? file.chips : [];
       return [file && file.tab].concat(chips).filter(Boolean).join(' / ');
+    };
+    // 新建版本要用的「前缀」= 锚点名，**必须是库里真实存在的那个名字片段**，且绝不能带路径样式。
+    // vgGroupTitle 的兜底值是「tab / 分类 / 子类」这种展示用标题，含 /，拼进全名后会被后端
+    // 的非法字符校验拦下，用户就看到毫无道理的「名字含非法字符」。所以这里单独取干净前缀：
+    // ① 锚点名 → ② 卡片自身基础名（剥掉 # 后段）→ ③ 空串（由后端按锚点拼接）。
+    const vgNewVersionPrefix = (file) => {
+      if (!file) return '';
+      const anchor = String(vgAnchorNameOf(file) || '').trim();
+      if (anchor) return anchor;
+      const s = String(file.name || '').trim();
+      const i = s.indexOf('#');
+      return (i > 0 ? s.slice(0, i) : (i === 0 ? '' : s)).trim();
     };
     // ---- B：胶片条 ----
     const vgStrip = reactive({ open: false, key: '', title: '', idx: 0, versions: [] });
@@ -2870,8 +2951,9 @@ export default {
         const n = idx[id];
         if (!n) return;
         if (String(n.parentId || '') !== String(parentId || '')) return;
-        // 只算「分类层」的兄弟节点：词条节点、版本组组名节点不参与分类排序
-        if ((n.type || 'category') !== 'category' || n.vg) return;
+        // 只算「分类层」的兄弟节点：词条节点、空壳锚点不参与分类排序；
+        // 分类级 vg 仍是分类层，照常参与排序，否则它会被漏写进 order 而游标错位
+        if ((n.type || 'category') !== 'category') return;
         if (skip && skip.has(String(id))) return;
         out.push(String(id));
       });
@@ -3052,12 +3134,24 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, vg: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, vg: false, hasChildCat: false });
 
     // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
       ? (bankNodes.value[String(tabIds.value[keyOrId] || '')] || null)
       : (bankNodes.value[String(keyOrId || '')] || null));
+    // 该分类下是否还挂着子分类：版本组的分类级形态只允许落在「末级分类」。
+    // 分类下还有子分类时，把它标成版本组会把整棵子树的词条都压进一张卡，语义和入口全乱，
+    // 所以菜单项直接不给点（后端 post_wordbank_vg 也会再拦一次，前端只是提前告知）。
+    const catHasChildCat = (id) => {
+      const key = String(id || '');
+      if (!key) return false;
+      const idx = bankNodes.value || {};
+      return Object.keys(idx).some((k) => {
+        const n = idx[k];
+        return n && String(n.parentId || '') === key && String(n.type || 'category') === 'category';
+      });
+    };
     // 池三态：tab 传入大类名，chip 传入节点 id
     const poolKindOf = (kind, keyOrId) => {
       const tab = data.activeTab;
@@ -3086,6 +3180,8 @@ const submitAddTab = async () => {
       catMenu.muted = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).mute);
       // 版本组开关的当前值（只对非 tab 分类有意义）
       catMenu.vg = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).vg);
+      // 该分类下是否还挂着子分类：版本组的分类级形态只允许落在「末级分类」上
+      catMenu.hasChildCat = isChip ? catHasChildCat(id) : false;
       // 贴边翻转，避免菜单跑出窗口
       catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
@@ -3256,6 +3352,11 @@ const submitAddTab = async () => {
       if (!n || !n.id) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
       if (vgBusy.value) return;
       const target = !n.vg;
+      // 分类下有子分类就不许标：版本组只落在末级分类上（分类名当组名、其下提示词当各版本）
+      if (target && catHasChildCat(n.id)) {
+        showToast('「' + (n.name || title) + '」下还有子分类，只有末级分类才能标为版本组', 'warn', 3200);
+        return;
+      }
       vgBusy.value = true;
       try {
         const resp = await fetch('/zhule_studio/api/wordbank/vg', {
@@ -3265,8 +3366,8 @@ const submitAddTab = async () => {
         });
         const json = await resp.json();
         if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
-        showToast((json.vg ? '已标为版本组：' : '已取消版本组：') + title
-          + (json.vg ? '（其下词条合并成 1 张卡，卡内翻页换版本）' : '（拆回每张词条一张卡）'), 'success', 3200);
+        showToast((json.vg ? '已以「' + (n.name || title) + '」为组名标为版本组' : '已取消版本组：' + title)
+          + (json.vg ? '（其下每条提示词成为同组的一个版本，合并成 1 张卡翻页）' : '（拆回每张词条一张卡）'), 'success', 3400);
         await load(true);
       } catch (e) {
         showToast('请求失败：' + e.message, 'error');
@@ -3297,7 +3398,7 @@ const submitAddTab = async () => {
       if (!f) return;
       const anchorId = vgAnchorIdOf(f) || cardCatIdOf(f);
       if (!anchorId) { showToast('这张卡不在分类或版本组下，先把它放进分类再建版本', 'warn'); return; }
-      openAddCard({ parentId: anchorId, label: vgAnchorNameOf(f) || vgGroupTitle(f) });
+      openAddCard({ parentId: anchorId, label: vgNewVersionPrefix(f) });
     };
 
     // ============ 修改版本组名（锚点改名，全组前缀级联刷新） ============
@@ -3369,32 +3470,96 @@ const submitAddTab = async () => {
       closeCardMenu();
       openNewVersionFor(f);
     };
-    const onCardMarkVg = async () => {
-      const f = cardMenu.file;
-      closeCardMenu();
-      if (!f) return;
-      // 标在卡片自己身上（新形态）：这张卡变成组头/空壳锚点，只挂名字与分组关系，
-      // 新版本挂在它下面，版本之间平等、互不继承。不再去标上级分类，免得整层分类被拖着合并。
-      const cardId = String(f.id || '');
-      if (!cardId) { showToast('这张卡没有库内 id，无法标为版本组', 'warn'); return; }
-      if (vgIsCardAnchor(f)) { showToast('「' + (f.name || '') + '」已经是版本组了，用卡内 ＋ 加版本', 'warn'); return; }
-      if (vgBusy.value) return;
-      vgBusy.value = true;
+    // ============ 并入版本组（提示词入口，单个 / 多选共用） ============
+    // 与「右键分类标版本组」互补：从提示词入手时不让某张卡的现名直接当组名，
+    // 而是弹框问一个总名，每张卡的现名退到 # 后面当版本名（名字固化成「总名#版本名」），
+    // 整批挂到同一个组头下，之后一张卡翻页切换。多选右键与单卡右键走的是同一个入口。
+    const vgJoin = reactive({ open: false, name: '', suggest: '', busy: false, items: [] });
+    // 版本名：取自己现在的名字；已经有 # 前缀的只取 # 后那段，避免拼出「新组#旧组#版本」的套娃
+    const vgJoinTail = (f) => {
+      const s = String((f && f.name) || '').trim();
+      const tail = vgNameTail(s).trim();
+      return tail || s;
+    };
+    const vgJoinPreview = computed(() => {
+      const nm = (vgJoin.name || '').trim();
+      const first = vgJoin.items[0];
+      if (!nm || !first) return '';
+      return nm + '#' + vgJoinTail(first);
+    });
+    const vgJoinNames = computed(() => vgJoin.items.map(it => vgJoinTail(it)).join('、'));
+    const closeVgJoin = () => {
+      vgJoin.open = false;
+      vgJoin.name = '';
+      vgJoin.suggest = '';
+      vgJoin.busy = false;
+      vgJoin.items = [];
+    };
+    const openVgJoin = (f, fromPick) => {
+      const list = fromPick ? pickedFiles() : (f ? [f] : []);
+      const items = list.filter(x => x && x.id);
+      if (!items.length) { showToast('这几张卡还没有库内 id，刷新一下再试', 'warn'); return; }
+      // 一个组只能有一个组头：选中的卡里若横跨了两个以上已有的组，先让他自己拆开
+      const keys = new Set();
+      items.forEach((x) => {
+        const k = x._vgKey || '';
+        if (k) keys.add(String(k));
+      });
+      if (keys.size > 1) {
+        showToast('选中的卡片分属 ' + keys.size + ' 个不同版本组，一次只能并入同一个组', 'warn', 3600);
+        return;
+      }
+      // 组名建议值：这批卡都在同一个分类下时，直接把该分类名提示出来（用户可改）
+      let suggest = '';
+      const parents = new Set(items.map(x => String(cardCatIdOf(x) || '')));
+      if (parents.size === 1) {
+        const pid = [...parents][0];
+        const pn = pid ? (bankNodes.value[pid] || {}) : {};
+        suggest = String(pn.name || '');
+      }
+      vgJoin.items = items;
+      vgJoin.name = '';
+      vgJoin.suggest = suggest;
+      vgJoin.busy = false;
+      vgJoin.open = true;
+    };
+    const submitVgJoin = async () => {
+      const nm = (vgJoin.name || '').trim();
+      if (!nm) { showToast('组名不能为空', 'warn'); return; }
+      if (nm.startsWith('.')) { showToast('组名不能以点开头', 'warn'); return; }
+      if (/[\\/:*?"<>|]/.test(nm) || nm.indexOf('#') >= 0) {
+        showToast('组名不能包含 \\ / : * ? " < > | # 这些字符', 'warn', 3800);
+        return;
+      }
+      if (vgJoin.busy || !vgJoin.items.length) return;
+      vgJoin.busy = true;
       try {
-        const resp = await fetch('/zhule_studio/api/wordbank/vg', {
+        const resp = await fetch('/zhule_studio/api/wordbank/vg-join', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: cardId, vg: true }),
+          body: JSON.stringify({ ids: vgJoin.items.map(x => String(x.id)), name: nm }),
         });
         const json = await resp.json();
-        if (json.error) { showToast('设置失败：' + json.error, 'error'); return; }
-        showToast('已把「' + (f.name || vgGroupTitle(f)) + '」升为版本组（卡面挂组名，版本挂它下面，平等不继承）', 'success', 3600);
+        if (json.error) { showToast('并入失败：' + json.error, 'error', 4400); return; }
+        const n = Number(json.count || 0);
+        const c = Number(json.cascade || 0);
+        showToast('已把 ' + n + ' 条提示词并入版本组「' + nm + '」'
+          + (c > 0 ? '，另有 ' + c + ' 个老版本的前缀一起刷新了' : ''), 'success', 3600);
+        closeVgJoin();
+        clearPick();
         await load(true);
       } catch (e) {
-        showToast('请求失败：' + e.message, 'error');
+        showToast('并入请求失败：' + e.message, 'error', 3600);
       } finally {
-        vgBusy.value = false;
+        vgJoin.busy = false;
       }
+    };
+    const onCardVgJoin = () => {
+      const f = cardMenu.file;
+      const fromPick = !!(f && isPicked(f));
+      closeCardMenu();
+      if (!f) return;
+      openVgJoin(f, fromPick);
     };
 
     // ---- 编辑分类弹层：分类自己的 en / cn / neg / 排除，子级词条自动继承 ----
@@ -3980,7 +4145,7 @@ const submitAddTab = async () => {
         const idx = Math.min(Math.max(st ? Number(st.idx) || 0 : 0, 0), vs.length - 1);
         out.push(Object.assign({}, vs[idx], {
           _vgKey: k, _vgVersions: vs, _vgIdx: idx, _vgCount: vs.length,
-          _vgTitle: (grp.head && grp.head.name) || '',
+          _vgTitle: (grp.head && (vgNameHead(grp.head.name) || grp.head.name)) || '',
         }));
       }
       return out;
@@ -4845,7 +5010,9 @@ const submitAddTab = async () => {
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
       addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard, addCardLock,
-      onCardNewVersion, onCardMarkVg, openNewVersionFor,
+      onCardNewVersion, onCardVgJoin, openNewVersionFor,
+      // 并入版本组（提示词入口，单卡 / 多选共用）：弹框输总名，现名退到 # 后当版本名
+      vgJoin, vgJoinPreview, vgJoinNames, openVgJoin, closeVgJoin, submitVgJoin,
       // 名字固化「组名#版本名」：卡片标题常驻展示「组名#」前缀 + 版本段，前缀只读，组名改名级联整组
       vgNameTail, cardDisplayName, cardNamePrefix, editNamePrefix,
       vgRenameOpen, vgRenaming, vgRenameName, vgRenameCount, vgRenamePreview,

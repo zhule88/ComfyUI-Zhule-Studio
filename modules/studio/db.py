@@ -427,6 +427,64 @@ def set_vg(node_id, vg):
             conn.close()
 
 
+def has_child_category(node_id):
+    """该节点下是否还有存活的子分类（type=category）。
+
+    版本组的两种承载里，分类级只允许落在「末级分类」上：分类下若还挂着子分类，
+    把它标成版本组会把整棵子树的词条都压进一张卡，语义与操作都不可控，所以后端要能自证。
+    """
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            r = conn.execute(
+                "SELECT COUNT(1) FROM {0} WHERE parent_id=? AND isdel=0 AND type='category'".format(TABLE),
+                (node_id,),
+            ).fetchone()
+            return bool(r and r[0])
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+
+
+def relocate(node_id, parent_id):
+    """把节点改挂到新的父节点下（排在目标父级末尾）。
+
+    版本组「并入」用：被并入的提示词要从原分类挪到锚点卡下面，才成为它的版本子项。
+    与 set_vg 同理刻意不刷新 updated_at——搬位置不算编辑内容，不应打乱按时间排序的卡片。
+    """
+    try:
+        node_id = int(node_id)
+        parent_id = int(parent_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            if node_id == parent_id:
+                return False
+            cur = conn.execute(
+                "SELECT COALESCE(MAX(sort_order),0) FROM {0} WHERE parent_id IS ? AND isdel=0".format(TABLE),
+                (parent_id,),
+            )
+            so = (cur.fetchone()[0] or 0) + 1
+            conn.execute(
+                "UPDATE {0} SET parent_id=?, sort_order=? WHERE id=? AND isdel=0".format(TABLE),
+                (parent_id, so, node_id),
+            )
+            conn.commit()
+            _bump()
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+
+
 def _subtree_ids(conn, node_id):
     """BFS 收集节点自身及全部未删除子孙的 DB id（调用方负责持有连接与事务）。"""
     ids = [node_id]
