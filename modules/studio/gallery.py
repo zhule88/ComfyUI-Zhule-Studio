@@ -1501,7 +1501,15 @@ async def get_gallery_detail(request):
     # 前端「标签关联数角标」开关关闭时不渲染，后端仍返回，切开关无需重新请求。
     _counts = db.gallery_tag_counts()
     tags = []
+    # rec['tags'] 是「词条名 + 自定义标签完整路径」的合并数组（列表卡片共用同一份），
+    # 详情需把自定义标签全部交给下方 custom 分支渲染，否则同一自定义标签会以
+    # 「提示词标签」身份多出现一次（如自定义『喜欢』变两个『喜欢』）。
+    # 若同名既是词条又是自定义标签，tagIds 里能取到 prompt id，则保留词条那一条。
+    _custom_set = {c for c in (rec.get("customTags") or []) if c}
+    _tag_ids = rec.get("tagIds") or {}
     for n in rec.get("tags") or []:
+        if n in _custom_set and not str(_tag_ids.get(n) or "").strip().isdigit():
+            continue
         _pid = rec.get("tagIds", {}).get(n) or ""
         _cnt = 0
         if str(_pid).strip().isdigit():
