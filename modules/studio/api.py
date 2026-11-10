@@ -597,6 +597,140 @@ async def post_wordbank_vg(request):
     return web.json_response({"ok": True, "id": node["id"], "vg": 1 if vg else 0})
 
 
+def _unique_child_name(parent_id, want, exclude_id=None):
+    """同父下重名就追加序号。
+
+    分类 ⇄ 版本组互转时要成批给条目摘/补「组名#」前缀，摘完可能撞上同父下已有的同名卡，
+    这时候不能顶掉别人，也不能静默吞掉，给个「名字 2」让人一眼看出是新落的那条。
+    """
+    name = str(want or "").strip() or "默认"
+    if not db.sibling_dup(parent_id, name, exclude_id=exclude_id):
+        return name
+    i = 2
+    while db.sibling_dup(parent_id, "%s %d" % (name, i), exclude_id=exclude_id):
+        i += 1
+    return "%s %d" % (name, i)
+
+
+async def post_wordbank_convert(request):
+    """分类 ⇄ 版本组 互转：两者本质同构，只差 type（category / entry）与 vg 两个位。
+
+    body {id, to}：
+      to="category"（版本 → 分类）：卡片级版本组（entry + vg=1，组头卡下挂各版本）拆成正经分类 ——
+        type 改回 category、vg 清零，组名当分类名，组内各版本名字摘掉「组名#」前缀，
+        平铺成该分类下的多张普通卡片；组头自己若有词条内容，先落成一条子条目再让它当分类，
+        内容不丢。
+      to="vg"（分类 → 版本）：末级分类聚拢成卡片级版本组 —— type 改成 entry、vg 置 1，
+        分类名当组名（分类自身带内容时，它自己就是组里第一版「组名#默认」；内容全空则当空壳组头），
+        组内每条词条名字补上「组名#」前缀，整类收成一张可翻页的多版本卡。
+
+    两种形态的组名口径都由锚点名字前半段（# 前）决定，因此前缀必须由后端统一摘/补，
+    前端只负责点菜单。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    raw_id = str(body.get("id") or "").strip()
+    to = str(body.get("to") or "").strip()
+    if not raw_id:
+        return web.json_response({"error": "缺少 id"}, status=400)
+    if to not in ("category", "vg"):
+        return web.json_response({"error": "to 只能是 category 或 vg"}, status=400)
+    node = db.node_by_id(raw_id)
+    if node is None:
+        return web.json_response({"error": "节点不存在"}, status=404)
+    nid = int(node["id"])
+    ntype = str(node.get("type") or "")
+    parent_id = node.get("parent_id")
+
+    if to == "category":
+        # 只有「卡片级」版本组（entry + vg）能转分类：分类级版本组的锚点本来就是分类
+        if ntype != "entry" or not node.get("vg"):
+            return web.json_response(
+                {"error": "只有卡片级版本组（版本卡）才能转成分类"}, status=400)
+        if parent_id is None:
+            return web.json_response({"error": "顶层节点不能转成分类"}, status=400)
+        kids = db.direct_children(nid)
+        if any(str(k["type"]) == "category" for k in kids):
+            return web.json_response(
+                {"error": "该版本组下还挂着分类，先把子分类挪出去再转"}, status=400)
+        old_group = _vg_prefix_of(node["name"])
+        own_tail = db.split_vg_name(node["name"])[1].strip()
+        own_en = str(node.get("en") or "").strip()
+        own_cn = str(node.get("cn") or "").strip()
+        own_neg = str(node.get("neg") or "").strip()
+        has_own = bool(own_en or own_cn or own_neg)
+        cat_name = _unique_child_name(parent_id, old_group or node["name"] or own_tail,
+                                      exclude_id=nid)
+        # 先换招牌（type=category）再清内容：组头内容不能随类型一起蒸发，有内容就落成第一条子条目
+        if not db.set_type(nid, "category"):
+            return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
+        if not db.update_node(nid, name=cat_name, en="", cn="", neg="", vg=0):
+            return web.json_response({"error": "转换失败：节点写入失败"}, status=500)
+        self_kid = 0
+        if has_own:
+            vname = _unique_child_name(nid, own_tail or "默认")
+            new_id, ok = db.insert_node(nid, "entry", vname, en=own_en, cn=own_cn)
+            if not ok:
+                return web.json_response(
+                    {"error": "已转为分类，但组头内容落成词条失败，请手动补一条「%s」" % vname},
+                    status=500)
+            if own_neg:
+                db.update_node(new_id, neg=own_neg)
+            self_kid = 1
+        moved = 0
+        for k in kids:
+            if str(k["type"]) != "entry":
+                continue
+            head, tail = db.split_vg_name(k["name"])
+            if head != old_group:
+                continue          # 不属于本组前缀的条目原样不动
+            want = _unique_child_name(nid, tail or head, exclude_id=k["id"])
+            if want != k["name"] and db.update_node(k["id"], name=want):
+                moved += 1
+        return web.json_response({"ok": True, "to": "category", "id": str(nid),
+                                  "name": cat_name, "moved": moved, "self_kept": self_kid})
+
+    # to == "vg"
+    if ntype != "category":
+        return web.json_response({"error": "只有分类才能聚拢成版本组"}, status=400)
+    if parent_id is None:
+        return web.json_response({"error": "顶层大类不能聚拢成版本组"}, status=400)
+    if db.has_child_category(nid):
+        return web.json_response(
+            {"error": "该分类下还有子分类，只有末级分类才能聚拢成版本组"}, status=400)
+    group = str(node.get("name") or "").strip()
+    if not group:
+        return web.json_response({"error": "该分类没有名字，先给它起个名字"}, status=400)
+    kids = [k for k in db.direct_children(nid) if str(k["type"]) == "entry"]
+    own_has = bool(str(node.get("en") or "").strip()
+                   or str(node.get("cn") or "").strip()
+                   or str(node.get("neg") or "").strip())
+    if not kids and not own_has:
+        return web.json_response(
+            {"error": "该分类下还没有词条，聚拢成版本组会变成一个没有任何版本的组"}, status=400)
+    # 分类自己带内容 → 它就是组里第一版「组名#默认」；内容全空 → 纯组名当空壳组头
+    anchor_name = _unique_child_name(
+        parent_id, (group + db.VG_SEP + "默认") if own_has else group, exclude_id=nid)
+    if not db.set_type(nid, "entry"):
+        return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
+    if not db.update_node(nid, name=anchor_name, vg=1):
+        return web.json_response({"error": "转换失败：节点写入失败"}, status=500)
+    # 组名若因撞名加了序号，条目前缀要跟最终锚点名的组名段走，否则组头与版本前缀脱节
+    pre = _vg_prefix_of(anchor_name) or anchor_name
+    moved = 0
+    for k in kids:
+        head, _tail = db.split_vg_name(k["name"])
+        if head == pre:
+            continue
+        want = _unique_child_name(nid, pre + db.VG_SEP + k["name"], exclude_id=k["id"])
+        if db.update_node(k["id"], name=want):
+            moved += 1
+    return web.json_response({"ok": True, "to": "vg", "id": str(nid),
+                              "name": anchor_name, "moved": moved})
+
+
 async def post_wordbank_vg_join(request):
     """把若干提示词并入同一个版本组：body { ids:[...], name:"组名" }。
 

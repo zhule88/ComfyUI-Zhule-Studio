@@ -427,6 +427,73 @@ def set_vg(node_id, vg):
             conn.close()
 
 
+def set_type(node_id, type_):
+    """改写节点类型（category ⇄ entry）。
+
+    分类与版本组本质同构，只差 type 与 vg 两个位：卡片级版本组就是「entry + vg=1」，
+    把它的 type 改回 category、vg 清零，它立刻就是一张正经分类；反过来把末级分类改成
+    entry + vg=1，整类就收成一张多版本卡。名字口径（「组名#版本名」前缀的摘/补）
+    由 api 层负责，这里只换招牌、不碰内容。
+    刻意不刷 updated_at：转形态属于整理结构而非编辑内容，卡片不该因此跳到时间序最前。
+    """
+    t = str(type_ or "").strip()
+    if t not in ("category", "entry"):
+        return False
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET type=? WHERE id=? AND isdel=0".format(TABLE),
+                (t, node_id),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return False
+            _bump()
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+
+
+def direct_children(node_id):
+    """某节点的直接子节点（存活，不分类型），按 sort_order 排。
+
+    分类 ⇄ 版本组互转要批量改写「组内条目的名字前缀」，只需要这一层；
+    用 fetch_tree() 会白算整棵树。
+    """
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        return []
+    with _lock:
+        conn = connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, type, name, en, cn, neg, sort_order FROM {0} "
+                "WHERE parent_id=? AND isdel=0 ORDER BY sort_order, id".format(TABLE),
+                (node_id,),
+            ).fetchall()
+            return [{
+                "id": r["id"],
+                "type": r["type"] or "",
+                "name": r["name"] or "",
+                "en": r["en"] or "",
+                "cn": r["cn"] or "",
+                "neg": r["neg"] or "",
+                "sort_order": r["sort_order"],
+            } for r in rows]
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+
 def has_child_category(node_id):
     """该节点下是否还有存活的子分类（type=category）。
 

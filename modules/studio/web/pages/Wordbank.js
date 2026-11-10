@@ -313,6 +313,14 @@ export default {
             <template v-else-if="catMenu.hasChildCat">🗂 标为版本组（仅末级分类可用）</template>
             <template v-else>🗂 标为版本组（分类名作组名）</template>
           </button>
+          <!-- 分类 ⇄ 版本 互转：分类与版本组本质同构，只差 type 与 vg 两个位。
+               这里把末级分类整个收成一张「卡片级版本组」——分类从左侧树里消失，
+               其下词条成为同组各版本；在卡片右键「转为分类」可原路拆回。 -->
+          <button type="button" class="ctx-item" v-if="catMenu.canToVg"
+                  :data-tip="'把「' + catMenu.name + '」整个分类改成一张版本卡：分类从左侧树里消失，其下词条成为同组的各版本（之后可在卡片右键原路拆回分类）'"
+                  @pointerdown.stop @click="onCtxToVg">
+            🗂 聚拢成版本卡（分类 → 版本）
+          </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
@@ -345,6 +353,13 @@ export default {
           <button type="button" class="ctx-item vg-rename-entry" v-if="cardMenu.isVg"
                   @pointerdown.stop @click="onCardVgRename">
             ✎ 改版本组名（{{ cardMenu.vgTitle || '本组' }}）
+          </button>
+          <!-- 组头是「卡片级锚点」时才谈得上转分类：分类级版本组的锚点本来就是分类。
+               转过去 = type 改回 category、vg 清零，组名当分类名，各版本摘掉「组名#」前缀平铺 -->
+          <button type="button" class="ctx-item vg-to-cat-entry" v-if="cardMenu.vgCardAnchor"
+                  :data-tip="'把这张版本卡还原成分类：组名当分类名，组内各版本摘掉「组名#」前缀、平铺成独立卡片'"
+                  @pointerdown.stop @click="onCardToCategory">
+            🗂 转为分类（版本 → 分类）
           </button>
           <div class="ctx-sep" v-if="cardMenu.vgCount > 1 || cardMenu.isVg"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
@@ -3134,7 +3149,7 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, vg: false, hasChildCat: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, vg: false, hasChildCat: false, canToVg: false });
 
     // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
@@ -3150,6 +3165,17 @@ const submitAddTab = async () => {
       return Object.keys(idx).some((k) => {
         const n = idx[k];
         return n && String(n.parentId || '') === key && String(n.type || 'category') === 'category';
+      });
+    };
+    // 该分类下是否已经挂着词条：空分类聚拢成版本组只会得到一个「没有任何版本的组」，
+    // 菜单项直接不给点（后端 post_wordbank_convert 也会再拦一次，前端只是提前告知）。
+    const catHasEntry = (id) => {
+      const key = String(id || '');
+      if (!key) return false;
+      const idx = bankNodes.value || {};
+      return Object.keys(idx).some((k) => {
+        const n = idx[k];
+        return n && String(n.parentId || '') === key && String(n.type || 'category') === 'entry';
       });
     };
     // 池三态：tab 传入大类名，chip 传入节点 id
@@ -3182,6 +3208,14 @@ const submitAddTab = async () => {
       catMenu.vg = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).vg);
       // 该分类下是否还挂着子分类：版本组的分类级形态只允许落在「末级分类」上
       catMenu.hasChildCat = isChip ? catHasChildCat(id) : false;
+      // 「分类 → 版本」互转是否可用：非 Tab、真分类、末级（无子分类）、有父级、且其下已有词条。
+      // chip 视图对象只带 {id,parentId,name}（没有 type/vg），所以类型一律回 bankNodes 里查全量节点。
+      const catNode = isChip ? ((bankNodes.value || {})[id] || null) : null;
+      catMenu.canToVg = isChip && !!catNode
+        && String(catNode.type || '') === 'category'
+        && !catMenu.hasChildCat
+        && !!String(catNode.parentId || '')
+        && catHasEntry(id);
       // 贴边翻转，避免菜单跑出窗口
       catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
       catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
@@ -3259,7 +3293,7 @@ const submitAddTab = async () => {
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
     // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
-    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0, isVg: false, vgTitle: '', canVg: false });
+    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0, isVg: false, vgTitle: '', canVg: false, vgCardAnchor: false });
     const openCardMenu = (evt, file) => {
       if (!file) return;
       closeCatMenu();
@@ -3274,6 +3308,12 @@ const submitAddTab = async () => {
       cardMenu.vgCount = (file._vgVersions && file._vgVersions.length) || 0;
       cardMenu.isVg = !!file._vgKey;
       cardMenu.vgTitle = vgAnchorNameOf(file) || '';
+      // 「版本 → 分类」只对卡片级锚点（entry + vg）开放：分类级版本组的锚点本来就是分类，
+      // 在那里出「转为分类」是自指操作，纯属误导。
+      const aid = vgAnchorIdOf(file);
+      const anode = aid ? ((bankNodes.value || {})[String(aid)] || null) : null;
+      cardMenu.vgCardAnchor = !!(cardMenu.isVg && anode
+        && String(anode.type || '') === 'entry' && !!anode.vg);
       cardMenu.canVg = !!cardCatIdOf(file);
       cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
       cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 380));
@@ -3374,6 +3414,49 @@ const submitAddTab = async () => {
       } finally {
         vgBusy.value = false;
       }
+    };
+
+    // ============ 分类 ⇄ 版本 互转（两者本质同构，只差 type 与 vg 两个位） ============
+    // 「分类收成一张版本卡」与「版本卡拆回分类」是同一件事的两个方向，走同一个后端接口，只差 to：
+    //   to='vg'       末级分类 → 卡片级版本组（分类从左侧树消失，其下词条成为同组各版本）
+    //   to='category' 卡片级版本组 → 分类（组名当分类名，各版本摘掉「组名#」前缀平铺成独立卡）
+    // 「组名#版本名」前缀的摘/补全部在后端统一做，前端只管点菜单。
+    const convertBusy = ref(false);
+    const doConvert = async (id, to) => {
+      const nid = String(id || '');
+      if (!nid || convertBusy.value) return;
+      convertBusy.value = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/convert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: nid, to }),
+        });
+        const json = await resp.json();
+        if (json.error) { showToast('转换失败：' + json.error, 'error', 3600); return; }
+        const moved = json.moved || 0;
+        showToast(to === 'category'
+          ? '已把版本组「' + (json.name || '') + '」还原成分类'
+            + (moved ? '（' + moved + ' 个版本摘掉组名前缀，平铺成独立卡片）' : '')
+          : '已把分类「' + (json.name || '') + '」聚拢成版本卡'
+            + (moved ? '（' + moved + ' 条提示词成为组内各版本，合并成 1 张卡翻页）' : ''),
+          'success', 3800);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        convertBusy.value = false;
+      }
+    };
+    const onCtxToVg = () => {
+      const id = catMenu.id;
+      closeCatMenu();
+      doConvert(id, 'vg');
+    };
+    const onCardToCategory = () => {
+      const id = cardMenu.file ? vgAnchorIdOf(cardMenu.file) : '';
+      closeCardMenu();
+      doConvert(id, 'category');
     };
 
     // ---- 从卡片直接管版本：新建版本 / 一键标为版本组（不必再回左侧分类树右键） ----
@@ -4998,12 +5081,12 @@ const submitAddTab = async () => {
       onTabClick, onChipClick,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
-      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToggleVg,
+      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToggleVg, onCtxToVg,
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
     isCatMuted, toggleCatMute,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
-      onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef,
+      onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef, onCardToCategory,
       catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
       previewNegText, toggleNegPreview, bankNodes, nodeOfCat,
       canAddChip, chipParentLabel, addCardIsTxt,
