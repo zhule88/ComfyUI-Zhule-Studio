@@ -1231,6 +1231,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-trash-btn:not(:disabled):hover { background: var(--red-dim); border-color: var(--red); color: #ff6b6b; }
 .zhg-trash-btn.on { background: var(--red-dim); border-color: var(--red); color: #ff6b6b; }
 .zhg-trash-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 快捷导出按钮：图标 SVG（下载样式）与 emoji 时代的基线对齐 */
+.zhg-link-btn { display: inline-flex; align-items: center; justify-content: center; transition: all 0.12s; }
+.zhg-link-btn svg { display: block; }
+.zhg-link-btn:not(:disabled):hover { background: var(--accent-dim, rgba(79, 140, 255, 0.14)); border-color: var(--accent, #4f8cff); color: var(--accent, #4f8cff); }
+.zhg-link-btn.on { background: var(--accent-dim, rgba(79, 140, 255, 0.14)); border-color: var(--accent, #4f8cff); color: var(--accent, #4f8cff); }
+.zhg-link-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 /* 随机拼页：骰子按钮，点亮态用主色高亮 */
 .zhg-dice-btn { transition: all 0.12s; }
 .zhg-dice-btn:not(:disabled):hover { background: var(--primary-dim); border-color: var(--primary); color: #fff; }
@@ -1480,6 +1486,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .settings-group.collapsed .settings-group-title { margin-bottom: 0; }
 .settings-row { display: flex; align-items: center; justify-content: space-between;
   padding: 6px 0; font-size: 13px; color: var(--text); }
+/* 纵向排布的行：标签在上、控件占满整行（链接目录这类长输入用） */
+.settings-row.settings-row-stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.settings-link-dir { width: 100%; box-sizing: border-box; font-family: ui-monospace, Consolas, monospace; }
 .settings-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; cursor: pointer; }
 .settings-switch input { opacity: 0; width: 0; height: 0; }
 .settings-switch-slider { position: absolute; inset: 0; border-radius: 10px;

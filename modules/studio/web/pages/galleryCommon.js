@@ -288,11 +288,24 @@ const DEFAULT_PREF = {
         wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
       },
     },
+    // 链接相关（与 main.js 设置面板同构）：dir 目标根目录 / nameMode 子文件夹命名方式 / sep 标签连接符 / custom 分层模板
+    link: { dir: '', nameMode: 'time', sep: '@', custom: [] },
   },
   common: {
     noDeleteConfirm: false,
   },
 };
+
+// 链接配置归一化：设置面板写盘的结构在旧存档里可能缺失，这里补齐默认值
+function normalizeLink(lk) {
+  const out = Object.assign({ dir: '', nameMode: 'time', sep: '@', custom: [] },
+    (lk && typeof lk === 'object') ? lk : {});
+  if (typeof out.dir !== 'string') out.dir = '';
+  if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
+  if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
+  if (!Array.isArray(out.custom)) out.custom = [];
+  return out;
+}
 
 // 标签颜色配置归一化：兼容旧版存档（无 tagColor 字段）与残缺数据，保证四区字段齐全
 function normalizeTagColor(tc) {
@@ -322,6 +335,7 @@ function loadPref() {
     if (p && p.gallery) Object.assign(out.gallery, p.gallery);
     if (p && p.common) Object.assign(out.common, p.common);
     out.gallery.tagColor = normalizeTagColor(p && p.gallery && p.gallery.tagColor);
+    out.gallery.link = normalizeLink(p && p.gallery && p.gallery.link);
     return out;
   } catch (e) {
     return JSON.parse(JSON.stringify(DEFAULT_PREF));
@@ -2004,6 +2018,37 @@ export function useGalleryCommon(opts = {}) {
       showToast('批量删除失败：' + (e.message || ''), 'error');
     }
   }
+  // 快捷导出（硬链接）子文件夹命名：当前启用的过滤标签名（按筛选区顺序）
+  function activeTagNames() {
+    return tagList.value
+      .filter((t) => t && t.active && !t.hidden)
+      .map((t) => String(t.name || '').trim())
+      .filter(Boolean);
+  }
+  // 计算导出子文件夹层级：返回空数组 = 交给后端按时间戳命名
+  //   time   按时间
+  //   tags   按过滤标签：启用标签用 @ 连接成一段（凌乱发@璃月）
+  //   custom 自定义分层：模板每项一层（text 文本层 / tag 标签层，标签层只在标签当前启用时继承）
+  function linkNameSegments() {
+    const lk = (pref.gallery && pref.gallery.link) || {};
+    const sep = lk.sep || '@';
+    const actives = activeTagNames();
+    if (lk.nameMode === 'tags') {
+      return actives.length ? [actives.join(sep)] : [];
+    }
+    if (lk.nameMode === 'custom' && Array.isArray(lk.custom) && lk.custom.length) {
+      const segs = [];
+      for (const it of lk.custom) {
+        const v = String((it && it.value) || '').trim();
+        if (!v) continue;
+        if (it.type === 'tag' && !actives.includes(v)) continue;
+        segs.push(v);
+      }
+      return segs;
+    }
+    return [];
+  }
+
   async function batchLink() {
     const keys = [...selected];
     if (!keys.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片', 'warn'); return; }
@@ -2012,17 +2057,19 @@ export function useGalleryCommon(opts = {}) {
       const item = items.value.find((x) => x.key === k);
       paths.push(item ? (item.path || item.key) : k);
     }
+    const lk = (pref.gallery && pref.gallery.link) || {};
     try {
       const d = await jfetch(API.link, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths }),
+        body: JSON.stringify({ paths, dir: lk.dir || '', segments: linkNameSegments() }),
       });
       if (!d.ok) throw new Error(d.error || '导出失败');
-      const cop = d.copied && d.copied.length ? `，复制 ${d.copied.length}` : '';
+      // 提示只说结果，不再回显保存位置（目录在设置 → 链接相关 里配，用户自己心里有数）
+      const failN = (d.failed && d.failed.length) || 0;
       showToast(d.count
-        ? `已导出 ${d.count} 张（硬链接 ${d.created.length}${cop}） -> ${d.target}`
-        : '没有可导出的图片');
+        ? ('链接成功 ' + d.count + ' 张' + (failN ? '，失败 ' + failN + ' 张' : ''))
+        : '没有可导出的图片', d.count ? 'success' : 'warn');
       // 导出完成后清空已选中，方便继续下一次挑选
       if (d.count) selected.clear();
     } catch (e) {

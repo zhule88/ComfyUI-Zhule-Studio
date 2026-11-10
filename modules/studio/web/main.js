@@ -25,7 +25,15 @@ const DEFAULT_PREF = {
         edit: { mode: 'diff', color: '#2a9d8f', seed: '' },
         wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
       },
-    } },
+    },
+    // 链接相关：图库工具栏下载按钮（硬链接快捷导出）的目标目录与子文件夹命名方式
+    // dir：文件链接地址，留空 = output/zhule_studio/zhule_link；只接受绝对路径（D:\xxx 或 \\nas\share）
+    // nameMode：time 按时间（时间戳子文件夹）/ tags 按过滤标签（启用的标签用 sep 连成一段，如 凌乱发@璃月）
+    //           / custom 自定义分层（多层目录，模板见 custom）
+    // sep：按过滤标签命名时标签之间的连接符
+    // custom：自定义分层模板，元素 { type: 'text' | 'tag', value: '凌乱发' }，数组顺序即目录层级（无限层）
+    link: { dir: '', nameMode: 'time', sep: '@', custom: [] },
+  },
   wordbank: { autoSelectParent: true },
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
   // iconSize：图库/词库卡片「图片左上竖排图标」的尺寸（按钮边长 px），写入 :root 的 --zh-act-size 供 CSS 取用
@@ -92,11 +100,23 @@ function normalizeTagColor(tc) {
   return out;
 }
 
+// 链接相关配置归一化：兼容旧存档（无 link 字段）与残缺数据，
+// dir 只保留字符串、nameMode 非法回落 time、sep 空则用 @、custom 必须是数组
+function normalizeLink(lk) {
+  const out = Object.assign({}, DEFAULT_PREF.gallery.link, (lk && typeof lk === 'object') ? lk : {});
+  if (typeof out.dir !== 'string') out.dir = '';
+  if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
+  if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
+  if (!Array.isArray(out.custom)) out.custom = [];
+  return out;
+}
+
 function loadPref() {
   try {
     const raw = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
     const g = Object.assign({}, DEFAULT_PREF.gallery, (raw && raw.gallery) || {});
     g.tagColor = normalizeTagColor(raw && raw.gallery && raw.gallery.tagColor);
+    g.link = normalizeLink(raw && raw.gallery && raw.gallery.link);
     const c = Object.assign({}, DEFAULT_PREF.common, (raw && raw.common) || {});
     // 图标尺寸兜底：旧存档无该字段或数值非法时回落默认 26px，越界按 MIN/MAX 夹取
     const sz = Number(c.iconSize);
@@ -152,6 +172,22 @@ const App = {
     }
     function toggleNoDeleteConfirm() {
       pref.value.common.noDeleteConfirm = pref.value.common.noDeleteConfirm === false;
+      savePref();
+    }
+    // 文件链接地址：留空 = 默认 output/zhule_studio/zhule_link；非绝对路径当场提示并保留原值，
+    // 真正的路径合法性（系统目录、磁盘根）由后端 _resolve_link_root 兜底校验
+    function setLinkDir(v) {
+      const s = String(v == null ? '' : v).trim();
+      if (s && !/^[A-Za-z]:[\\/]/.test(s) && !s.startsWith('\\\\')) {
+        window.alert('请填写绝对路径，例如 D:\\zhule_link 或 \\\\nas\\share\\link；留空则使用默认目录。');
+        return;
+      }
+      pref.value.gallery.link.dir = s;
+      savePref();
+    }
+    function setLinkNameMode(mode) {
+      if (!['time', 'tags', 'custom'].includes(mode)) return;
+      pref.value.gallery.link.nameMode = mode;
       savePref();
     }
     // 图片上的图标大小：写 :root 的 --zh-act-size，图库/词库卡片操作图标即时跟随（无需刷新页面）
@@ -397,6 +433,7 @@ const App = {
     }
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+      setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
@@ -579,6 +616,30 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
+                </div>
+              </div>
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-link') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-link')">
+                  <span>链接相关</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-link')">
+                <div class="settings-hint">图库工具栏的下载按钮 = 快捷导出：给选中的图片建硬链接（给原图建分身入口，不复制图片数据、几乎不占额外空间），每次导出自动新建独立子文件夹。</div>
+                <div class="settings-row settings-row-stack">
+                  <span class="settings-label">文件链接地址</span>
+                  <input class="settings-seed-input settings-link-dir" :value="pref.gallery.link.dir"
+                         :placeholder="'留空 = ' + DEFAULT_LINK_DIR"
+                         data-tip="导出的目标根目录。可填绝对路径（如 D:\\zhule_link 或 \\\\nas\\share\\link）；留空则用默认目录 output/zhule_studio/zhule_link。只能填绝对路径，且不能是磁盘根或系统目录。"
+                         @change="setLinkDir($event.target.value)" spellcheck="false">
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">多选子文件夹命名</span>
+                  <div class="settings-seg">
+                    <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'time' }" @click="setLinkNameMode('time')">按时间</button>
+                    <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'tags' }" @click="setLinkNameMode('tags')">按过滤标签</button>
+                  </div>
+                </div>
+                <div class="settings-hint">按过滤标签：把当前启用的过滤标签用 @ 连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发@璃月；没有启用标签时自动回退按时间。自定义分层命名（凌乱发/璃月 这样的多层目录）先在示例页确认交互，确认后再接进这里。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-timefmt') }">

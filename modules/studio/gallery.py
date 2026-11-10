@@ -1709,6 +1709,51 @@ def _link_root():
     return os.path.join(_get_output_dir(), STUDIO_SUBDIR, "zhule_link")
 
 
+# ── 链接目录自定义（图库设置 → 链接相关）────────────────────────────────────
+# 用户在设置里可以填自己的绝对路径（默认留空 = output/zhule_studio/zhule_link）。
+# 只接受绝对路径：盘符盘（D:\xxx）或 UNC 共享（\\nas\share）；系统目录一律拒绝，
+# 避免把硬链接/副本灌进 Windows / Program Files / ProgramData。
+_WIN_BAD_CHARS = '<>:"|?*'
+
+
+def _sanitize_link_segment(seg):
+    """把一段文件夹名清洗成 Windows 合法目录名（非法字符换下划线，去首尾空格与点）。"""
+    s = str(seg or '')
+    s = ''.join(ch for ch in s if ch not in _WIN_BAD_CHARS and ord(ch) >= 32)
+    s = s.replace('/', '_').replace('\\', '_').strip()
+    s = s.strip('.')
+    return s[:80]
+
+
+def _resolve_link_root(custom):
+    """自定义链接根目录校验：返回 (绝对路径, 错误信息)，两者互斥。"""
+    raw = str(custom or '').strip().strip('"').strip("'")
+    if not raw:
+        return _link_root(), None
+    if not (re.match(r"^[A-Za-z]:[\\/]", raw) or raw.startswith("\\\\")):
+        return None, "链接目录必须填写绝对路径，例如 D:\\zhule_link"
+    try:
+        norm = os.path.abspath(raw)
+    except Exception:
+        return None, "链接目录路径无效"
+    drive, tail = os.path.splitdrive(norm)
+    if not tail.strip("\\/"):
+        return None, "链接目录不能直接是磁盘根目录，请指定一个子文件夹"
+    low = norm.lower().replace("/", "\\")
+    guarded = []
+    sysroot = os.environ.get("SystemRoot") or r"C:\Windows"
+    try:
+        sysroot = os.path.abspath(sysroot).lower().replace("/", "\\")
+        guarded.append(sysroot)
+    except Exception:
+        pass
+    guarded += [r"c:\program files", r"c:\program files (x86)", r"c:\programdata"]
+    for g in guarded:
+        if low == g or low.startswith(g.rstrip("\\") + "\\"):
+            return None, "链接目录不能位于系统目录（Windows / Program Files / ProgramData）"
+    return norm, None
+
+
 def _unique_dest(target_dir, filename):
     """目标目录内同名冲突自动加后缀 (1)、(2)...，返回可用路径。"""
     base, ext = os.path.splitext(filename)
@@ -1721,8 +1766,11 @@ def _unique_dest(target_dir, filename):
 
 
 async def _post_gallery_batch_link_impl(request):
-    """body: { paths: [rel, ...], folder?: string }
-    把选中的图片以硬链接平铺到 output/zhule_link/<folder>（每次导出独立子文件夹，不平铺）。
+    """body: { paths: [rel, ...], folder?: string, segments?: [string], dir?: string }
+    把选中的图片以硬链接平铺到 <链接根目录>/<folder 或 segments 各层>（每次导出独立子文件夹，不平铺）。
+    - dir：链接根目录（绝对路径，留空 = output/zhule_studio/zhule_link）
+    - segments：多层文件夹（自定义分层命名），逐层清洗 + 逐层创建，最多 12 层
+    - folder：单层文件夹名（旧接口，等价 segments=[folder]）
     同卷用 os.link 零拷贝；跨卷/文件系统不支持时回退为复制副本。"""
     try:
         body = await request.json()
@@ -1747,21 +1795,40 @@ async def _post_gallery_batch_link_impl(request):
     if not paths:
         return web.json_response({"error": "paths 不能为空"}, status=400)
 
-    # 每次导出独立子文件夹：优先用户指定名（仅单层，防穿越），否则时间戳；重名自动加序号
-    folder = str(body.get("folder") or "").strip()
-    if folder:
-        folder = folder.replace("/", "_").replace("\\", "_")
-        if folder in (".", ".."):
-            folder = ""
-    if not folder:
-        folder = time.strftime("%Y%m%d_%H%M%S")
-    root = _link_root()
-    target = os.path.join(root, folder)
+    # 每次导出独立子文件夹：优先 segments 多层（自定义分层命名），其次 folder 单层，最后时间戳；重名自动加序号
+    segs = body.get("segments")
+    folder_segs = []
+    if isinstance(segs, list):
+        for s in segs[:12]:
+            cleaned = _sanitize_link_segment(s)
+            if cleaned and cleaned not in (".", ".."):
+                folder_segs.append(cleaned)
+    if not folder_segs:
+        folder = _sanitize_link_segment(body.get("folder"))
+        if folder:
+            folder_segs = [folder]
+    if not folder_segs:
+        folder_segs = [time.strftime("%Y%m%d_%H%M%S")]
+    # 整条相对路径长度收敛（260 上限留余量），超长层直接截断
+    joined = os.path.join(*folder_segs)
+    while len(joined) > 180 and len(folder_segs) > 1:
+        folder_segs.pop()
+        joined = os.path.join(*folder_segs)
+    folder_segs[-1] = folder_segs[-1][:80]
+
+    root, err = _resolve_link_root(body.get("dir"))
+    if err:
+        return web.json_response({"error": err}, status=400)
+    # 末层重名自动追加 _1/_2…（与旧行为一致，避免同一标签反复导出冲掉上一次）
+    target = os.path.join(root, *folder_segs)
     n = 1
     while os.path.exists(target):
-        target = os.path.join(root, f"{folder}_{n}")
+        target = os.path.join(root, *(folder_segs[:-1] + [f"{folder_segs[-1]}_{n}"]))
         n += 1
-    os.makedirs(target, exist_ok=True)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as e:
+        return web.json_response({"error": f"无法创建链接目录：{e}"}, status=400)
 
     created = []
     copied = []

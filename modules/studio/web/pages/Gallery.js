@@ -16,7 +16,9 @@ export default {
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              data-tip="将选中的图片快捷导出到 zhule_link 文件夹：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库在同一磁盘分区），每次导出自动新建独立子文件夹" @click="batchLink">🔗</button>
+              :data-tip="'快捷导出选中的图片：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库同一磁盘分区），每次导出自动新建独立子文件夹。目标目录在 设置 → 链接相关 里配置，当前：' + (pref.gallery.link.dir || 'output/zhule_studio/zhule_link')" @click="batchLink">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path></svg>
+      </button>
       <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
       <button class="btn zhg-dice-btn" data-tip="随机拼页：从当前筛选命中的图片中随机抽出一页覆盖当前页，页码不变" @click="randomPage">🎲</button>
       <span class="zhg-sel-count" v-if="selected.size">已选 <b>{{ selected.size }}</b>
