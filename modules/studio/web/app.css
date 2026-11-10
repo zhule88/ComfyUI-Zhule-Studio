@@ -1460,10 +1460,19 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .nav-gear:hover { color: var(--text); background: var(--bg-2); }
 .settings-mask { position: fixed; inset: 0; background: rgba(10, 12, 18, 0.55); z-index: 900;
   display: flex; align-items: center; justify-content: center; }
-.settings-panel { width: 320px; max-width: 90vw; max-height: 90vh; overflow-y: auto; margin: 12px;
+.settings-shell { position: relative; width: 320px; max-width: 90vw; margin: 12px; display: flex; }
+.settings-panel { width: 100%; max-height: 90vh; overflow-y: auto;
   background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; }
+/* 右侧握把：只调宽不调高，拖动时整条高亮，hover 变长提示可拖 */
+.settings-resizer { position: absolute; top: 50%; right: -9px; transform: translateY(-50%);
+  width: 7px; height: 54px; border-radius: 4px; cursor: col-resize; touch-action: none;
+  background: var(--border-2); opacity: 0.5; transition: height 0.15s, opacity 0.15s, background 0.15s; }
+.settings-resizer:hover, .settings-resizer:active { height: 92px; opacity: 1; background: var(--accent, #4f8cff); }
+/* 隐藏设置注释：解释性说明行整行不占位，操作结果回执（.keep-hint）仍保留；标签颜色弹窗内说明同样隐藏 */
+.settings-panel.hide-hints .settings-hint:not(.keep-hint) { display: none; }
+.color-popup.hide-hints .color-popup-hint { display: none; }
 .settings-panel::-webkit-scrollbar { width: 8px; }
 .settings-panel::-webkit-scrollbar-track { background: transparent; }
 .settings-panel::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; border: 2px solid var(--bg); }

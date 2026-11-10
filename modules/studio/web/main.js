@@ -1,4 +1,4 @@
-import { createApp, ref, computed, watch } from 'vue';
+import { createApp, ref, computed, watch, onBeforeUnmount } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 import Wordbank from './pages/Wordbank.js';
 import Gallery from './pages/Gallery.js';
@@ -45,8 +45,11 @@ const DEFAULT_PREF = {
   // hideMuted：默认关闭；开启后被静音（mute=1）的提示词在词库卡片与标签编辑面板中隐藏不展示
   // hideCardIcons：默认关闭；开启后词库卡片不再渲染操作图标（进入详情/放大/删除图/静音/删除/编辑/上传），
   //   全部改由右键菜单承担；卡片上的左右切换与骰子属于高频操作，始终保留
+  // hideHints：默认关闭；开启后设置面板里所有解释性说明行（.settings-hint）全部隐藏，只留设置项本身
+  // panelWidth：设置面板宽度（px）；面板右侧握把可拖动调宽（高度仍按内容自适应），拖完宽度持久化
   // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
-  common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, hideCardIcons: false, collapsedGroups: {} },
+  common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, hideCardIcons: false,
+    hideHints: false, panelWidth: 320, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
 // 卡片图标尺寸档位：图片左上竖排操作图标（选择/放大/删除/静音/编辑/上传）的按钮边长（px），
@@ -59,6 +62,9 @@ const ICON_SIZES = [
 ];
 const ICON_SIZE_MIN = 18;
 const ICON_SIZE_MAX = 48;
+// 设置面板宽度档位：右侧握把拖动调宽时按 MIN/MAX 夹取，宽度仅调宽不调高
+const PANEL_WIDTH_MIN = 320;
+const PANEL_WIDTH_MAX = 900;
 // 标签颜色分区（方案E复杂模式）：四个区域独立配置
 const TAG_COLOR_AREAS = [
   { key: 'detail', label: '图片详情' },
@@ -148,6 +154,12 @@ function loadPref() {
       : DEFAULT_PREF.common.iconSize;
     c.hideMuted = c.hideMuted === true;
     c.hideCardIcons = c.hideCardIcons === true;
+    c.hideHints = c.hideHints === true;
+    // 面板宽度兜底：旧存档无该字段或数值非法时回落 320，越界按 MIN/MAX 夹取
+    const pw = Number(c.panelWidth);
+    c.panelWidth = Number.isFinite(pw) && pw > 0
+      ? Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, Math.round(pw)))
+      : DEFAULT_PREF.common.panelWidth;
     return {
       gallery: g,
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
@@ -300,6 +312,54 @@ const App = {
       pref.value.common.hideCardIcons = pref.value.common.hideCardIcons !== true;
       savePref();
     }
+    // 隐藏设置注释：开启后设置面板内所有解释性说明行不再展示，只留设置项本身
+    function toggleHideHints() {
+      pref.value.common.hideHints = pref.value.common.hideHints !== true;
+      savePref();
+    }
+    // 设置面板宽度：右侧握把拖动调宽（高度仍由内容自适应），松手写盘持久化
+    const panelWidth = ref(pref.value.common.panelWidth);
+    function applyPanelWidth(px) {
+      // 上限取 900 与窗口宽 92% 的较小值，避免窄屏拖动后超出可视区
+      const max = Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, Math.round(window.innerWidth * 0.88)));
+      const n = Math.min(max, Math.max(PANEL_WIDTH_MIN, Math.round(Number(px) || PANEL_WIDTH_MIN)));
+      panelWidth.value = n;
+      return n;
+    }
+    let resizing = false;
+    let resizeStartX = 0;
+    let resizeStartW = 0;
+    function onPanelResizeMove(e) {
+      if (!resizing) return;
+      // 面板在遮罩里水平居中：右缘位移只有宽度增量的一半，故按 2 倍让握把跟手
+      applyPanelWidth(resizeStartW + (e.clientX - resizeStartX) * 2);
+    }
+    function onPanelResizeUp() {
+      if (!resizing) return;
+      resizing = false;
+      document.removeEventListener('mousemove', onPanelResizeMove);
+      document.removeEventListener('mouseup', onPanelResizeUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      pref.value.common.panelWidth = panelWidth.value;
+      savePref();
+    }
+    function startPanelResize(e) {
+      resizing = true;
+      resizeStartX = e.clientX;
+      resizeStartW = panelWidth.value;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      document.addEventListener('mousemove', onPanelResizeMove);
+      document.addEventListener('mouseup', onPanelResizeUp);
+    }
+    // 组件卸载时解绑，避免拖动中途切路由留下全局监听
+    onBeforeUnmount(() => {
+      document.removeEventListener('mousemove', onPanelResizeMove);
+      document.removeEventListener('mouseup', onPanelResizeUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    });
     watch(() => pref.value.common.iconSize, (v) => applyIconSize(v), { immediate: true });
     function setTagSeed(seed) {
       pref.value.gallery.tagSeed = (seed || '').trim();
@@ -520,7 +580,8 @@ const App = {
         });
     }
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
-      toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
+      toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, toggleHideHints,
+      panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
       LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, linkTimeSample,
       linkDlgOpen, linkTree, linkActiveTags, linkKnownTags, linkLayerCount, openLinkDlg, closeLinkDlg, onLinkDlgSaved,
@@ -568,7 +629,8 @@ const App = {
       <router-view></router-view>
 
       <div class="settings-mask" v-if="showSettings" @click.self="showSettings = false">
-        <div class="settings-panel">
+        <div class="settings-shell" :style="{ width: panelWidth + 'px' }">
+        <div class="settings-panel" :class="{ 'hide-hints': pref.common.hideHints === true }">
           <div class="settings-head">
             <span class="settings-title">设置</span>
             <button class="settings-close" @click="showSettings = false">✕</button>
@@ -608,6 +670,13 @@ const App = {
                   <span class="settings-label">隐藏卡片上的图标</span>
                   <label class="settings-switch">
                     <input type="checkbox" :checked="pref.common.hideCardIcons === true" @change="toggleHideCardIcons">
+                    <span class="settings-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">隐藏设置注释</span>
+                  <label class="settings-switch">
+                    <input type="checkbox" :checked="pref.common.hideHints === true" @change="toggleHideHints">
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
@@ -800,7 +869,7 @@ const App = {
                   <button class="settings-danger-btn" :disabled="rebuilding" @click="rebuildDB">重建图库</button>
                 </div>
                 <div class="settings-hint rebuild-hint" :data-tip="'仅在图片索引异常时才需要重建，例如新增图片未显示、信息过期或索引文件损坏。系统正常运行时会自动维护索引，正常情况请勿点击。重建需重新扫描全部图片元数据，耗时数分钟，期间图库列表暂时不可用。'">⚠️ 正常情况用不到，请勿随意点击。</div>
-                <div class="settings-hint" v-if="rebuildNotice">{{ rebuildNotice }}</div>
+                <div class="settings-hint keep-hint" v-if="rebuildNotice">{{ rebuildNotice }}</div>
                 </div>
               </div>
             </template>
@@ -840,18 +909,20 @@ const App = {
                   <button class="btn" :disabled="wordbankCleaningCn" @click="wordbankCleanCn">{{ wordbankCleaningCn ? '清理中…' : '开始清理' }}</button>
                 </div>
                 <div class="settings-hint">扫描英文 prompt.txt，删除混入的中文字符；中文提示词文件自动跳过。</div>
-                <div class="settings-hint" v-if="wordbankCleanNotice">{{ wordbankCleanNotice }}</div>
+                <div class="settings-hint keep-hint" v-if="wordbankCleanNotice">{{ wordbankCleanNotice }}</div>
                 </div>
               </div>
             </template>
             <div class="settings-none" v-if="!isGallery && !isWordbank">当前页面暂无设置项</div>
           </div>
         </div>
+        <div class="settings-resizer" @mousedown.prevent="startPanelResize"></div>
+        </div>
       </div>
 
       <!-- 标签颜色设置弹窗（方案E）：层级切换 + 模式/取色/种子 -->
       <div class="color-popup-mask" v-if="colorPopupOpen" @click.self="colorPopupOpen = false">
-        <div class="color-popup">
+        <div class="color-popup" :class="{ 'hide-hints': pref.common.hideHints === true }">
           <div class="color-popup-head">
             <span class="color-popup-title">标签颜色</span>
             <button class="color-popup-close" @click="colorPopupOpen = false">✕</button>
