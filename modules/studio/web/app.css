@@ -1460,28 +1460,19 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .nav-gear:hover { color: var(--text); background: var(--bg-2); }
 .settings-mask { position: fixed; inset: 0; background: rgba(10, 12, 18, 0.55); z-index: 900;
   display: flex; align-items: center; justify-content: center; }
-.settings-shell { position: relative; width: 320px; max-width: 90vw; margin: 12px; display: flex; }
+.settings-shell { position: relative; width: 30%; max-width: 80vw; margin: 12px; display: flex; }
 .settings-panel { width: 100%; max-height: 90vh; overflow-y: auto;
   background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; }
-/* 右侧握把：只调宽不调高，拖动时整条高亮，hover 变长提示可拖 */
-.settings-resizer { position: absolute; top: 50%; right: -9px; transform: translateY(-50%);
-  width: 7px; height: 54px; border-radius: 4px; cursor: col-resize; touch-action: none;
-  background: var(--border-2); opacity: 0.5; transition: height 0.15s, opacity 0.15s, background 0.15s; }
-.settings-resizer:hover, .settings-resizer:active { height: 92px; opacity: 1; background: var(--accent, #4f8cff); }
-/* 握把加强：面板里滚动条占了右缘，原来 7px 半透明握把几乎看不出来，改成常显双竖纹握把 + 内缘高亮条 */
-.settings-resizer { right: -6px; width: 12px; height: 64px; opacity: 1; background: transparent;
-  border-radius: 6px; z-index: 5; }
-.settings-resizer::before { content: ''; position: absolute; left: 50%; top: 6px; bottom: 6px; width: 7px;
-  transform: translateX(-50%); border-radius: 4px;
-  background: repeating-linear-gradient(to right, var(--border-2) 0 2px, transparent 2px 5px);
-  transition: background 0.15s; }
-.settings-resizer:hover::before, .settings-resizer:active::before {
-  background: repeating-linear-gradient(to right, var(--accent, #4f8cff) 0 2px, transparent 2px 5px); }
-.settings-resizer:hover, .settings-resizer:active { height: 104px; background: transparent; }
-/* 面板右缘提示线：告诉用户这一侧可以拖 */
-.settings-shell:hover .settings-panel { border-right-color: var(--text-3); }
+/* 拖宽热区：左右两条边整高都能抓，热区落在面板外侧，不挡面板内的滚动条。
+   不再画任何中间竖纹，可抓性只靠 cursor: col-resize 与边缘高亮提示。 */
+.settings-resizer { position: absolute; top: 0; bottom: 0; right: -14px; width: 14px;
+  cursor: col-resize; touch-action: none; background: transparent; z-index: 6; }
+.settings-resizer.is-left { right: auto; left: -14px; }
+/* 鼠标在哪一侧，那一侧的边框就亮起来，提示"这条边可以抓" */
+.settings-shell:has(.settings-resizer:not(.is-left):hover) .settings-panel { border-right-color: var(--accent, #4f8cff); }
+.settings-shell:has(.settings-resizer.is-left:hover) .settings-panel { border-left-color: var(--accent, #4f8cff); }
 /* 隐藏设置注释：解释性说明行整行不占位，操作结果回执（.keep-hint）仍保留；标签颜色弹窗内说明同样隐藏 */
 .settings-panel.hide-hints .settings-hint:not(.keep-hint) { display: none; }
 .color-popup.hide-hints .color-popup-hint { display: none; }

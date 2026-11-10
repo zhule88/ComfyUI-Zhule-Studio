@@ -46,10 +46,10 @@ const DEFAULT_PREF = {
   // hideCardIcons：默认关闭；开启后词库卡片不再渲染操作图标（进入详情/放大/删除图/静音/删除/编辑/上传），
   //   全部改由右键菜单承担；卡片上的左右切换与骰子属于高频操作，始终保留
   // hideHints：默认关闭；开启后设置面板里所有解释性说明行（.settings-hint）全部隐藏，只留设置项本身
-  // panelWidth：设置面板宽度（px）；面板右侧握把可拖动调宽（高度仍按内容自适应），拖完宽度持久化
+  // panelWidth：设置面板宽度（百分比，相对窗口总宽，上限 80）；左右两侧握把均可拖动调宽（高度仍按内容自适应），拖完宽度持久化
   // collapsedGroups：设置面板各大类的折叠状态（键为分组 key，值为 true 表示已收起），持久化保存
   common: { noDeleteConfirm: false, iconSize: 26, hideMuted: false, hideCardIcons: false,
-    hideHints: false, panelWidth: 320, collapsedGroups: {} },
+    hideHints: false, panelWidth: 30, collapsedGroups: {} },
 };
 const TIME_FMTS = ['yyyy-MM-dd HH:mm', 'yyyy-MM-dd', 'MM-dd HH:mm', 'MM-dd', 'HH:mm', 'yyyy/MM/dd'];
 // 卡片图标尺寸档位：图片左上竖排操作图标（选择/放大/删除/静音/编辑/上传）的按钮边长（px），
@@ -62,9 +62,9 @@ const ICON_SIZES = [
 ];
 const ICON_SIZE_MIN = 18;
 const ICON_SIZE_MAX = 48;
-// 设置面板宽度档位：右侧握把拖动调宽时按 MIN/MAX 夹取，宽度仅调宽不调高
-const PANEL_WIDTH_MIN = 320;
-const PANEL_WIDTH_MAX = 900;
+// 设置面板宽度档位：单位为「占窗口总宽的百分比」，左右握把拖动时按 MIN/MAX 夹取，上限 80%，宽度仅调宽不调高
+const PANEL_PCT_MIN = 22;
+const PANEL_PCT_MAX = 80;
 // 标签颜色分区（方案E复杂模式）：四个区域独立配置
 const TAG_COLOR_AREAS = [
   { key: 'detail', label: '图片详情' },
@@ -155,11 +155,11 @@ function loadPref() {
     c.hideMuted = c.hideMuted === true;
     c.hideCardIcons = c.hideCardIcons === true;
     c.hideHints = c.hideHints === true;
-    // 面板宽度兜底：旧存档无该字段或数值非法时回落 320，越界按 MIN/MAX 夹取
-    const pw = Number(c.panelWidth);
-    c.panelWidth = Number.isFinite(pw) && pw > 0
-      ? Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, Math.round(pw)))
-      : DEFAULT_PREF.common.panelWidth;
+    // 面板宽度兜底：单位为百分比。旧存档存的是 px（>100 视为旧值），按当时窗口宽换算成百分比后再夹取
+    const rawPw = Number(c.panelWidth);
+    let pct = Number.isFinite(rawPw) && rawPw > 0 ? rawPw : DEFAULT_PREF.common.panelWidth;
+    if (pct > PANEL_PCT_MAX) pct = (pct / (window.innerWidth || 1280)) * 100;
+    c.panelWidth = Math.round(Math.min(PANEL_PCT_MAX, Math.max(PANEL_PCT_MIN, pct)) * 10) / 10;
     return {
       gallery: g,
       wordbank: Object.assign({}, DEFAULT_PREF.wordbank, (raw && raw.wordbank) || {}),
@@ -336,22 +336,26 @@ const App = {
       pref.value.common.hideHints = pref.value.common.hideHints !== true;
       savePref();
     }
-    // 设置面板宽度：右侧握把拖动调宽（高度仍由内容自适应），松手写盘持久化
+    // 设置面板宽度：左右握把拖动调宽（高度仍由内容自适应），松手写盘持久化
+    // 数值含义为「占窗口总宽的百分比」，窗口缩放时面板随之等比变化，最大 80%
     const panelWidth = ref(pref.value.common.panelWidth);
-    function applyPanelWidth(px) {
-      // 上限取 900 与窗口宽 92% 的较小值，避免窄屏拖动后超出可视区
-      const max = Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, Math.round(window.innerWidth * 0.88)));
-      const n = Math.min(max, Math.max(PANEL_WIDTH_MIN, Math.round(Number(px) || PANEL_WIDTH_MIN)));
-      panelWidth.value = n;
-      return n;
+    function applyPanelWidth(pct) {
+      const v = Number(pct);
+      const n = Math.min(PANEL_PCT_MAX, Math.max(PANEL_PCT_MIN, Number.isFinite(v) ? v : DEFAULT_PREF.common.panelWidth));
+      panelWidth.value = Math.round(n * 10) / 10;
+      return panelWidth.value;
     }
     let resizing = false;
     let resizeStartX = 0;
     let resizeStartW = 0;
+    // dir=1 拖右缘（往右变宽）；dir=-1 拖左缘（往右变窄）。两条边整高都是热区。
+    let resizeDir = 1;
     function onPanelResizeMove(e) {
       if (!resizing) return;
-      // 面板在遮罩里水平居中：右缘位移只有宽度增量的一半，故按 2 倍让握把跟手
-      applyPanelWidth(resizeStartW + (e.clientX - resizeStartX) * 2);
+      // 面板在遮罩里水平居中：单侧边缘的位移只有宽度增量的一半，故按 2 倍让握把跟手；
+      // 位移 px 换算成「占窗口宽百分比」后再叠加
+      const dPct = ((e.clientX - resizeStartX) * 2 * resizeDir * 100) / (window.innerWidth || 1280);
+      applyPanelWidth(resizeStartW + dPct);
     }
     function onPanelResizeUp() {
       if (!resizing) return;
@@ -363,8 +367,9 @@ const App = {
       pref.value.common.panelWidth = panelWidth.value;
       savePref();
     }
-    function startPanelResize(e) {
+    function startPanelResize(e, dir) {
       resizing = true;
+      resizeDir = Number(dir) < 0 ? -1 : 1;
       resizeStartX = e.clientX;
       resizeStartW = panelWidth.value;
       document.body.style.userSelect = 'none';
@@ -649,7 +654,7 @@ const App = {
       <router-view></router-view>
 
       <div class="settings-mask" v-if="showSettings" @click.self="showSettings = false">
-        <div class="settings-shell" :style="{ width: panelWidth + 'px' }">
+        <div class="settings-shell" :style="{ width: panelWidth + '%' }">
         <div class="settings-panel" :class="{ 'hide-hints': pref.common.hideHints === true }">
           <div class="settings-head">
             <span class="settings-title">设置</span>
@@ -955,7 +960,8 @@ const App = {
             <div class="settings-none" v-if="!isGallery && !isWordbank">当前页面暂无设置项</div>
           </div>
         </div>
-        <div class="settings-resizer" @mousedown.prevent="startPanelResize"></div>
+        <div class="settings-resizer is-left" @mousedown.prevent="startPanelResize($event, -1)"></div>
+        <div class="settings-resizer" @mousedown.prevent="startPanelResize($event, 1)"></div>
         </div>
       </div>
 
