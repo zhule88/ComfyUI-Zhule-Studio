@@ -154,6 +154,10 @@ const App = {
       localStorage.setItem(PREF_KEY, JSON.stringify(pref.value));
       window.dispatchEvent(new CustomEvent('zhule-pref-changed', { detail: pref.value }));
     }
+    // 图库里的齿轮弹框保存导出配置时也会写盘并广播，这里跟着刷新，避免设置页显示的是旧值
+    window.addEventListener('zhule-pref-changed', (e) => {
+      if (e && e.detail) pref.value = JSON.parse(JSON.stringify(e.detail));
+    });
     function toggleField(key) {
       pref.value.gallery[key] = !pref.value.gallery[key];
       savePref();
@@ -637,9 +641,11 @@ const App = {
                   <div class="settings-seg">
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'time' }" @click="setLinkNameMode('time')">按时间</button>
                     <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'tags' }" @click="setLinkNameMode('tags')">按过滤标签</button>
+                    <button class="settings-seg-btn" :class="{ on: pref.gallery.link.nameMode === 'custom' }" @click="setLinkNameMode('custom')">自定义分层</button>
                   </div>
                 </div>
-                <div class="settings-hint">按过滤标签：把当前启用的过滤标签用 @ 连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发@璃月；没有启用标签时自动回退按时间。自定义分层命名（凌乱发/璃月 这样的多层目录）先在示例页确认交互，确认后再接进这里。</div>
+                <div class="settings-hint">按过滤标签：把当前启用的过滤标签用 @ 连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发@璃月；没有启用标签时自动回退按时间。</div>
+                <div class="settings-hint">自定义分层：多层目录（凌乱发/璃月/出图 这样一层层往下）。层的内容与顺序在图库工具栏下载按钮旁的齿轮按钮里编辑（支持拖动排序）；某层的标签在过滤区被停用时，下载会被拦下并弹框让你先修。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-timefmt') }">

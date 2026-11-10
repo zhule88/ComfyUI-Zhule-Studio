@@ -2165,3 +2165,72 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .vg-frame.active .vg-frame-name { color: var(--text); }
+
+/* ===== 快捷导出 · 自定义分层弹框（v3 落地：层顺序拖动排序，无上下按钮）===== */
+/* 玻璃拟态面板：与删除确认框同层级 z-index（1e6），保证在全屏看图浮层之上还能点到 */
+.zhg-lkd-mask { position: fixed; inset: 0; z-index: 1000000; display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 9, 14, 0.52); backdrop-filter: blur(3px); }
+.zhg-lkd { width: 580px; max-width: 94vw; max-height: 86vh; display: flex; flex-direction: column;
+  background: linear-gradient(180deg, rgba(39, 46, 61, 0.97), rgba(23, 28, 39, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px); }
+.zhg-lkd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.zhg-lkd-title { font-size: 13.5px; font-weight: 700; color: #eaf0fa; letter-spacing: 0.2px; }
+.zhg-lkd-x { border: none; background: transparent; color: var(--text-3, #8b97ab); font-size: 12px;
+  cursor: pointer; padding: 2px 6px; border-radius: 6px; transition: all 0.12s; }
+.zhg-lkd-x:hover { color: #fff; background: rgba(255, 255, 255, 0.10); }
+.zhg-lkd-body { padding: 14px 18px; overflow-y: auto; }
+.zhg-lkd-line { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.zhg-lkd-k { flex-shrink: 0; width: 64px; font-size: 12px; color: var(--text-2, #9aa7bd); }
+.zhg-lkd-input { flex: 1; min-width: 0; height: 28px; padding: 0 9px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(0, 0, 0, 0.34); color: #e8eefb;
+  font-size: 12px; outline: none; transition: border-color 0.12s; font-family: inherit; }
+.zhg-lkd-input:focus { border-color: var(--primary, #4f8cff); }
+.zhg-lkd-sep { flex: 0 0 56px; text-align: center; }
+.zhg-lkd-note { font-size: 11px; color: var(--text-3, #7f8b9e); white-space: nowrap; }
+.zhg-lkd-lh { font-size: 11.5px; color: var(--text-3, #7f8b9e); margin: 13px 0 8px; }
+.zhg-lkd-layers { display: flex; flex-direction: column; gap: 6px; }
+.zhg-lkd-layer { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 9px;
+  border: 1px dashed rgba(255, 255, 255, 0.11); background: rgba(255, 255, 255, 0.035);
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s; }
+.zhg-lkd-layer.dragging { opacity: 0.45; }
+/* 拖到哪一层就在那一层的上沿亮一条主色线：插入位置一眼可见 */
+.zhg-lkd-layer.drag-over { border-color: var(--primary, #4f8cff);
+  box-shadow: inset 0 2px 0 var(--primary, #4f8cff), 0 0 0 1px rgba(79, 140, 255, 0.28); }
+.zhg-lkd-layer.bad { border-color: rgba(229, 72, 77, 0.55); background: rgba(229, 72, 77, 0.10); }
+.zhg-lkd-grip { flex-shrink: 0; cursor: grab; user-select: none; color: var(--text-3, #8b97ab);
+  font-size: 13px; line-height: 1; padding: 2px 3px; border-radius: 5px; }
+.zhg-lkd-grip:hover { color: #fff; background: rgba(255, 255, 255, 0.10); }
+.zhg-lkd-grip:active { cursor: grabbing; }
+.zhg-lkd-idx { flex-shrink: 0; width: 12px; text-align: center; font-size: 11px;
+  color: var(--text-3, #7f8b9e); font-variant-numeric: tabular-nums; }
+.zhg-lkd-type { flex-shrink: 0; padding: 1px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2, #9aa7bd); transition: all 0.12s; font-family: inherit; }
+.zhg-lkd-type.tag { border-color: rgba(79, 140, 255, 0.55); background: rgba(79, 140, 255, 0.16); color: #b9d4ff; }
+.zhg-lkd-type:hover { color: #fff; }
+.zhg-lkd-pick { flex-shrink: 0; height: 26px; max-width: 118px; font-size: 11px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(0, 0, 0, 0.34); color: #d6e0f0;
+  outline: none; font-family: inherit; }
+.zhg-lkd-bad { flex-shrink: 0; font-size: 10px; color: #ff6b6b; }
+.zhg-lkd-del { flex-shrink: 0; border: none; background: transparent; color: var(--text-3, #8b97ab);
+  font-size: 11px; cursor: pointer; padding: 2px 5px; border-radius: 6px; transition: all 0.12s; }
+.zhg-lkd-del:hover { color: #ff6b6b; background: rgba(229, 72, 77, 0.16); }
+.zhg-lkd-empty { font-size: 12px; color: var(--text-3, #7f8b9e); text-align: center; padding: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.10); border-radius: 9px; }
+.zhg-lkd-add { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.zhg-lkd-prev { display: flex; align-items: center; gap: 8px; margin-top: 13px; }
+.zhg-lkd-prev code { font-size: 11.5px; color: #cfe3ff; background: rgba(0, 0, 0, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 7px; padding: 3px 9px;
+  word-break: break-all; line-height: 1.6; }
+.zhg-lkd-err { margin-top: 10px; font-size: 11.5px; color: #ff6b6b; line-height: 1.65; }
+.zhg-lkd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07); }
+/* 导出配置按钮：与快捷导出按钮并排，失效层存在时变琥珀色提示 */
+.zhg-link-cfg-btn { display: inline-flex; align-items: center; justify-content: center; transition: all 0.12s; }
+.zhg-link-cfg-btn svg { display: block; }
+.zhg-link-cfg-btn:hover { background: var(--accent-dim, rgba(79, 140, 255, 0.14));
+  border-color: var(--accent, #4f8cff); color: var(--accent, #4f8cff); }
+.zhg-link-cfg-btn.warn { background: rgba(255, 176, 32, 0.14); border-color: rgba(255, 176, 32, 0.6); color: #ffb020; }

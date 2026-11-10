@@ -2037,16 +2037,80 @@ export function useGalleryCommon(opts = {}) {
       return actives.length ? [actives.join(sep)] : [];
     }
     if (lk.nameMode === 'custom' && Array.isArray(lk.custom) && lk.custom.length) {
+      const known = knownTagNames.value;
       const segs = [];
       for (const it of lk.custom) {
         const v = String((it && it.value) || '').trim();
         if (!v) continue;
-        if (it.type === 'tag' && !actives.includes(v)) continue;
+        // 本应是标签层、该标签也确实在标签库里、但现在没启用 → 缺这一段，跳过（导出前已被 pending 拦下）
+        if (it.type === 'tag' && !actives.includes(v) && known.includes(v)) continue;
         segs.push(v);
       }
       return segs;
     }
     return [];
+  }
+
+  // ── 快捷导出 · 自定义分层弹框（v3：默认直下，配置/拦截双入口）──────────────
+  // 两个入口共用同一个弹框组件：cfg = 只改配置（随时可开，不受 pending 影响）；
+  // export = 下载时发现自定义层依赖的标签已被停用，拦下这次导出、让用户先修分层。
+  const linkDlgOpen = ref(false);
+  const linkDlgMode = ref('cfg');
+  const activeTags = computed(() => activeTagNames());
+  // 标签库里出现过的标签名（含被停用/隐藏的）：用来区分「标签被停用」和「用户自己敲的固定目录名」。
+  // 只有前者才算失效层；后者只是随手写的文件夹名，不该拦导出，否则用户填个新名字就永远导不出去。
+  // 名字来源取并集：筛选区现有条目 + 标签树里的全库标签（tagKidMeta，含从筛选区被移除的）。
+  // 只用筛选区会漏判——用户把失效标签从筛选区整个删掉后，那层会被当成手写目录名静默跳过；
+  // 用全库标签才能保证「库里有的标签现在没启用」一定被拦下来。
+  const knownTagNames = computed(() => {
+    const set = new Set();
+    for (const t of tagList.value) {
+      const n = String((t && t.name) || '').trim();
+      if (n) set.add(n);
+    }
+    for (const k in tagKidMeta.value) {
+      const n = String((tagKidMeta.value[k] || {}).name || '').trim();
+      if (n) set.add(n);
+    }
+    return Array.from(set);
+  });
+  // pending 层数：自定义分层里 type=tag、标签在库里但现在没启用的层（这些层导出时缺目录，必须先修）
+  const linkPending = computed(() => {
+    const lk = (pref.gallery && pref.gallery.link) || {};
+    if (lk.nameMode !== 'custom' || !Array.isArray(lk.custom)) return 0;
+    const act = activeTagNames();
+    const known = knownTagNames.value;
+    return lk.custom.filter((it) => {
+      if (!it || it.type !== 'tag') return false;
+      const v = String(it.value || '').trim();
+      if (!v) return false;
+      return known.includes(v) && !act.includes(v);
+    }).length;
+  });
+  async function openLinkDialog(mode) {
+    linkDlgMode.value = mode === 'export' ? 'export' : 'cfg';
+    linkDlgOpen.value = true;
+    // 标签树没加载过就先拉一次，否则全库标签集合是空的，弹框里标不出「需重选」
+    if (!Object.keys(tagKidMeta.value).length) { try { await ensureTagTree(); } catch (e) { /* 静默 */ } }
+  }
+  function closeLinkDialog() { linkDlgOpen.value = false; }
+  // 弹框保存：目录 / 连接符 / 分层模板写回 pref；命名方式一并切成 custom，
+  // 否则用户改了层却仍按时间命名，会以为没生效（要回按时间就去设置页改回）。
+  function onLinkSaved(cfg) {
+    const lk = pref.gallery.link;
+    lk.dir = String((cfg && cfg.dir) || '');
+    lk.sep = String((cfg && cfg.sep) || '@');
+    lk.custom = (cfg && Array.isArray(cfg.custom)) ? cfg.custom : [];
+    lk.nameMode = 'custom';
+    try {
+      localStorage.setItem('zhule_ui_pref', JSON.stringify(pref));
+    } catch (e) {
+      showToast('保存导出配置失败：' + (e.message || ''), 'error');
+      return;
+    }
+    // 广播给设置页等其它视图，保持两处显示一致
+    window.dispatchEvent(new CustomEvent('zhule-pref-changed', { detail: JSON.parse(JSON.stringify(pref)) }));
+    showToast('导出分层已保存', 'success');
   }
 
   async function batchLink() {
@@ -2058,6 +2122,16 @@ export function useGalleryCommon(opts = {}) {
       paths.push(item ? (item.path || item.key) : k);
     }
     const lk = (pref.gallery && pref.gallery.link) || {};
+    // 判断是否需要拦之前，先确保全库标签集合可用（首次点击才拉树，之后走缓存）
+    if (lk.nameMode === 'custom' && !Object.keys(tagKidMeta.value).length) {
+      try { await ensureTagTree(); } catch (e) { /* 静默，退回只用筛选区条目判断 */ }
+    }
+    // 自定义分层里有标签层失效：先弹框修，修好后由弹框的「保存并导出」再回到这里
+    if (lk.nameMode === 'custom' && linkPending.value > 0) {
+      openLinkDialog('export');
+      showToast('有 ' + linkPending.value + ' 层标签已停用，先修分层再导出', 'warn');
+      return;
+    }
     try {
       const d = await jfetch(API.link, {
         method: 'POST',
@@ -2162,5 +2236,206 @@ export function useGalleryCommon(opts = {}) {
     editDetailTag, cancelEditWb, submitEditWb, askDeleteEditWb, editWbDeleting,
     selected, selCount, isSel, onPointerDown, onCardClick,
     askBatchDelete, batchLink,
+    linkDlgOpen, linkDlgMode, activeTags, knownTagNames, linkPending,
+    openLinkDialog, closeLinkDialog, onLinkSaved,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 快捷导出 · 自定义分层弹框（原型 v3 落地）
+// 层行不再用「上移/下移」小按钮，改成按住左侧手柄拖动来换顺序（HTML5 draggable，
+// 插入式移动：拖到哪一层就插到那一层的位置，不是两两交换，长列表上更符合直觉）。
+// mode=cfg 只改配置；mode=export 是导出被拦后进来修标签失效层。
+// ─────────────────────────────────────────────────────────────────────────────
+export const LinkDialog = {
+  name: 'ZhgLinkDialog',
+  props: {
+    open: { type: Boolean, default: false },
+    mode: { type: String, default: 'cfg' },
+    activeTags: { type: Array, default: () => [] },
+    knownTags: { type: Array, default: () => [] },
+    link: { type: Object, default: () => ({}) },
+  },
+  emits: ['close', 'saved', 'export'],
+  setup(props, { emit }) {
+    const draft = reactive({ dir: '', sep: '@', custom: [] });
+    const err = ref('');
+    const dragFrom = ref(-1);
+    const dragTo = ref(-1);
+    let uidSeq = 0;
+
+    // 每次打开都从 pref 深拷贝一份草稿，取消即丢弃；uid 只用于 v-for key，保存时剔除
+    function reset() {
+      draft.dir = String(props.link.dir || '');
+      draft.sep = String(props.link.sep || '@');
+      draft.custom = (Array.isArray(props.link.custom) ? props.link.custom : []).map((it) => ({
+        uid: 'L' + (++uidSeq),
+        type: it && it.type === 'tag' ? 'tag' : 'text',
+        value: String((it && it.value) || ''),
+      }));
+      err.value = '';
+      dragFrom.value = -1;
+      dragTo.value = -1;
+    }
+    watch(() => props.open, (v) => { if (v) reset(); });
+
+    // 标签层当前是否已失效：标签在过滤区被停用/移除 → 该层导不出目录，标红等用户修
+    // 失效 = 这层是标签层、该标签确实存在于标签库、但现在没启用（被停用/移除）。
+    // 手输一个库里没有的名字不算失效，保存时会被规范化成文字层，当固定目录名用。
+    function isBad(it) {
+      if (!it || it.type !== 'tag') return false;
+      const v = String(it.value || '').trim();
+      if (!v) return false;
+      return props.knownTags.includes(v) && !props.activeTags.includes(v);
+    }
+    const badCount = computed(() => draft.custom.filter(isBad).length);
+    const preview = computed(() => {
+      const segs = draft.custom.map((it) => String(it.value || '').trim()).filter(Boolean);
+      if (!segs.length) return '（按时间戳自动命名）';
+      return 'zhule_link / ' + segs.join(' / ');
+    });
+
+    function addLayer(type) {
+      draft.custom.push({ uid: 'L' + (++uidSeq), type: type === 'tag' ? 'tag' : 'text', value: '' });
+    }
+    function removeLayer(i) { draft.custom.splice(i, 1); }
+    function toggleType(i) {
+      const it = draft.custom[i];
+      if (it) it.type = it.type === 'tag' ? 'text' : 'tag';
+    }
+    function pickTag(i, e) {
+      const it = draft.custom[i];
+      const v = e && e.target ? e.target.value : '';
+      if (it && v) it.value = v;
+      if (e && e.target) e.target.value = '';
+    }
+
+    // ── 拖拽排序 ────────────────────────────────────────────────────────────
+    function onDragStart(i, e) {
+      dragFrom.value = i;
+      dragTo.value = i;
+      if (e && e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', String(i)); } catch (_) { /* 老浏览器忽略 */ }
+      }
+    }
+    function onDragOver(i) {
+      if (dragFrom.value < 0) return;
+      dragTo.value = i;
+    }
+    function onDragLeave(i) {
+      if (dragTo.value === i) dragTo.value = -1;
+    }
+    function onDrop(i) {
+      const from = dragFrom.value;
+      dragFrom.value = -1;
+      dragTo.value = -1;
+      if (from < 0 || from === i) return;
+      if (i < 0 || i >= draft.custom.length) return;
+      const moved = draft.custom.splice(from, 1)[0];
+      draft.custom.splice(i, 0, moved);
+    }
+    function onDragEnd() {
+      dragFrom.value = -1;
+      dragTo.value = -1;
+    }
+
+    function save(doExport) {
+      err.value = '';
+      const dir = String(draft.dir || '').trim();
+      if (dir && !/^([A-Za-z]:[\\/]|\\\\)/.test(dir)) {
+        err.value = '链接目录要填绝对路径，例如 D:\\zhule_link；留空则用默认目录';
+        return;
+      }
+      const custom = draft.custom
+        .map((it) => {
+          const value = String(it.value || '').trim();
+          let type = it.type === 'tag' ? 'tag' : 'text';
+          // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
+          if (type === 'tag' && value && !props.activeTags.includes(value) && !props.knownTags.includes(value)) {
+            type = 'text';
+          }
+          return { type, value };
+        })
+        .filter((it) => it.value)
+        .slice(0, 12);
+      if (badCount.value > 0) {
+        err.value = '还有 ' + badCount.value + ' 层标签已停用：改成文字层、换个标签或删掉这一层';
+        return;
+      }
+      if (doExport && !custom.length) {
+        err.value = '至少要留一层，或者去设置页改成按时间 / 按过滤标签命名';
+        return;
+      }
+      const sep = String(draft.sep || '').trim().slice(0, 2) || '@';
+      emit('saved', { dir, sep, custom });
+      if (doExport) emit('export');
+      emit('close');
+    }
+
+    return {
+      draft, err, dragFrom, dragTo, badCount, preview,
+      isBad, addLayer, removeLayer, toggleType, pickTag,
+      onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, save,
+    };
+  },
+  template: `
+    <div v-if="open" class="zhg-lkd-mask" @mousedown.self="$emit('close')">
+      <div class="zhg-lkd">
+        <div class="zhg-lkd-head">
+          <span class="zhg-lkd-title">{{ mode === 'export' ? '标签失效，先修分层再导出' : '导出子文件夹 · 自定义分层' }}</span>
+          <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')">✕</button>
+        </div>
+        <div class="zhg-lkd-body">
+          <div class="zhg-lkd-line">
+            <span class="zhg-lkd-k">链接目录</span>
+            <input class="zhg-lkd-input zhg-lkd-dir" v-model="draft.dir" spellcheck="false"
+                   placeholder="留空 = output/zhule_studio/zhule_link">
+          </div>
+          <div class="zhg-lkd-line">
+            <span class="zhg-lkd-k">标签连接符</span>
+            <input class="zhg-lkd-input zhg-lkd-sep" v-model="draft.sep" maxlength="2" spellcheck="false" placeholder="@">
+            <span class="zhg-lkd-note">只在「按过滤标签」命名时用</span>
+          </div>
+          <div class="zhg-lkd-lh">分层顺序（从上到下 = 由外到内，按住 ⠿ 拖动换顺序）</div>
+          <div class="zhg-lkd-layers">
+            <div v-for="(it, i) in draft.custom" :key="it.uid" class="zhg-lkd-layer"
+                 :class="{ dragging: dragFrom === i, 'drag-over': dragTo === i && dragFrom !== i && dragFrom >= 0, bad: isBad(it) }"
+                 @dragover.prevent="onDragOver(i)" @dragleave="onDragLeave(i)"
+                 @drop.prevent="onDrop(i)">
+              <span class="zhg-lkd-grip" draggable="true" data-tip="按住拖动换顺序"
+                    @dragstart="onDragStart(i, $event)" @dragend="onDragEnd">⠿</span>
+              <span class="zhg-lkd-idx">{{ i + 1 }}</span>
+              <button class="zhg-lkd-type" :class="{ tag: it.type === 'tag' }"
+                      data-tip="点击切换：标签层跟着启用的过滤标签走 / 文字层就是固定目录名"
+                      @click="toggleType(i)">{{ it.type === 'tag' ? '标签' : '文字' }}</button>
+              <input class="zhg-lkd-input" v-model="it.value" spellcheck="false"
+                     :placeholder="it.type === 'tag' ? '标签名，如 凌乱发' : '固定目录名，如 出图'">
+              <select v-if="it.type === 'tag'" class="zhg-lkd-pick" @change="pickTag(i, $event)">
+                <option value="">启用标签…</option>
+                <option v-for="t in activeTags" :key="t" :value="t">{{ t }}</option>
+              </select>
+              <span v-if="isBad(it)" class="zhg-lkd-bad">已停用</span>
+              <button class="zhg-lkd-del" data-tip="删除这一层" @click="removeLayer(i)">✕</button>
+            </div>
+            <div v-if="!draft.custom.length" class="zhg-lkd-empty">还没有层：点下面加一层，第一层就是最外层文件夹</div>
+          </div>
+          <div class="zhg-lkd-add">
+            <button class="btn zhg-mini" @click="addLayer('tag')">+ 标签层</button>
+            <button class="btn zhg-mini" @click="addLayer('text')">+ 文字层</button>
+            <span class="zhg-lkd-note">最多 12 层，空层保存时自动丢掉</span>
+          </div>
+          <div class="zhg-lkd-prev"><span class="zhg-lkd-k">预览</span><code>{{ preview }}</code></div>
+          <div v-if="err" class="zhg-lkd-err">{{ err }}</div>
+          <div v-else-if="badCount" class="zhg-lkd-err">{{ badCount }} 层标签已停用：改成文字层、换个标签或删掉，否则这次不导出</div>
+        </div>
+        <div class="zhg-lkd-foot">
+          <button class="btn zhg-mini" @click="$emit('close')">取消</button>
+          <button class="btn zhg-mini" v-if="mode === 'cfg'" @click="save(false)">保存</button>
+          <button class="btn zhg-mini zhg-rename-confirm" v-if="mode === 'export'"
+                  :disabled="badCount > 0" @click="save(true)">保存并导出</button>
+        </div>
+      </div>
+    </div>
+  `,
+};
