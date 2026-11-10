@@ -180,16 +180,33 @@ export const CardCtxMenu = {
     state: { type: Object, required: true },
   },
   emits: ['close', 'sel', 'zoom', 'detail', 'del', 'batch-del'],
+  // 模板里不能直接写 emit('x')：Vue 3 模板上下文不暴露 emit 标识符，运行时为 undefined，
+  // 每次点击都会抛「TypeError: emit is not a function」——事件处理器中断导致 state.open 卡在 true，
+  // 全屏透明 .ctx-layer 永不消失，整页点击/滚轮全被它吃掉（表现为「页面卡死，只能刷新」）。
+  // 因此统一经 setup 导出的方法转发动作（与同文件 DetailTagNode 的写法对齐）。
+  setup(props, { emit }) {
+    const onClose = () => emit('close');
+    const onSel = () => emit('sel');
+    const onZoom = () => emit('zoom');
+    const onDetail = () => emit('detail');
+    const onDel = () => emit('del');
+    const onBatchDel = () => emit('batch-del');
+    // Esc 兜底：即使某个动作抛错导致遮罩残留，也能一键救回（与词库右键菜单行为一致）
+    const onKeydown = (e) => { if (e.key === 'Escape' && props.state && props.state.open) onClose(); };
+    onMounted(() => document.addEventListener('keydown', onKeydown));
+    onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
+    return { onClose, onSel, onZoom, onDetail, onDel, onBatchDel };
+  },
   template: `
-    <div v-if="state.open" class="ctx-layer" @pointerdown.self="emit('close')" @contextmenu.prevent.self="emit('close')">
+    <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
       <div class="ctx-menu" :style="{ left: state.x + 'px', top: state.y + 'px' }" @pointerdown.stop>
         <div class="ctx-title">{{ state.title }}</div>
-        <button type="button" class="ctx-item" @click="emit('sel')">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
-        <button type="button" class="ctx-item" @click="emit('zoom')">🔍 放大预览</button>
-        <button type="button" class="ctx-item" @click="emit('detail')">→ 进入详情</button>
+        <button type="button" class="ctx-item" @click="onSel">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
+        <button type="button" class="ctx-item" @click="onZoom">🔍 放大预览</button>
+        <button type="button" class="ctx-item" @click="onDetail">→ 进入详情</button>
         <div class="ctx-sep"></div>
-        <button type="button" class="ctx-item danger" @click="emit('del')">🗑 删除这张图</button>
-        <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="emit('batch-del')">🗑 删除选中的 {{ state.selCount }} 张</button>
+        <button type="button" class="ctx-item danger" @click="onDel">🗑 删除这张图</button>
+        <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel">🗑 删除选中的 {{ state.selCount }} 张</button>
       </div>
     </div>
   `,
