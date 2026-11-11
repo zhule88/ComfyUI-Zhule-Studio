@@ -311,12 +311,14 @@ export function normalizeTree(ns) {
   })).filter((n) => n.name);
 }
 
-// 快捷导出「按时间」命名的时间格式预设：key 存进 pref，label 是给人的样例
+// 快捷导出「按时间」命名的时间格式预设：key 存进 pref
+// label 统一写成字母格式串（与图库「时间格式」一致的 yyyy/MM/dd 风格），不再拿具体时刻当选项名，
+// 实际目录名仍由 linkTimeName 按 key 现场生成
 export const LINK_TIME_PRESETS = [
-  { key: 'ymd_hms', label: '20261110_153012', tip: '日期_时分秒（最不容易重名）' },
-  { key: 'ymd-hms', label: '2026-11-10_15-30-12', tip: '带横线的日期_时分秒' },
-  { key: 'ymd', label: '20261110', tip: '只到日期（同一天多次导出自动加 _1/_2）' },
-  { key: 'ymd-dash', label: '2026-11-10', tip: '只到日期，日期带横线' },
+  { key: 'ymd_hms', label: 'yyyyMMdd_HHmmss', tip: '日期_时分秒（最不容易重名）' },
+  { key: 'ymd-hms', label: 'yyyy-MM-dd_HH-mm-ss', tip: '日期带横线，再接时分秒' },
+  { key: 'ymd', label: 'yyyyMMdd', tip: '只到日期（同一天多次导出自动加 _1/_2）' },
+  { key: 'ymd-dash', label: 'yyyy-MM-dd', tip: '只到日期，日期带横线' },
 ];
 // 按预设生成这次的目录名：只用本地时间，纯字符串（不含 / \ 等会被后端清洗的字符）
 export function linkTimeName(key, d) {

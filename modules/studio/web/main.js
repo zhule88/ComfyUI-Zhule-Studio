@@ -300,7 +300,7 @@ const App = {
       .filter((it) => it && String(it.value || '').trim()).length);
     // 时间格式样例：切换格式后当场能看到这次的目录长什么样
     const linkTimeSample = computed(() => linkTimeName(pref.value.gallery.link.timeFmt, new Date()));
-    // 触发按钮上显示的当前预设（样例串 + 说明），点开才看到全部预设
+    // 触发按钮上显示的当前预设（字母格式串 + 说明），点开才看到全部预设
     // 每个格式给一条真实样例（fmtTime 吃的是秒级时间戳）
     function timeFmtSample(f) {
       return fmtTime(Math.floor(Date.now() / 1000), f);
@@ -733,6 +733,22 @@ const App = {
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
+                <div class="settings-row settings-row-stack">
+                  <span class="settings-label">时间格式</span>
+                  <div class="settings-pick-wrap" @click.stop>
+                    <button class="settings-pick" :class="{ open: pickOpen === 'galleryTime' }" @click="togglePick('galleryTime')">
+                      <span class="settings-pick-val">{{ pref.gallery.timeFmt }}</span>
+                      <span class="settings-pick-caret">▼</span>
+                    </button>
+                    <div class="settings-pick-pop" v-if="pickOpen === 'galleryTime'">
+                      <div v-for="f in TIME_FMTS" :key="f" class="settings-pick-item"
+                           :class="{ on: pref.gallery.timeFmt === f }" @click="setTimeFmt(f)">
+                        <span class="settings-pick-item-val">{{ f }}</span>
+                        <span class="settings-pick-item-tip">样例 {{ timeFmtSample(f) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-detail-tags') }">
@@ -793,16 +809,6 @@ const App = {
                   </div>
                 </div>
 
-                <!-- 通用项（三种模式都显示）：图库页下载按钮旁的呼出图标要不要露出来 -->
-                <div class="settings-row">
-                  <span class="settings-label">显示呼出图标</span>
-                  <label class="settings-switch" data-tip="关掉后图库工具栏不再出现齿轮入口，别人用这台电脑的图库时看不到、也不会误改分层">
-                    <input type="checkbox" :checked="pref.gallery.link.hideGear !== true" @change="toggleHideLinkGear">
-                    <span class="settings-switch-slider"></span>
-                  </label>
-                </div>
-                <div class="settings-hint">呼出图标 = 图库页下载按钮旁的齿轮，点开就能现场改分层。别人可能有自己的用法、不需要一直改，关掉后图库页只留下载按钮；要改时回来打开即可，已保存的分层不受影响。</div>
-
                 <!-- 按时间：下面只多一个「时间格式」，切格式当场给样例 -->
                 <template v-if="pref.gallery.link.nameMode === 'time'">
                   <div class="settings-row settings-row-stack">
@@ -836,7 +842,7 @@ const App = {
                   <div class="settings-hint">把当前启用的过滤标签用「{{ pref.gallery.link.sep }}」连成一段文件夹名，例如标签「凌乱发」+「璃月」→ 凌乱发{{ pref.gallery.link.sep }}璃月；没有启用标签时自动回退按时间。</div>
                 </template>
 
-                <!-- 自定义分层：分层内容编辑入口（呼出图标开关是上面的通用项） -->
+                <!-- 自定义分层：分层内容编辑入口 + 呼出图标开关（只有这模式才需要齿轮） -->
                 <template v-else>
                   <div class="settings-row">
                     <span class="settings-label">分层内容</span>
@@ -845,30 +851,16 @@ const App = {
                     </button>
                   </div>
                   <div class="settings-hint">分层内容：多层目录（凌乱发/璃月/出图 这样一层层往下）。可点上面按钮编辑，图库页下载按钮旁的齿轮也能打开同一个弹框；支持拖动排序、整类选取（直接拿「凌乱发」这种分类当一层目录）。</div>
+                  <div class="settings-row">
+                    <span class="settings-label">显示呼出图标</span>
+                    <label class="settings-switch" data-tip="关掉后图库工具栏不再出现齿轮入口，别人用这台电脑的图库时看不到、也不会误改分层">
+                      <input type="checkbox" :checked="pref.gallery.link.hideGear !== true" @change="toggleHideLinkGear">
+                      <span class="settings-switch-slider"></span>
+                    </label>
+                  </div>
+                  <div class="settings-hint">呼出图标 = 图库页下载按钮旁的齿轮，点开就能现场改分层。别人可能有自己的用法、不需要一直改，关掉后图库页只留下载按钮；要改时回来打开即可，已保存的分层不受影响。</div>
                 </template>
                 <div class="settings-hint">某层普通标签在过滤区被停用时，下载会被拦下并弹框让你先修（改成整类 / 换标签 / 转文字层）。</div>
-                </div>
-              </div>
-              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-timefmt') }">
-                <div class="settings-group-title" @click="toggleCollapse('gallery-timefmt')">
-                  <span>时间格式</span>
-                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                </div>
-                <div class="settings-group-body" v-show="!isCollapsed('gallery-timefmt')">
-                <div class="settings-pick-wrap" @click.stop>
-                  <button class="settings-pick" :class="{ open: pickOpen === 'galleryTime' }" @click="togglePick('galleryTime')">
-                    <span class="settings-pick-val">{{ pref.gallery.timeFmt }}</span>
-                    <span class="settings-pick-caret">▼</span>
-                  </button>
-                  <div class="settings-pick-pop" v-if="pickOpen === 'galleryTime'">
-                    <div v-for="f in TIME_FMTS" :key="f" class="settings-pick-item"
-                         :class="{ on: pref.gallery.timeFmt === f }" @click="setTimeFmt(f)">
-                      <span class="settings-pick-item-val">{{ f }}</span>
-                      <span class="settings-pick-item-tip">样例 {{ timeFmtSample(f) }}</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="settings-hint">卡片上显示的时间就用这个格式，点一下选一个，选完立刻生效。</div>
                 </div>
               </div>
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-db') }">

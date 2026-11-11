@@ -1518,7 +1518,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 6px 0; font-size: 13px; color: var(--text); }
 /* 纵向排布的行：标签在上、控件占满整行（链接目录这类长输入用） */
 .settings-row.settings-row-stack { flex-direction: column; align-items: stretch; gap: 6px; }
-.settings-link-dir { width: 100%; box-sizing: border-box; font-family: ui-monospace, Consolas, monospace; }
+/* 文件链接地址：宽度跟着面板走（特异性压过 .settings-seed-input 的 130px 固定宽） */
+.settings-seed-input.settings-link-dir { width: 100%; min-width: 0; box-sizing: border-box;
+  font-family: ui-monospace, Consolas, monospace; }
 .settings-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; cursor: pointer; }
 .settings-switch input { opacity: 0; width: 0; height: 0; }
 .settings-switch-slider { position: absolute; inset: 0; border-radius: 10px;
