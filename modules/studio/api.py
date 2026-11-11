@@ -161,12 +161,73 @@ def _purge_ref_dir(entry_id):
         return False
 
 
-def _card_images(node):
+# 变体组里不带语义的占位短名（仅展示层判重/命名用，**不参与任何按名字定位**）
+_GENERIC_VG_SHORT = {"默认", "默认版", "默认版本", "缺省", "default", "无", "空", "空白"}
+
+
+def _vg_full_name(name, group):
+    """变体条目的完整名（与前端 vgFullName 同一口径）。
+
+    库里变体条目只存短名（如「默认」「单侧」），组名由渲染层沿祖先拼出来：
+      - 短名空 / 是「默认」/ 本身等于组名 → 组名
+      - 短名里已经包含组名 → 原样
+      - 其余 → 短名 + 组名
+    反查图库时必须用它，绝不能拿短名去匹配 —— 短名「默认」是通用占位名，
+    一查就会把全库所有叫「默认」的图全吸到这张卡上（表现为参考图凭空多出一堆别的图）。
+    """
+    s = str(name or "")
+    g = str(group or "").strip()
+    if not g:
+        return s.strip()
+    pre = g + "#"
+    short = s[len(pre):] if s.startswith(pre) else s
+    short = short.strip()
+    if (not short) or short == "默认" or short == g:
+        return g
+    if g in short:
+        return short
+    return short + g
+
+
+def _vg_group_of(node):
+    """按 DB 关系求词条所属变体组的组名（不在变体组里返回空串）。
+
+    变体组 = type 为 entry、且直接子里还有 entry 的那个节点，它自己的 name 就是组名；
+    组内条目只存短名。上传/删除参考图后刷新卡片图、以及树里递归时都走这一套，
+    保证任何出口反查图库用的都是完整名。
+    """
+    try:
+        nid = (node or {}).get("id")
+        pid = (node or {}).get("parent_id")
+        if pid is None and nid:
+            pid = db.get_parent_id(nid)
+        if not pid:
+            return ""
+        parent = db.node_by_id(pid)
+        if not parent or str(parent.get("type") or "") != "entry":
+            return ""
+        kids = db.direct_children(pid) or []
+        if not any(str(k.get("type") or "") == "entry" for k in kids):
+            return ""
+        return str(parent.get("name") or "").strip()
+    except Exception:
+        return ""
+
+
+def _card_images(node, vg_group=""):
     """词条卡片参考图数据源，返回相对 output/zhule_studio/ 的路径数组。
 
     两个来源合并展示（上传图在前，图库反查图接后，去重）：
     1. 词条上传图：zhule_reference/<词条id>/<文件>（卡片详情页上传，可删）；
-    2. 图库反查图：zhule_img/<文件>（按词条名匹配图库 tag，数据源为内存 index）。
+    2. 图库反查图：zhule_img/<文件> —— **按词条 id 精确反查**（gallery_tag.prompt_id）。
+
+    为什么必须按 id：同名节点在库里大量存在（光「默认」就有 25 个、id 各不相同），
+    按名字反查会把所有同名条目的图全并到一张卡上，表现为「参考图凭空多出一堆别人的图」。
+
+    **本函数不按名字定位**：没有名字分支、也没有名字兜底。
+    图库反查图唯一数据源 = gallery_tag.prompt_id == 该词条 id。
+    词条 id 是节点自身字段、必然存在；库里 12532 条标签关联中仅 5 条 prompt_id 为空，
+    不足以支撑一条名字兜底路径——宁可少显示，也绝不串图。
 
     「上传图优先」= 排序在前，不再整体屏蔽图库反查图。
     images.txt 与「词库目录内 / 父目录立绘图」机制均已停用，不再读取与生成。
@@ -177,12 +238,16 @@ def _card_images(node):
         imgs = _list_images(_ref_dir(nid))
         out = [REF_SUBDIR + "/" + str(nid) + "/" + f for f in imgs]
 
-    name = node.get("name") or ""
-    if name:
-        from .gallery import get_tag_ref_index  # 延迟导入避免循环依赖
-        for rel in (get_tag_ref_index().get(name) or []):
-            if rel not in out:
-                out.append(rel)
+    from .gallery import get_ref_index_by_prompt_id  # 延迟导入避免循环依赖
+
+    # 唯一来源：按词条 id 精确反查（gallery_tag.prompt_id）
+    if nid:
+        try:
+            for rel in (get_ref_index_by_prompt_id().get(int(nid)) or []):
+                if rel not in out:
+                    out.append(rel)
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -251,7 +316,7 @@ def _cards_from_tree(tree):
     tabs = []
     data = {}
 
-    def collect(node, parts, ids, out, anc=(), kinds=()):
+    def collect(node, parts, ids, out, anc=(), kinds=(), vg_group=""):
         """按原 _folder_card/_txt_card 公式还原卡片字段。
 
         parts = 从 Tab 根到当前节点父级的原始目录名列表（不含当前节点）。
@@ -260,6 +325,9 @@ def _cards_from_tree(tree):
         anc   = 从 Tab 根到当前节点父级的分类属性链（含 Tab 根，不含当前节点），
                 每项 {id, name, en, cn, neg, override}。子类继承父类属性时前端直接用它拼接，
                 不再二次请求（继承结果只在前端临时展开，不落库）。
+        vg_group = 所属变体组的组名（空串=不在变体组里）。变体组 = 自己 type 为 entry
+                且直接子里有 entry 的那个节点（它就是组名），其下条目只存短名，
+                参考图反查必须补全成完整名，否则短名「默认」会把全库同名的图全吸过来。
         """
         raw = _node_raw_name(node)
         children = node.get("children") or []
@@ -277,6 +345,10 @@ def _cards_from_tree(tree):
         }
         # 下钻时带下去的继承链：只有 provide 的节点才把自己的属性加进链里
         child_anc = tuple(anc) + ((my_attr,) if my_attr["provide"] else ())
+        # 本节点如果是变体组头（entry 且直接子也是 entry），组名往下带一层，供子条目拼完整名
+        is_vg_head = ntype == "entry" and any(
+            str(c.get("type") or "") == "entry" for c in children)
+        child_vg = my_attr["name"] if is_vg_head else vg_group
 
         def _chip_fields(end):
             """chips / chipKeys / chipIds：只取分类节点，变体组（entry）这一层不算分类层级。
@@ -317,7 +389,7 @@ def _cards_from_tree(tree):
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
                     "anc": list(anc),
-                    "images": _card_images(node),
+                    "images": _card_images(node, vg_group),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
                 })
@@ -339,7 +411,7 @@ def _cards_from_tree(tree):
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
                     "anc": list(anc),
-                    "images": _card_images(node),
+                    "images": _card_images(node, vg_group),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
                 })
@@ -347,11 +419,11 @@ def _cards_from_tree(tree):
             if children:
                 for child in children:
                     collect(child, parts + [raw], ids + [nid], out, child_anc,
-                            kinds + (ntype,))
+                            kinds + (ntype,), child_vg)
             return
         for child in children:
             collect(child, parts + [raw], ids + [nid], out, child_anc,
-                    kinds + (ntype,))
+                    kinds + (ntype,), child_vg)
 
     for tab_node in tree:
         cards = []
@@ -618,13 +690,14 @@ async def post_wordbank_convert(request):
 
 
 async def post_wordbank_vg_join(request):
-    """把若干提示词并入同一个变体组：body { ids:[...], name:"组名" }。
+    """把同一分类下的若干提示词收进一个「新建」的变体组：body { ids:[...], name:"组名" }。
 
-    「变体组」在新模型里就是一棵两层 entry 树：外层 entry 自己就是组名，子 entry 是各变体，
-    名字只存短名（组名前缀由渲染层动态拼）。所以并入流程只剩三件事：
-    - 组名由用户在弹框里现输，选中的第一张（已是变体组的优先）改名成组名，当组头；
-    - 其余卡片 parent_id 改挂到组头下面，名字原样保留（同父重名则自动追加序号）；
-    - 组头自己的提示词内容原样留在组头上，它是组级共有描述，沿 parent_id 下传给各变体。
+    「变体组」是一棵两层 entry 树：外层 entry 就是组头（它的 name 即组名），子 entry 是各变体，
+    变体名只存短名（组名前缀由渲染层动态拼）。流程：
+    - 先校验这批提示词同属一个父分类：父级必须完全一致，不允许跨分类把词条静默搬走；
+    - 新建一条空 entry 当组头（parent_id = 这批卡的公共父级），组名在同父下查重；
+    - 这批卡的 parent_id 全部改挂到新组头下，名字保持短名（组内重名自动追加序号）。
+    组头一律新建，不复用选中的某张卡，避免「谁先被选中谁当组头」这种由点击顺序决定的结构。
     """
     try:
         body = await request.json()
@@ -659,49 +732,71 @@ async def post_wordbank_vg_join(request):
             return web.json_response(
                 {"error": "只有提示词卡片才能并入变体组；分类请用分类右键的「聚拢成变体卡」"}, status=400)
         nodes.append(n)
-    # 组头优先取已经是变体组的那张（它的子变体要一起并到新组里），否则取第一张
-    anchor = next((n for n in nodes if db.direct_children(int(n["id"]))), nodes[0])
-    aid = int(anchor["id"])
-    a_parent = db.get_parent_id(aid)
-    members = [n for n in nodes if int(n["id"]) != aid]
-    for n in members:
+    # 选中集必须是「同一父分类下的一组普通提示词卡」：
+    # ① 自带子节点的卡已经是变体组，先拆再并，否则会嵌套成组套组
+    for n in nodes:
         if db.direct_children(int(n["id"])):
             return web.json_response(
                 {"error": "选中的卡片里还有变体组：" + str(n.get("name") or "")
                           + "，请拆开再并入"}, status=400)
-    # 环检测：被并入的卡若正好是组头的祖先，挂过去会把组头自己拖进自己的子树里
-    up = a_parent
-    hops = 0
-    while up is not None and hops < 64:
-        if str(up) in ids:
-            return web.json_response({"error": "选中的卡片存在上下级关系，无法并入同一组"}, status=400)
-        up = db.get_parent_id(up)
-        hops += 1
-    # 先整体算好名字并查重，任一条冲突就整批不动，避免只改一半留下残局
-    group = _unique_child_name(a_parent, name, exclude_id=aid)
-    plan, seen = [], set()
-    for n in members:
-        nid = int(n["id"])
+    # ② 新组头挂在哪，由这批卡的父级唯一决定；父级不完全相等就直接拒绝，绝不跨分类搬词条
+    parents = set()
+    for n in nodes:
+        pid = n.get("parent_id")
+        if pid is None:
+            return web.json_response({"error": "顶层大类下的卡片不能并入变体组"}, status=400)
+        parents.add(int(pid))
+    if len(parents) > 1:
+        return web.json_response(
+            {"error": "选中的 %d 条提示词分属 %d 个分类，只有同一分类下的提示词才能聚成变体组"
+                      % (len(nodes), len(parents))}, status=400)
+    base_parent = parents.pop()
+    shorts = []
+    for n in nodes:
         short = str(n.get("name") or "").strip()
         if not short:
             return web.json_response({"error": "有提示词名字为空，无法并入"}, status=400)
-        want = _unique_child_name(aid, short)
+        shorts.append((int(n["id"]), short, int(n.get("sortOrder") or 0)))
+    # 组内顺序按这些卡原分类里的顺序排，而不是按前端点选先后，避免「先点谁谁在前」
+    shorts.sort(key=lambda t: (t[2], t[0]))
+    # ③ 新建一条空 entry 当组头（parent_id = 公共父级），组名在同父下查重
+    group = _unique_child_name(base_parent, name)
+    gid, ok = db.insert_node(base_parent, "entry", group)
+    if not ok or not gid:
+        return web.json_response({"error": "新建变体组失败"}, status=500)
+    gid = int(gid)
+    # 先整体算好名字并查重，任一条冲突就整批不动，避免只改一半留下残局
+    plan, seen = [], set()
+    for nid, short, _so in shorts:
+        want = _unique_child_name(gid, short)
         if want in seen:
-            want = _unique_child_name(aid, "%s %d" % (short, len(seen) + 2))
+            want = _unique_child_name(gid, "%s %d" % (short, len(seen) + 2))
         seen.add(want)
         plan.append((nid, short, want))
-    if not db.update_node(aid, name=group):
-        return web.json_response({"error": "设置组头失败"}, status=500)
     moved = 0
     for nid, short, want in plan:
         if want != short and not db.update_node(nid, name=want):
-            return web.json_response({"error": "改名失败: " + short}, status=500)
-        if not db.relocate(nid, aid):
-            return web.json_response({"error": "并入失败: " + short}, status=500)
+            return web.json_response(
+                {"error": "改名失败：" + short + "（已搬入 %d 条）" % moved}, status=500)
+        if not db.relocate(nid, gid):
+            return web.json_response(
+                {"error": "并入失败：" + short + "（已搬入 %d 条）" % moved}, status=500)
         moved += 1
+    # 收尾：这批卡原来的父级若是个「空壳组头」（自己没有任何提示词内容），又被这次搬空，
+    # 它就成了一张永远不出卡的幽灵组，顺手软删；组头自己带内容（老数据，本身算一版）或组里
+    # 还有别的变体，一律原样留着。
+    if base_parent != gid:
+        bp = db.node_by_id(base_parent)
+        if (bp is not None and str(bp.get("type") or "") == "entry"
+                and not str(bp.get("en") or "").strip()
+                and not str(bp.get("cn") or "").strip()
+                and not str(bp.get("neg") or "").strip()
+                and not db.direct_children(base_parent)):
+            db.delete_subtree(base_parent)
     return web.json_response({
         "ok": True,
-        "anchorId": str(aid),
+        "groupId": str(gid),
+        "parentId": str(base_parent),
         "group": group,
         "count": moved,
     })
@@ -866,7 +961,7 @@ async def post_wordbank_image(request):
         ok, err = delete_gallery_image(image[len(gal_prefix):])
         if not ok:
             return web.json_response({"error": err}, status=500)
-        return web.json_response({"ok": True, "images": _card_images(node)})
+        return web.json_response({"ok": True, "images": _card_images(node, _vg_group_of(node))})
 
     # 路径形如 zhule_reference/<词条id>/<文件>：校验 id 归属，防跨词条删除
     parts = image[len(ref_prefix):].split("/")
@@ -882,7 +977,7 @@ async def post_wordbank_image(request):
         os.remove(full)
     except OSError as e:
         return web.json_response({"error": "删除文件失败: " + str(e)}, status=500)
-    return web.json_response({"ok": True, "images": _card_images(node)})
+    return web.json_response({"ok": True, "images": _card_images(node, _vg_group_of(node))})
 
 
 async def post_wordbank_image_upload(request):
@@ -935,7 +1030,7 @@ async def post_wordbank_image_upload(request):
                 f.write(chunk)
     except Exception as e:
         return web.json_response({"error": "保存文件失败: " + str(e)}, status=500)
-    return web.json_response({"ok": True, "images": _card_images(node)})
+    return web.json_response({"ok": True, "images": _card_images(node, _vg_group_of(node))})
 
 
 async def post_wordbank_sort_save(request):

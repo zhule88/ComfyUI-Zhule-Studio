@@ -378,7 +378,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 /* 底部压暗渐变 + 名字：名字叠在图上，独占整行宽度，不再被图标挤到省略 */
 .card-caption {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
-  display: flex; align-items: flex-end; gap: 6px;
+  /* 两列栅格：名字 / 图片页码。归属标志与分类链路都靠 grid-column:1/-1 独占整行，
+     所以「组名在上、名字在下」是行序决定的，不依赖额外定位，卡片高度变化也不会错位 */
+  display: grid; grid-template-columns: 1fr auto; align-items: end;
+  column-gap: 6px; row-gap: 2px;
   padding: 26px 9px 8px;
   background: linear-gradient(to top,
     rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.72) 32%, rgba(0,0,0,0.32) 68%, rgba(0,0,0,0) 100%);
@@ -393,23 +396,38 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   /* 仅名字恢复指针事件，便于悬停看完整名（点击仍冒泡到卡片，不打断选中/拖拽） */
   pointer-events: auto;
 }
-/* 变体组卡片标题里的「组名#」前缀：常驻显示、淡色靠后，变体段仍是主视觉，
-   两段拼起来就是库里完整的基础 name，不必悬停也能看清属于哪个组 */
-.card-name .card-name-grp {
-  color: #b7cdea; font-weight: 500;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.9);
+/* 变体身份牌：钉在缩略图顶部居中，比底部名字行里的小角标显眼得多（旧 .card-grp 已不再渲染）。
+   凡是变体组成员一律挂上 —— 变体名与组名同名时也照挂，否则认不出这张是变体卡 */
+.card-vg {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  z-index: 6; max-width: calc(100% - 64px);
+  padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; line-height: 1.7; letter-spacing: 0.3px;
+  color: #fff;
+  background: linear-gradient(135deg, rgba(90, 150, 255, 0.95), rgba(150, 96, 220, 0.95));
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: auto;
+}
+/* 旧样式保留占位，避免历史视图残留引用时无样式可依 */
+.card-grp {
+  grid-column: 1 / -1; justify-self: start;
+  max-width: 100%;
+  padding: 0 6px; border-radius: 7px;
+  font-size: 10px; line-height: 15px;
+  color: #dcebff; background: rgba(86, 138, 206, 0.30);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: auto;
 }
 
 /* 全库搜索：卡片可能不属于当前 tab，把真实分类链路（tab / 父类 / 子类）作为
    名字上方的一行小字，与名字同处底部渐变区——天然避开卡片圆角，不会被裁切，
-   也不再额外压一块浮层盖住图片。没有分类链路时该 class 不生效，其它卡片零影响 */
-.card-caption.has-path {
-  display: grid; grid-template-columns: 1fr auto;
-  align-items: end; column-gap: 6px; row-gap: 1px;
-}
+   也不再额外压一块浮层盖住图片。没有分类链路时该节点不渲染，其它卡片零影响 */
 .card-caption.has-path .card-path { grid-column: 1 / -1; }
-.card-caption.has-path .card-name { min-width: 0; }
+.card-caption .card-name { min-width: 0; }
 .card-path {
+  grid-column: 1 / -1;
   font-size: 10px; line-height: 1.35; letter-spacing: 0.2px;
   color: #a8c4ea;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

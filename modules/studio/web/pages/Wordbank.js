@@ -17,8 +17,6 @@ export default {
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
           <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式：遍历池内每条提示词的参考图补到同一数量（以最多的为基准，设 0 补到基准、设 N 补到基准+N），集中倒满一桶再下一桶；随机池照常每组现抽 1 条">⏩</button>
-          <button class="btn" :class="{active: data.traverseMode}" @click="toggleTraverseMode" data-tip="遍历模式：遍历池 ∞ 的词条做全组合各跑一遍，随机池 🎲 每个组合现抽 1 条；次数 = 整套组合重复几轮">🔁</button>
           <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空所有池子">🗑</button>
           <div class="col-ctrl">
             <label>每行</label>
@@ -163,7 +161,7 @@ export default {
                 <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
                 <div class="card-actions" v-if="!hideCardIcons">
                   <button class="card-act act-mute" :class="{on: !!file.mute}"
-                          :data-tip="file.mute ? '已静音（Mute）：自动选词跳过它，手动点选仍可用（点击恢复）' : '静音（Mute）：不参与随机、填充与遍历等自动选词，仅手动点选时可用'"
+                          :data-tip="file.mute ? '已静音（Mute）：自动选词跳过它，手动点选仍可用（点击恢复）' : '静音（Mute）：不参与随机池抽词与遍历穷举等自动选词，仅手动点选时可用'"
                           @pointerdown.stop @click.stop="toggleMute(file)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
                          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -202,10 +200,12 @@ export default {
                   </button>
                 </div>
                 <!-- 底部压暗渐变 + 名字叠于图上；全库搜索时名字上方多一行真实分类链路 -->
+                <span class="card-vg" v-if="cardGroupBadge(file)"
+                      :data-tip="'这张是变体卡，属于「' + cardGroupBadge(file) + '」组'">{{ cardGroupBadge(file) }}</span>
                 <div class="card-caption" :class="{ 'has-path': showCardTab(file) }">
                   <span class="card-path" v-if="showCardTab(file)"
                         :data-tip="'所在分类：' + cardTabLabel(file)">{{ cardTabLabel(file) }}</span>
-                  <span class="card-name" :data-tip="fullNameOf(file)"><span class="card-name-grp" v-if="cardNamePrefix(file)">{{ cardNamePrefix(file) }}#</span>{{ cardDisplayName(file) }}</span>
+                  <span class="card-name" :data-tip="fullNameOf(file)">{{ cardDisplayName(file) }}</span>
                   <span class="thumb-count" v-if="file.images && file.images.length">{{ getImgIdx(file) + 1 }}/{{ file.images.length }}</span>
                 </div>
               </div>
@@ -271,13 +271,13 @@ export default {
             </div>
           </div>
           <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
-          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.fillMode || data.traverseMode}">
+          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.randomPools.length > 0}">
             <span class="pv-text">{{ previewText }}</span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
                     :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
           </div>
           <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
-               :class="{'random-mode': data.fillMode || data.traverseMode}">
+               :class="{'random-mode': data.randomPools.length > 0}">
             <span class="pv-text">{{ previewNegText || '（无）' }}</span>
           </div>
         </div>
@@ -342,7 +342,11 @@ export default {
       <!-- 词库卡片右键菜单：卡片原图标功能的完整复制（左右切换与骰子仍留在卡片上） -->
       <div v-if="cardMenu.open" class="ctx-layer" @pointerdown.self="closeCardMenu" @contextmenu.prevent.self="closeCardMenu">
         <div class="ctx-menu" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px' }">
-          <div class="ctx-title">{{ cardMenu.title }}</div>
+          <div class="ctx-title">
+            <span class="ctx-title-text">{{ cardMenu.title }}</span>
+            <!-- 多选态（框选/多张选中）右击时把选中张数挂到标题右侧，菜单项里就不再各自拖一串「N 项」 -->
+            <span class="ctx-count" v-if="cardMenu.picked && cardMenu.pickCount > 1">{{ cardMenu.pickCount }} 项</span>
+          </div>
           <!-- 变体组卡片：右键即可把该卡的全部变体摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
           <button type="button" class="ctx-item vg-strip-entry" v-if="cardMenu.vgCount > 1"
                   @pointerdown.stop @click="onCardVgStrip">
@@ -369,14 +373,14 @@ export default {
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
           <template v-if="cardMenu.picked">
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
-              ∞ 凝结为遍历池（{{ cardMenu.pickCount }} 项）
+              ∞ 凝结为遍历池
             </button>
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
-              🎲 凝结为随机池（{{ cardMenu.pickCount }} 项）
+              🎲 凝结为随机池
             </button>
-            <!-- 多选态新增：与单卡同一入口，弹框输入总名后这批提示词一起进同一个变体组 -->
+            <!-- 多选态：新建一个变体组（独立组头），把这批提示词整批挂上去；父级不一致会被拦下 -->
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardVgJoin">
-              🗂 并入变体组…（{{ cardMenu.pickCount }} 项）
+              🗂 聚拢成变体组…
             </button>
             <div class="ctx-sep"></div>
           </template>
@@ -384,10 +388,10 @@ export default {
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
             {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
           </button>
-          <!-- 提示词卡片：弹框输一个总名，自己成为「总名#自己的名字」并进该组；多选时整批一起进 -->
+          <!-- 提示词卡片：新建一个独立组头，再把自己挂到这个新组头下（不借用自己当组头）；多选时整批一起挂 -->
           <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg && !cardMenu.picked"
                   @pointerdown.stop @click="onCardVgJoin">
-            🗂 并入变体组…（弹框输组名）
+            🗂 聚拢成变体组…（弹框输组名）
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
@@ -417,7 +421,7 @@ export default {
                 <div v-else class="vg-frame-ph"><img :src="defaultImageUrl" alt=""></div>
                 <span class="vg-frame-num">{{ i + 1 }}</span>
               </div>
-              <div class="vg-frame-name">{{ vgShortName(v.name, vgStrip.title) }}</div>
+              <div class="vg-frame-name">{{ vgStripName(v) }}</div>
             </div>
           </div>
         </div>
@@ -596,12 +600,9 @@ export default {
               <span class="acc-arrow"></span>
             </div>
             <div v-show="acc.name" class="acc-body">
-              <!-- 变体条目：前缀「组名#」由锚点强制管理，这里只露只读前缀，输入框只填 # 后面那段 -->
-              <div class="name-with-prefix" v-if="editNamePrefix">
-                <span class="name-prefix" data-tip="前缀就是变体组名，由锚点强制管理，改不了；要换组名前缀请点卡片上的组名">{{ editNamePrefix }}#</span>
-                <input type="text" v-model="editName" placeholder="变体名" @keydown.enter="submitEdit">
-              </div>
-              <input v-else type="text" v-model="editName" @keydown.enter="submitEdit">
+              <!-- 变体条目也只有一个输入框：这里显示的就是这条词自己的完整名，
+                   与卡片标题、变体浮层、已选标签完全同一口径，不再拆「组名#」前缀 -->
+              <input type="text" v-model="editName" @keydown.enter="submitEdit">
             </div>
           </div>
           <div class="field en acc" :class="{ open: acc.en }">
@@ -681,18 +682,20 @@ export default {
         </div>
       </div>
 
-      <!-- 并入变体组（提示词入口）：弹框输入一个总名当组名，被选中的每条提示词各自成为
-           这个组里的一个变体，名字统一固化成「总名#自己现在的名字」，一起挂到组头下面。 -->
+      <!-- 聚拢成变体组（提示词入口）：先新建一条空组头，再把这批提示词整批挂到它下面。
+           组头是「新建的独立数据」，不借用选中的任何一张卡当组头，所以跟谁先被选中无关；
+           这批提示词必须同属一个分类（父级完全一致），否则前端直接拦下，不跨分类搬词条。 -->
       <div v-if="vgJoin.open" class="edit-overlay">
         <div class="edit-dialog vg-rename-dialog">
-          <div class="title"><span class="title-text">并入变体组</span></div>
+          <div class="title"><span class="title-text">聚拢成变体组</span></div>
           <div class="edit-body">
             <div class="hint" style="margin:0 0 10px">
-              输一个总名当组名，下面 <b>{{ vgJoin.items.length }}</b> 条提示词会各自成为这个组的一个变体，
-              名字各自保留现在的短名，显示时自动拼成「总名#短名」，之后在同一张卡里翻页切换。
+              将新建一个变体组（独立的组头数据），挂在分类 <b>{{ vgJoin.parentName || '—' }}</b> 下；
+              下面 <b>{{ vgJoin.items.length }}</b> 条提示词全部挂到这个新组头上，各自成为它的一个变体，
+              名字保留现在的短名，显示时自动拼成「组名#短名」，之后在同一张卡里翻页切换。
             </div>
             <div class="field">
-              <label>组名（总名）</label>
+              <label>组名</label>
               <input type="text" v-model="vgJoin.name" :placeholder="vgJoin.suggest || '如 居家生活'" spellcheck="false"
                      @keydown.enter="submitVgJoin">
             </div>
@@ -705,7 +708,7 @@ export default {
           </div>
           <div class="actions">
             <button class="btn" @click="closeVgJoin">取消</button>
-            <button class="btn primary" @click="submitVgJoin" :disabled="vgJoin.busy">并入</button>
+            <button class="btn primary" @click="submitVgJoin" :disabled="vgJoin.busy">聚拢</button>
           </div>
         </div>
       </div>
@@ -716,7 +719,7 @@ export default {
       <div v-if="viewer.open" class="viewer-overlay" @click.self="closeViewer">
         <div class="viewer-dialog">
           <div class="viewer-head">
-            <span class="viewer-title">{{ viewer.file.name }}</span>
+            <span class="viewer-title">{{ cardDisplayName(viewer.file) }}</span>
             <button class="btn icon-btn danger" data-tip="删除词条" @click="askDeleteWord(viewer.file)">🗑</button>
             <button class="btn icon-btn" @click="closeViewer" data-tip="关闭">✕</button>
           </div>
@@ -796,6 +799,9 @@ export default {
     // 供「编辑分类」弹层回填，以及继承展开时按 id 取节点属性。
     const bankNodes = ref({});
     const maxDepth = ref(2);
+    // 左栏可能铺出的行数（分类树全展开后行数会超过 maxDepth），
+    // 选区数组必须补齐到这么长，否则模板 getSelections()[depth] 读到 undefined 会炸
+    const minSelDepth = ref(2);
     const addTabOpen = ref(false);
     const addTabName = ref('');
     const addingTab = ref(false);
@@ -809,12 +815,8 @@ export default {
       randomPools: [],
       // 池子只有两种类型（由每个池自己的 traverse 字段标记，不再是全局模式）：
       // 🎲 随机池：traverse=false，每次现抽 1 条；∞ 遍历池：traverse=true，所有词条参与全组合。
-      // randomMode 仅为旧存档兼容字段，不再有界面入口，读档时会被迁移成池类型
-      randomMode: false,
-      // fillMode：填充模式（结果平等，把遍历池提示词的参考图补到统一目标数量，集中倒满一桶再下一桶）
-      fillMode: false,
-      // traverseMode：遍历模式（单次平等，遍历池所有词条做笛卡尔积全跑，「次数」是最外层大 for，整套组合重复几轮）
-      traverseMode: false,
+      // 跑法不再有全局开关：遍历是默认跑法（∞ 遍历池做全组合各跑一次，🎲 随机池每组现抽 1 条），
+      // 填充模式（按参考图数补跑）已移除。
     });
 
     // ============ 卡片框选（多选 → 凝结成池）============
@@ -1008,14 +1010,11 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined }),
+        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined }),
         randomPools: data.randomPools,
         // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
-        // 2 起区分 fillMode（填充）/traverseMode（遍历）；旧存档无 modeVer。
-        // 其 traverseMode 字段是旧的「填充」语义，恢复时需迁移到 fillMode
-        modeVer: 3,
-        fillMode: data.fillMode,
-        traverseMode: data.traverseMode,
+        // 4 起移除填充模式与遍历开关，遍历恒为默认跑法（旧存档的 fillMode/traverseMode 读档时忽略）。
+        modeVer: 4,
         imgIndices: data.imgIndices,
         chipsCollapsed: chipsCollapsed.value,
         chipsHeight: chipsHeight.value,
@@ -1145,25 +1144,11 @@ export default {
         }
         // 池类型：旧存档的池没有 traverse 字段 → 一律视为随机池 🎲（与旧行为一致）
         data.randomPools.forEach(it => { it.traverse = !!it.traverse; });
-        if (typeof state.randomMode === 'boolean') data.randomMode = state.randomMode;
-        if (state.modeVer >= 2) {
-          if (typeof state.fillMode === 'boolean') data.fillMode = state.fillMode;
-          if (typeof state.traverseMode === 'boolean') data.traverseMode = state.traverseMode;
-        } else if (typeof state.traverseMode === 'boolean') {
-          // 旧存档（modeVer < 2）：traverseMode 是旧的「填充」语义，迁移为 fillMode
-          data.fillMode = state.traverseMode;
-        }
-        // modeVer < 3 迁移：旧「随机模式 🔄」= 各池各抽一条逐条出图，
-        // 在新模型里等价于「所有池都是随机池 🎲 + 遍历跑法（没有遍历池时每轮各抽一条）」。
-        if (!(state.modeVer >= 3) && data.randomMode) {
-          data.randomMode = false;
-          data.fillMode = false;
-          data.traverseMode = true;
+        // 旧存档迁移：modeVer < 3 时旧「随机模式 🔄」= 各池各抽一条逐条出图，等价于「所有池都是 🎲 随机池」。
+        // 填充模式（fillMode）与遍历开关（traverseMode）已移除：遍历恒为默认跑法，旧字段读档时一律忽略。
+        if (!(state.modeVer >= 3) && state.randomMode) {
           data.randomPools.forEach(it => { it.traverse = false; });
         }
-        data.randomMode = false;
-        // 两模式互斥兜底：旧存档或手改存档可能同时为 true，填充优先
-        if (data.fillMode) data.traverseMode = false;
         if (state.imgIndices && typeof state.imgIndices === 'object') data.imgIndices = state.imgIndices;
         if (state.selections && typeof state.selections === 'object') {
           Object.keys(state.selections).forEach(t => {
@@ -1194,8 +1179,8 @@ export default {
             if (!s.tab || !s.relPath) return;
             const cards = bankData.value[s.tab] || [];
             const card = cards.find(c => c.relPath === s.relPath);
-            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '' });
-            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '' });
+            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '' });
+            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '' });
           });
           data.selected = rebuilt;
           // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
@@ -1529,7 +1514,7 @@ export default {
       try {
         const sel = getSelections();
         let selId = '';
-        for (let i = 0; i < maxDepth.value; i++) {
+        for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) {
           if (Array.isArray(sel[i]) && sel[i].length) selId = String(sel[i][0] || '');
         }
         // 父级 id：① 变体组锁定的锚点 id；② 选中的分类节点 id（左栏自带 id，不再反查）；
@@ -1573,7 +1558,7 @@ export default {
     };
 
     // ============ 静音开关（mute） ============
-    // 语义：mute=1（静音）的词条在随机模式、填充模式、遍历模式、单次随机等自动选词流程被跳过，
+    // 语义：mute=1（静音）的词条在随机池抽词、遍历穷举、单次随机等自动选词流程被跳过，
     // 只有用户手动点选卡片时才参与。与删除（isdel）不同：卡片照常显示、参考图不动，
     // 随时可一键恢复；已选区里已手选的标签也不受影响。
     const muteBusy = ref(false);
@@ -1608,20 +1593,21 @@ export default {
       }
     };
 
-    // 编辑弹窗的只读前缀：变体卡显示成「组名#变体名」，组名来自所属变体组节点，库里只存短名，
-    // 所以这里露出的前缀纯展示、改不了（要改组名走卡片右键「改变体组名」）。
-    // 普通词条不落在变体组下，前缀为空，输入框整段可改。
+    // 编辑弹窗里这条词所属的组名（只用来剥「组名#xxx」这种手打前缀，不再显示成只读标签）。
+    // 组名走和卡片标题同一套三级兜底，_vgTitle 丢了也能按 id 顺着树找回来。
+    // 普通词条不在变体组下，返回空串。
     const editNamePrefix = computed(() => {
       const t = editTarget.value;
-      if (!t || !t._vgKey) return '';
-      return String(t._vgTitle || vgGroupTitleOf(t._vgKey) || '').trim();
+      if (!t) return '';
+      return String(vgTitleFor(t) || '').trim();
     });
 
 
     const openEdit = (file) => {
       editTarget.value = file;
-      // 输入框只放短名那一段，前缀单独用只读标签露出来（见 editNamePrefix）；库里也只存短名
-      editName.value = vgShortName(file.name, editNamePrefix.value);
+      // 输入框直接显示这条词的完整名：与卡片标题、变体浮层、已选标签同一口径。
+      // 名字没改动时按原样写回（默认版写回的就是组名，从此库里也是完整名，不再出现「默认」）。
+      editName.value = cardDisplayName(file);
 
       editContent.value = file.content || '';
       editContentCn.value = file.content_cn || '';
@@ -1646,7 +1632,10 @@ export default {
       let tail = nm;
       if (pre && tail.startsWith(pre + '#')) tail = tail.slice(pre.length + 1).trim();
       if (!tail) return showToast('变体名不能为空', 'warn');
-      const fullName = tail;
+      // 名字没动过就别改库：输入框显示的是完整名（默认版显示组名），照着写回去会把库里的
+      // 「默认」改成组名，凭空制造出跟组头同名的条目。这里原样提交原值，等于什么都没改。
+      const untouched = nm === cardDisplayName(editTarget.value);
+      const fullName = untouched ? (editTarget.value.name || tail) : tail;
 
       editing.value = true;
       try {
@@ -2083,7 +2072,8 @@ export default {
         sel = [];
         data.selections[data.activeTab] = sel;
       }
-      while (sel.length < maxDepth.value) sel.push([]);
+      const need = Math.max(maxDepth.value, minSelDepth.value);
+      while (sel.length < need) sel.push([]);
       return sel;
     };
 
@@ -2095,19 +2085,14 @@ export default {
       return base.replace(/^\d+[_ ]+/, '');
     };
 
-    const chipLines = computed(() => {
-      // 终局版：左栏直接由「分类节点树」构建（nodes 里 type=category 的节点按 parentId 挂树），
-      // 不再从卡片 chipIds 反推——空分类（没有词条的目录）也能正常显示与展开。
-      // 每个 chip 自带 { id, parentId, name }：id 是分类自身的 DB 身份，与卡片无关。
+    // parentId -> 子分类；跳过 Tab 根、词条节点（空壳锚点/变体条目的 type 不是 category，天然过滤）。
+    // 注意：分类级 vg（末级分类标了变体组）**仍然是分类层**，必须照常出现在左栏，
+    // 它只影响「其下词条合并成一张卡」，不能连分类一起隐藏，否则用户会以为分类丢了。
+    // 抽成 computed：左栏渲染、排序落库、唯一链下钻共用同一份分类树。
+    const catKids = computed(() => {
       const tab = data.activeTab;
       const rootId = String(tabIds.value[tab] || '');
       const idx = bankNodes.value || {};
-      const sel = data.selections[tab] || [];
-      const lines = [];
-      if (!rootId) return lines;
-      // parentId -> 子分类；跳过 Tab 根、词条节点（空壳锚点/变体条目的 type 不是 category，天然过滤）。
-      // 注意：分类级 vg（末级分类标了变体组）**仍然是分类层**，必须照常出现在左栏，
-      // 它只影响「其下词条合并成一张卡」，不能连分类一起隐藏，否则用户会以为分类丢了。
       const kids = new Map();
       Object.keys(idx).forEach(id => {
         const n = idx[id];
@@ -2119,45 +2104,96 @@ export default {
         if (!kids.has(p)) kids.set(p, []);
         kids.get(p).push({ id: String(id), parentId: p, name: n.name || '' });
       });
+      return kids;
+    });
+
+    // 当前 tab 分类树的实际层数（全展开视图要按真实层数铺行，不能再按固定 2 层截断）
+    const catTreeDepth = computed(() => {
+      const tab = data.activeTab;
+      const rootId = String(tabIds.value[tab] || '');
+      if (!rootId) return 1;
+      const kids = catKids.value;
+      const seen = new Set();
+      const walk = (id) => {
+        if (seen.has(id)) return 0;   // 防环
+        seen.add(id);
+        const arr = kids.get(id) || [];
+        let best = 0;
+        for (let i = 0; i < arr.length; i++) {
+          const d = walk(String(arr[i].id || ''));
+          if (d > best) best = d;
+        }
+        return arr.length ? best + 1 : 0;
+      };
+      return Math.max(1, walk(rootId));
+    });
+
+    const chipLines = computed(() => {
+      // 左栏 = 分类节点树的全展开视图（与卡片无关，空分类也能显示）。
+      // 每一层显示「上一层所有父分类的子分类合集」：某层未被选中时整层摊开，
+      // 选中后该层收敛成被选中的分类、下一层只展开它们的子分类。
+      // —— 这样「全部」状态下依然能一路看到最深层分类，不会因为没选就断掉后代。
+      const tab = data.activeTab;
+      const rootId = String(tabIds.value[tab] || '');
+      const sel = data.selections[tab] || [];
+      const lines = [];
+      if (!rootId) return lines;
+      const kids = catKids.value;
       let maxSelDepth = -1;
       for (let i = 0; i < (sel || []).length; i++) {
         if (Array.isArray(sel[i]) && sel[i].length) maxSelDepth = i;
       }
-      // 循环上限 = 选中链深度+2：选中 depth d 的空分类时需渲染 d+1 层，提供「＋」/「全部」以继续创建子分类
-      const loopDepth = Math.max(maxDepth.value, maxSelDepth + 2);
+      // 循环上限取三者最大值：
+      //  ① 分类树真实层数（全展开：不选中也要能一路看到最底层）
+      //  ② 选中链深度+2（选中 depth d 的空分类时还需渲染 d+1 层，提供「＋」/「全部」继续建子分类）
+      //  ③ maxDepth（历史布局下限）
+      const loopDepth = Math.max(maxDepth.value, catTreeDepth.value + 1, maxSelDepth + 2);
+      let parents = [rootId];
       for (let depth = 0; depth < loopDepth; depth++) {
-        const parentId = chipParentId(depth);
-        if (!parentId) break;
-        let options = (kids.get(parentId) || []).slice();
-        // 合并刚创建、尚未落盘为词条的空小类（避免空目录未刷新时不可见）
-        pendingChips.value.forEach(p => {
-          if (String(p.parentId || '') !== String(parentId)) return;
-          if (!p.name && !p.id) return;
-          if (options.some(o => (p.id && o.id === String(p.id)) || (!p.id && o.name === p.name))) return;
-          options.push({ id: String(p.id || ''), parentId: String(parentId), name: p.name || '' });
+        if (!parents.length) break;
+        const used = new Set();
+        const options = [];
+        parents.forEach(pid => {
+          let group = (kids.get(pid) || []).slice();
+          // 顺序：按该父节点自己记的顺序排（多个父混排时，父间顺序 = 上一层顺序，父内 = 各自顺序）
+          const order = getChipOrder(tab, depth, pid);
+          if (order.length) {
+            const byId = new Map(group.map(o => [o.id, o]));
+            const byName = new Map();
+            group.forEach(o => { if (!byName.has(o.name)) byName.set(o.name, []); byName.get(o.name).push(o); });
+            const ordered = [];
+            const seen = new Set();
+            order.forEach(k => {
+              const key = String(k == null ? '' : k);
+              const hit = byId.get(key);
+              if (hit && !seen.has(hit.id)) { ordered.push(hit); seen.add(hit.id); return; }
+              (byName.get(key) || []).forEach(o => { if (!seen.has(o.id)) { ordered.push(o); seen.add(o.id); } });
+            });
+            group = ordered.concat(group.filter(o => !seen.has(o.id)));
+          }
+          group.forEach(o => { if (!used.has(o.id)) { used.add(o.id); options.push(o); } });
         });
-        const order = getChipOrder(tab, depth, parentId);
-        if (order.length) {
-          const byOrderId = new Map(options.map(o => [o.id, o]));
-          const byName = new Map();
-          options.forEach(o => { if (!byName.has(o.name)) byName.set(o.name, []); byName.get(o.name).push(o); });
-          const ordered = [];
-          const used = new Set();
-          order.forEach(k => {
-            const key = String(k == null ? '' : k);
-            const hit = byOrderId.get(key);
-            if (hit && !used.has(hit.id)) { ordered.push(hit); used.add(hit.id); return; }
-            // 旧存档按显示名存顺序：按名字兜底匹配
-            (byName.get(key) || []).forEach(o => { if (!used.has(o.id)) { ordered.push(o); used.add(o.id); } });
-          });
-          options = ordered.concat(options.filter(o => !used.has(o.id)));
-        }
+        // 合并刚创建、尚未落盘为词条的空小类（避免空目录未刷新时不可见）
+        pendingChips.value.forEach(pc => {
+          const pid = String(pc.parentId || '');
+          if (!parents.includes(pid)) return;
+          if (!pc.name && !pc.id) return;
+          const nid = String(pc.id || '');
+          if (nid && used.has(nid)) return;
+          if (options.some(o => String(o.parentId) === pid && o.name === (pc.name || ''))) return;
+          if (nid) used.add(nid);
+          options.push({ id: nid, parentId: pid, name: pc.name || '' });
+        });
         if (!options.length) break;
         lines.push(options);
-        // 该层未选中则不再往下
+        // 下一层要展开的父：本层选中了 → 只展开选中项；没选中 → 整层继续摊开
         const picks = sel[depth];
-        if (!Array.isArray(picks) || !picks.length) break;
+        parents = (Array.isArray(picks) && picks.length)
+          ? picks.map(x => String(x || '')).filter(Boolean)
+          : options.map(o => String(o.id || '')).filter(Boolean);
       }
+      // 行数变化时同步抬高选区数组下限（无需 trigger 额外渲染：本就随本 computed 一起重算）
+      if (minSelDepth.value !== lines.length) minSelDepth.value = lines.length;
       return lines;
     });
 
@@ -2425,33 +2461,60 @@ export default {
       const g = vgRealMap.value[s];
       return (g && g.title) || '';
     };
-    // 卡片标题用名：只有短名这一段（组名由 cardNamePrefix 单独取、淡色常驻在左侧）
+    // 卡片标题用名 = 这一版自己的完整名：库里只存短名，显示时补上组名，
+    // 让卡片脱离左栏/词库单独看（复制、截图、拖到别的分类）也读得懂是谁。
+    //   组名「刘海」+ 短名「单眼」 → 「单眼刘海」
+    //   短名本身就是「默认」或是组名本身 → 只显示组名（它本来就是完整名）
+    //   短名里已经带了组名 → 原样显示，避免「刘海刘海」
+    const vgFullName = (name, group) => {
+      const g = String(group || '').trim();
+      const short = vgShortName(name, g).trim();
+      if (!g) return short;
+      if (!short || short === '默认' || short === g) return g;
+      if (short.includes(g)) return short;
+      return short + g;
+    };
+    // 这条词所在变体组的组名：三种来源依次兜底，保证任何出口都能拼出完整名
+    //   1. 卡片/已选项上带的 _vgTitle（跨 tab、存档恢复、随机池都随项传递）
+    //   2. 按组键回查（vgRealMap，全库索引）
+    //   3. 按 id 顺着 bankNodes 的 parentId 找父节点是不是组头（历史存档只存了 id 的场景）
+    const vgGroupTitleById = (id) => {
+      const nodes = bankNodes.value || {};
+      const me = id ? nodes[String(id)] : null;
+      const pid = String((me && me.parentId) || '');
+      if (!pid || !vgGroupIds.value.has(pid)) return '';
+      const pn = nodes[pid];
+      return String((pn && pn.name) || '').trim();
+    };
+    const vgTitleFor = (file) => {
+      if (!file) return '';
+      const byField = String(file._vgTitle || '').trim();
+      if (byField) return byField;
+      const byKey = file._vgKey ? String(vgGroupTitleOf(file._vgKey) || '').trim() : '';
+      if (byKey) return byKey;
+      return vgGroupTitleById(file.id);
+    };
     const cardDisplayName = (file) => {
       if (!file) return '';
-      const g = file._vgKey ? String(file._vgTitle || vgGroupTitleOf(file._vgKey) || '') : '';
-      return vgShortName(file.name, g);
+      const g = vgTitleFor(file);
+      return vgFullName(file.name, g);
     };
-    // 卡片标题前缀 = 所属变体组名；组节点自己那张卡（名字就是组名）不显示前缀
-    const cardNamePrefix = (file) => {
-      if (!file || !file._vgKey) return '';
-      const g = String(file._vgTitle || vgGroupTitleOf(file._vgKey) || '').trim();
-      if (!g) return '';
-      return String(file.name || '') === g ? '' : g;
-    };
-    // 全名 = 「组名#短名」拼出来的结果：搜索、导出、已选标签、悬浮提示统一用它
-    const fullNameOf = (file) => {
+    // 变体身份牌：只要这张卡是某个变体组里的成员就挂（组头自己那张不挂）。
+    // 文案就是组名本身（不再加「变体 · 」前缀，卡名已含组名，不需要额外解释）。
+    const cardGroupBadge = (file) => {
       if (!file) return '';
-      const g = cardNamePrefix(file);
-      const short = cardDisplayName(file);
-      return g ? (g + '#' + short) : short;
+      if (vgGroupIds.value.has(String(file.id || ''))) return '';
+      return vgTitleFor(file);
     };
-    // 已选标签显示名：标签里只存了 _vgKey，组名按它现查
+    // 兼容旧调用点：现在等于卡片上的变体身份牌文案（组名）
+    const cardNamePrefix = cardGroupBadge;
+    // 悬浮提示就是这张卡自己的名字，不再拼「组名#」
+    const fullNameOf = (file) => cardDisplayName(file);
+    // 已选标签显示名：与卡片标题同一口径（默认版显示组名，其余显示自身完整名）
     const selDisplayName = (item) => {
       if (!item) return '';
       if (item._ph) return item.name || '';
-      const g = item._vgKey ? String(vgGroupTitleOf(item._vgKey) || item._vgTitle || '').trim() : '';
-      const short = vgShortName(item.name, g);
-      return g ? (g + '#' + short) : short;
+      return cardDisplayName(item);
     };
     // 变体组节点集合：自己 type=entry，且其下有 type=entry 的子节点
     const vgGroupIds = computed(() => {
@@ -2609,10 +2672,10 @@ export default {
       st.idx = ((cur + d) % vs.length + vs.length) % vs.length;
     };
     const vgGroupTitle = (file) => {
-      // 卡片级变体组：组名就是空壳锚点的名字（如「山间凉亭」），不再拼分类路径
-      if (file && file._vgTitle) return file._vgTitle;
-      const chips = (file && Array.isArray(file.chips)) ? file.chips : [];
-      return [file && file.tab].concat(chips).filter(Boolean).join(' / ');
+      // 卡片级变体组：组名就是空壳锚点（组头节点）的名字，如「进气口刘海」。
+      // 一律走 vgTitleFor 的三级兜底；绝不能拿分类 chips 拼路径当组名（那不是组名，
+      // 画到卡面/胶片条上会变成「刘海／侧发」这种长串，看起来就像认错了人）。
+      return vgTitleFor(file);
     };
     // 新建变体时的组名提示：只用于弹窗里给用户看，名字本身仍只存短名、不拼前缀
     const vgNewVersionPrefix = (file) => {
@@ -2634,6 +2697,10 @@ export default {
       vgStrip.idx = Math.min(Math.max(Number(st.idx) || 0, 0), vs.length - 1);
     };
     const closeVgStrip = () => { vgStrip.open = false; };
+    // 胶片条帧名：与卡片标题同一口径（该版叫「默认」就直接显示组名，不显示占位词）；
+    // 帧里的对象是库里的原始卡，没有 _vgKey，所以组名一律取 vgStrip.title
+    // 变体切换浮层里也显示完整名（「单眼刘海」），与卡片标题同一口径
+    const vgStripName = (v) => vgFullName((v && v.name) || '', String(vgStrip.title || '').trim());
     const pickVgStrip = (i) => {
       if (!vgStrip.versions[i]) return;
       vgStateEnsure(vgStrip.key).idx = i;
@@ -2872,31 +2939,22 @@ export default {
     const withRemoved = (ph) => (ph.removed ? '（排除 ' + ph.removed + ' 段）' + (ph.text || '（空）') : (ph.text || '（空）'));
 
     const previewText = computed(() => {
-      if (data.fillMode || data.traverseMode) {
-        const modeName = data.traverseMode ? '遍历' : '填充';
+      if (data.randomPools.length) {
         const filled = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
         if (filled.length) {
-          return modeName + '抽取：' + withRemoved(composePreview(filled));
+          return '遍历抽取：' + withRemoved(composePreview(filled));
         }
-        if (data.randomPools.length) {
-          const lab = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-          const trav = data.randomPools.filter(it => it.traverse).map(lab);
-          const rnd = data.randomPools.filter(it => !it.traverse).map(lab);
-          const parts = [];
-          if (trav.length) parts.push('∞ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
-          if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
-          const rndNote = rnd.length ? '；随机池每组合现抽 1 条' : '';
-          let extra = '';
-          if (data.traverseMode) {
-            // 遍历模式：次数是最外层大 for —— 整套遍历组合重复跑 rounds 轮
-            const rounds = Math.max(1, Number(pref.genCount) || 0);
-            extra = (trav.length ? '；遍历池做全组合，次数 ' + rounds + ' = 整套组合重复 ' + rounds + ' 轮' : '；无遍历池，次数 ' + rounds + ' = 每轮各抽 1 条') + rndNote;
-          } else {
-            extra = '；目标 = 遍历池当前最多参考图数 + ' + pref.genCount + '（设 0 则补到最多那个的数量），集中填充' + rndNote;
-          }
-          return modeName + '模式：' + parts.join(' → ') + extra;
-        }
-        return modeName + '模式已开，但池子为空。右键 tab / chip 加入随机池，再右键可改成遍历池 ∞';
+        const lab = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
+        const trav = data.randomPools.filter(it => it.traverse).map(lab);
+        const rnd = data.randomPools.filter(it => !it.traverse).map(lab);
+        const parts = [];
+        if (trav.length) parts.push('∞ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
+        if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
+        const rounds = Math.max(1, Number(pref.genCount) || 0);
+        const extra = trav.length
+          ? '；遍历池做全组合，次数 ' + rounds + ' = 整套组合重复 ' + rounds + ' 轮'
+          : '；无遍历池 ∞，按普通模式逐条运行（每轮各抽 1 条）';
+        return parts.join(' → ') + extra;
       }
       const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
       if (!picked.length) return '（空）';
@@ -2905,10 +2963,8 @@ export default {
 
     // 负面预览：同样是「自身 + 父级分类」拼完的最终结果，与正向一一对应
     const previewNegText = computed(() => {
-      if (data.fillMode || data.traverseMode) {
-        const hasNeg = data.selected.some(s => String(s.neg || '').trim())
-          || data.randomPools.length > 0;
-        return hasNeg ? '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）' : '';
+      if (data.randomPools.length) {
+        return '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）';
       }
       const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
       if (!picked.length) return '';
@@ -2984,6 +3040,32 @@ export default {
       const sel = getSelections();
       const p = sel[depth - 1];
       return Array.isArray(p) && p.length ? String(p[0] || '') : '';
+    };
+    // 第 depth 行展开时用到的父节点集合：与 chipLines 同一套规则（选中收敛 / 未选中整层摊开）
+    const chipLineParents = (depth) => {
+      const tab = data.activeTab;
+      let parents = [String(tabIds.value[tab] || '')].filter(Boolean);
+      const kids = catKids.value;
+      const sel = data.selections[tab] || [];
+      for (let d = 0; d < depth; d++) {
+        if (!parents.length) return [];
+        const used = new Set();
+        const opts = [];
+        parents.forEach(pid => (kids.get(pid) || []).forEach(o => {
+          if (used.has(o.id)) return;
+          used.add(o.id); opts.push(o);
+        }));
+        const picks = sel[d];
+        parents = (Array.isArray(picks) && picks.length)
+          ? picks.map(x => String(x || '')).filter(Boolean)
+          : opts.map(o => String(o.id || '')).filter(Boolean);
+      }
+      return parents;
+    };
+    // 该行只有一个父分类时才拿得到唯一父 id（排序落库要求父唯一：多父混排时顺序无从归属）
+    const chipParentIdOf = (depth) => {
+      const ps = chipLineParents(depth);
+      return ps.length === 1 ? ps[0] : '';
     };
     // 同层兄弟节点 id：拖拽排序落库时补齐未展示的节点（保持旧行为「没出现的补末尾」）
     const siblingIdsOf = (parentId, skip) => {
@@ -3151,12 +3233,12 @@ const submitAddTab = async () => {
           }
         }
       }
-      for (let i = depth + 1; i < maxDepth.value; i++) sel[i] = [];
+      for (let i = depth + 1; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
     };
     const clearChip = (depth) => {
       const sel = getSelections();
       sel[depth] = [];
-      for (let i = depth + 1; i < maxDepth.value; i++) sel[i] = [];
+      for (let i = depth + 1; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
     };
     // 池类型变了（🎲↔∞）之后：该池占位符的名字前缀要跟着换，
     // 之前的「已抽定」结果同步作废（池语义已变，旧抽定不再代表这个池），回到未填充占位符
@@ -3289,7 +3371,7 @@ const submitAddTab = async () => {
     const closeCatMenu = () => { catMenu.open = false; };
 
     // ============ 分类静音（自动继承到其下全部词条） ============
-    // 语义：分类节点 mute=1 → 其下所有词条在本页等效静音：不进随机/填充/遍历等自动选词，
+    // 语义：分类节点 mute=1 → 其下所有词条在本页等效静音：不进随机池抽词/遍历穷举等自动选词，
     // 开启「隐藏静音」时整组从卡片区与分类标签里消失。只在内存里向下传播、不写库，
     // 每次 load 重算，取消分类静音后自然恢复；词条自身的 mute 字段不受破坏。
     const catMuteBusy = ref(false);
@@ -3364,7 +3446,8 @@ const submitAddTab = async () => {
       if (!file) return;
       closeCatMenu();
       cardMenu.file = file;
-      cardMenu.title = file.name || '';
+      // 菜单抬头也显示完整名（与卡片标题一致），否则编辑弹窗里叫「进气口刘海」、右键抬头还叫「默认」
+      cardMenu.title = cardDisplayName(file);
       cardMenu.muted = !!file.mute && !file.muteFromCat;
       cardMenu.hasImages = !!(file.images && file.images.length);
       // 该卡片是否在框选集合里 → 决定右键菜单是否多出「凝结为池」两项
@@ -3399,7 +3482,7 @@ const submitAddTab = async () => {
 
     // ---- 框选凝结成池 ----
     // 与 tab / chip 池完全同构的自定义池（kind:'list'）：同样有 traverse 区分 🎲 随机池 / ∞ 遍历池，
-    // 同样在已选区生成黄色占位符，同样参与单次随机、遍历与填充。差别只在候选来源：
+    // 同样在已选区生成黄色占位符，同样参与单次随机与遍历穷举。差别只在候选来源：
     // 不是某个分类下的词条，而是框选时点名的这批卡片（按 tab + relPath 存，取用时实时回查，
     // 词条改名/移动不影响，被删则自动跳过）。
     const condenseSig = (items) => (items || []).map(e => e.tab + '/' + e.relPath).sort().join('\n');
@@ -3544,13 +3627,17 @@ const submitAddTab = async () => {
       const g = vgRenameKey.value ? vgRealMap.value[vgRenameKey.value] : null;
       return g ? (g.real || []).length : 0;
     });
-    // 改名前给个示例，让用户看清「新组名#短名」拼出来是什么样
+    // 改名前给个示例：组名改完，卡片上方那枚标志、以及「默认」版的标题会一起变成新名字，
+    // 其余版本仍是「新组名 · 自身名」
     const vgRenamePreview = computed(() => {
       const nm = (vgRenameName.value || '').trim();
-      const g = vgRenameKey.value ? vgRealMap.value[vgRenameKey.value] : null;
+      const key = vgRenameKey.value;
+      const g = key ? vgRealMap.value[key] : null;
       if (!nm || !g) return '';
       const v = (g.real || [])[0];
-      return v ? (nm + '#' + vgShortName(v.name)) : '';
+      if (!v) return nm;
+      const short = vgShortName(v.name, String(g.title || '')).trim();
+      return (!short || short === '默认') ? nm : (nm + ' · ' + short);
     });
 
     const openVgRename = (file) => {
@@ -3586,7 +3673,7 @@ const submitAddTab = async () => {
         });
         const json = await resp.json();
         if (json.error) { showToast('改名失败：' + json.error, 'error'); return; }
-        showToast('组名已改：' + nm + '（各变体显示名的前缀自动跟着变）', 'success');
+        showToast('组名已改：' + nm + '（卡片上方的组名标志自动跟着变）', 'success');
 
         closeVgRename();
         await load(true);
@@ -3601,11 +3688,12 @@ const submitAddTab = async () => {
       closeCardMenu();
       openNewVersionFor(f);
     };
-    // ============ 并入变体组（提示词入口，单个 / 多选共用） ============
-    // 从提示词入手时弹框问一个总名当组名：这批卡各自保留现在的短名，显示时自动拼成「总名#短名」，
-    // 整批挂到同一个组节点下，之后一张卡翻页切换。多选右键与单卡右键走的是同一个入口。
+    // ============ 聚拢成变体组（提示词入口，单个 / 多选共用） ============
+    // 组头一律新建：后端在建组时插一条空 entry 当组头，再把这批卡改挂到它下面，
+    // 所以不存在「借第一张卡当组头」这种由点击顺序决定的结构，也没有随机的挂载父级。
+    // 前提是这批卡父级完全一致（同一个分类），否则没法确定组头挂哪儿，直接拒绝。
 
-    const vgJoin = reactive({ open: false, name: '', suggest: '', busy: false, items: [] });
+    const vgJoin = reactive({ open: false, name: '', suggest: '', parentName: '', busy: false, items: [] });
     // 变体名：只留短名那段；老库里残留的「旧组#名」前缀在这里现剥，避免拼出「新组#旧组#变体」套娃
     const vgJoinTail = (f) => vgShortName((f && f.name) || '').trim();
 
@@ -3613,13 +3701,15 @@ const submitAddTab = async () => {
       const nm = (vgJoin.name || '').trim();
       const first = vgJoin.items[0];
       if (!nm || !first) return '';
-      return nm + '#' + vgJoinTail(first);
+      const tail = vgJoinTail(first);
+      return (!tail || tail === '默认') ? nm : (nm + ' · ' + tail);
     });
     const vgJoinNames = computed(() => vgJoin.items.map(it => vgJoinTail(it)).join('、'));
     const closeVgJoin = () => {
       vgJoin.open = false;
       vgJoin.name = '';
       vgJoin.suggest = '';
+      vgJoin.parentName = '';
       vgJoin.busy = false;
       vgJoin.items = [];
     };
@@ -3637,17 +3727,24 @@ const submitAddTab = async () => {
         showToast('选中的卡片分属 ' + keys.size + ' 个不同变体组，一次只能并入同一个组', 'warn', 3600);
         return;
       }
-      // 组名建议值：这批卡都在同一个分类下时，直接把该分类名提示出来（用户可改）
-      let suggest = '';
-      const parents = new Set(items.map(x => String(cardCatIdOf(x) || '')));
-      if (parents.size === 1) {
-        const pid = [...parents][0];
-        const pn = pid ? (bankNodes.value[pid] || {}) : {};
-        suggest = String(pn.name || '');
+      // 新组头挂到哪个父级下，由这批卡在库里的「真实父节点」唯一决定（不是点击先后）。
+      // 父级必须全部相等：跨分类聚拢会把词条从原分类里搬走，组头也无处安放，直接拦下。
+      const pids = new Set();
+      let orphan = 0;
+      items.forEach((x) => {
+        const pid = String(((bankNodes.value || {})[String(x.id)] || {}).parentId || '');
+        if (!pid) { orphan += 1; return; }
+        pids.add(pid);
+      });
+      if (orphan || pids.size !== 1) {
+        showToast('选中的这批提示词不在同一个分类下（父级必须完全一致），无法聚拢成一个变体组', 'warn', 4400);
+        return;
       }
+      const parentNode = bankNodes.value[[...pids][0]] || {};
       vgJoin.items = items;
       vgJoin.name = '';
-      vgJoin.suggest = suggest;
+      vgJoin.suggest = String(parentNode.name || '');
+      vgJoin.parentName = String(parentNode.name || '');
       vgJoin.busy = false;
       vgJoin.open = true;
     };
@@ -3668,9 +3765,10 @@ const submitAddTab = async () => {
           body: JSON.stringify({ ids: vgJoin.items.map(x => String(x.id)), name: nm }),
         });
         const json = await resp.json();
-        if (json.error) { showToast('并入失败：' + json.error, 'error', 4400); return; }
+        if (json.error) { showToast('聚拢失败：' + json.error, 'error', 4400); return; }
         const n = Number(json.count || 0);
-        showToast('已把 ' + n + ' 条提示词并入变体组「' + nm + '」', 'success', 3600);
+        const gname = String(json.group || nm);
+        showToast('已新建变体组「' + gname + '」，' + n + ' 条提示词挂到该组下', 'success', 3600);
 
         closeVgJoin();
         clearPick();
@@ -3789,7 +3887,7 @@ const submitAddTab = async () => {
         if (catEdit.open && String(catEdit.id) === String(id)) catEdit.open = false;
         // 被删分类可能正处在左侧选区链上 → 逐层清空选区，避免停留在已失效目录
         const sel = getSelections();
-        for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+        for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
         pageIndex.value = 0;
         showToast('已删除分类：' + label + '（共 ' + (json.deleted || 0) + ' 项）'
           + (json.refDirsPurged ? '，参考图已归档 ' + json.refDirsPurged + ' 个目录' : ''), 'success', 3000);
@@ -3814,8 +3912,10 @@ const submitAddTab = async () => {
       openCatEdit(m.kind, m.key);
     };
     const onCtxAddChild = () => {
-      const m = { kind: catMenu.kind, depth: catMenu.depth };
+      const m = { kind: catMenu.kind, key: catMenu.key, depth: catMenu.depth };
       closeCatMenu();
+      // 先把选区切到该分类：新建子分类的父级是按选中链推的，不选中会落成大类下的同级
+      if (m.kind === 'chip') selectChipChain(m.key, m.depth);
       // tab 右键 → 建一级分类（depth 0）；chip 右键 → 建它的下一级
       openAddChip(m.kind === 'tab' ? 0 : m.depth + 1);
     };
@@ -3826,7 +3926,7 @@ const submitAddTab = async () => {
       if (m.kind === 'chip') selectChipChain(m.key, m.depth);
       else {
         const sel = getSelections();
-        for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+        for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
       }
       openAddCard();
     };
@@ -3834,7 +3934,7 @@ const submitAddTab = async () => {
     // 把选区设成某条分类链（新建词条的父目录由选区推导）：父链直接由 parentId 上溯
     const selectChipChain = (id, depth) => {
       const sel = getSelections();
-      for (let i = 0; i < maxDepth.value; i++) sel[i] = [];
+      for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
       const chain = nodeIdChainById(id);
       for (let i = 0; i <= depth && i < chain.length; i++) sel[i] = [chain[i]];
       pageIndex.value = 0;
@@ -4176,38 +4276,6 @@ const submitAddTab = async () => {
       pref.genCount = 0;
       zhuleLog('clearAll', '已清空已选 + 随机池，次数归零');
     };
-    // 池子跑法只有两种，互斥：遍历 🔁（单次平等，每个词条增量相同）与填充 ⏩（结果平等，追平图数）；
-    // 「随机」不再是模式，而是池子类型（🎲 随机池每次现抽一条），可融入以上任一种跑法。
-    // 关闭任一「批量跑池」模式（填充 ⏩ / 遍历 🔁）时，立即掐断正在运行的队列，避免「取消后又补上」
-    const stopPoolRun = (label) => {
-      if (!runBusy && traverseTarget <= 0 && !runQueue.length) return;
-      resetTraverseTarget();
-      runBusy = false;
-      runQueue = [];
-      showToast('已停止' + label + '，本轮共提交 ' + runTotal + ' 条任务', 'warn', 3000);
-    };
-    // 填充模式：结果平等——遍历池内每条提示词的参考图补到统一目标数量
-    const toggleFillMode = () => {
-      data.fillMode = !data.fillMode;
-      if (data.fillMode) {
-        stopPoolRun('上一批任务');
-        data.traverseMode = false;
-        const trav = data.randomPools.filter(it => it.traverse).length;
-        if (data.randomPools.length && !trav) showToast('当前没有遍历池 ∞：填充需要至少一个遍历池，右键可把池子从 🎲 改成 ∞', 'warn', 4200);
-        return;
-      }
-      stopPoolRun('填充');
-    };
-    // 遍历模式：单次平等——遍历池 ∞ 的词条做全组合各跑一遍，随机池 🎲 每个组合现抽 1 条，「次数」为整套组合重复轮数
-    const toggleTraverseMode = () => {
-      data.traverseMode = !data.traverseMode;
-      if (data.traverseMode) {
-        stopPoolRun('上一批任务');
-        data.fillMode = false;
-        return;
-      }
-      stopPoolRun('遍历');
-    };
 
     // 随机池语义：每个右键选中的 tab / chip 各为一个独立子池。
     // 随机/遍历时从每个子池各取 1 条再组合（如角色/神态/身材/姿势各抽一）。
@@ -4287,7 +4355,7 @@ const submitAddTab = async () => {
 
     // 遍历组合数上限：超出时提示精简随机池，避免一次生成过多
     const TRAVERSE_MAX_COMBOS = 500;
-    // 遍历模式（全跑）的单次组合上限：比填充模式更宽松，因为它的语义就是把所有组合跑一遍；
+    // 遍历（全跑）的单次组合上限：语义就是把遍历池的所有组合都跑一遍，所以给得比单轮上限宽松；
     // 仍设硬上限，防止误选大池后一次排出上万条任务
     const TRAVERSE_ALL_MAX_COMBOS = 2000;
 
@@ -4301,7 +4369,7 @@ const submitAddTab = async () => {
     // 按「标签栏 data.selected 的原顺序」组装一条完整提示词：
     // 占位符（_ph）是随机池的槽位，用本次该池抽中的词条原位替换；手选条目（如角色「宵宫」）原位保留。
     // 顺序完全由用户在标签栏拖好的次序决定，随机项可夹在任意位置，不再一律拼成前缀/后缀。
-    // 池条目统一补 _pool:true，供填充模式的达标判定复用。
+    // 池条目统一补 _pool:true，供遍历组合的随机池现抽与顺序整理复用。
     const arrangeBySelection = (picked) => {
       const byKey = new Map();
       for (const e of picked) {
@@ -4335,7 +4403,7 @@ const submitAddTab = async () => {
         if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || ''); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true, _vgKey: file._vgKey || '' });
+        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true, _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '' });
       }
       return picks;
     };
@@ -4348,7 +4416,7 @@ const submitAddTab = async () => {
       return combo.concat(picks);
     };
 
-    // 遍历组合列表（遍历 🔁 与填充 ⏩ 共用）：只对遍历池 ∞ 做笛卡尔积，
+    // 遍历组合列表：只对遍历池 ∞ 做笛卡尔积，
     // 组合按「第一个池变化最慢、最后一个最快」排列——即 randomPools 里靠前的遍历池做外层大 for；
     // 随机池 🎲 不参与乘积，由 withRandomPick 在提交前现抽。
     // 没有任何遍历池时返回 [[]]（单个空组合），整套跑法退化为「每轮各抽一条」。
@@ -4361,7 +4429,7 @@ const submitAddTab = async () => {
         const c = poolCandidates(item);
         if (!c || !c.length) return null;
         // 顺序一律沿用池内原始顺序（后端 ORDER BY sort_order, name, id，与词库卡片顺序、
-        // 用户拖拽排序一致）。绝不能在这里按 name 拼音重排，否则遍历/填充会以「拼音顺序」
+        // 用户拖拽排序一致）。绝不能在这里按 name 拼音重排，否则遍历会以「拼音顺序」
         // 而非池子可见顺序推进，表现为「不按分类顺序、跳来跳去」。
         lists.push(c.map(file => ({ tab: item.tab, file, _poolKey: poolKeyFor(item) })));
       }
@@ -4375,7 +4443,7 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey, _vgKey: e.file._vgKey || '' })));
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey, _vgKey: e.file._vgKey || '', _vgTitle: e.file._vgTitle || '' })));
     };
 
     // 池身份已统一为分类节点 id（旧存档的路径在 restoreState 里就迁完了），
@@ -4426,82 +4494,9 @@ const submitAddTab = async () => {
     let runQueue = [];
     let runBusy = false;
     let runTotal = 0;
-    // 填充目标数量模式：自动逐轮补跑，每轮每个参考图不足目标数量的组合各补 1 次，直到全部达标
-    let traverseTarget = 0;
-    let extraRuns = new Map();
-    // 启动填充时对每个池条目已收录参考图数的快照；轮间不再依赖 index 实时刷新，
-    // 判定仅用「快照 + 累计提交次数」，杜绝收录延迟导致 got 恒 0 的无限补跑
-    let initialGot = new Map();
-    const resetTraverseTarget = () => { traverseTarget = 0; extraRuns = new Map(); initialGot = new Map(); };
-
-    // 组合是否需要本轮补跑：其随机池条目中任一「启动快照参考图数 + 已累计提交次数」< 目标数量即补跑 1 次
-    const traverseNeedRun = (combo, target) => {
-      let need = false;
-      for (const e of combo) {
-        if (!e._pool) continue;
-        const got = (initialGot.get(e.relPath) || 0) + (extraRuns.get(e.relPath) || 0);
-        if (got < target) { need = true; break; }
-      }
-      return need;
-    };
-
-    // 集中填充：不再每轮给所有不足组合各补 1 次（均匀增长），而是只取第一个未达标组合，
-    // 持续提交到它达到目标数量（第一个桶倒满）后，才进入下一个未达标组合
-    const filterTraversePending = (combos, target) => {
-      for (const combo of combos) {
-        if (!traverseNeedRun(combo, target)) continue;
-        for (const e of combo) {
-          if (e._pool) extraRuns.set(e.relPath, (extraRuns.get(e.relPath) || 0) + 1);
-        }
-        return [combo];
-      }
-      return [];
-    };
 
     const runNextInQueue = async () => {
       if (runQueue.length === 0) {
-        if (traverseTarget > 0) {
-          // 填充模式：后台静默补跑（集中填充：先满一桶再下一桶）。不再轮间刷新词库 index
-          //（避免下方标签不断变化），达标判定仅用「启动快照 + 累计提交次数」，提交次数达到目标
-          // 即停，杜绝 index 收录延迟导致 got 恒 0 的无限循环；用户关闭填充模式（⏩）即停止。
-          if (!data.fillMode) {
-            resetTraverseTarget();
-            runBusy = false;
-            showToast('已停止填充，共提交 ' + runTotal + ' 条任务', 'warn', 3000);
-            return;
-          }
-          const built = buildTraverseCombos();
-          if (built && !built.tooMany) {
-            const pending = filterTraversePending(built, traverseTarget);
-            if (pending.length) {
-              // 遍历组合只含遍历池条目，提交前给每条补上随机池 🎲 的现抽结果
-              const arr = [];
-              let pickFail = false;
-              for (const combo of pending) {
-                const full = withRandomPick(combo);
-                if (!full) { pickFail = true; break; }
-                arr.push(arrangeBySelection(full));
-              }
-              if (pickFail) {
-                resetTraverseTarget();
-                runBusy = false;
-                runQueue = [];
-                showToast('随机池 🎲 抽不出词条（该分类下暂无可用词条），已停止填充', 'warn', 4000);
-                return;
-              }
-              runQueue = arr;
-              runTotal += arr.length;
-              runBusy = true;
-              runNextInQueue();
-              return;
-            }
-          }
-          const t = traverseTarget;
-          resetTraverseTarget();
-          runBusy = false;
-          showToast('已提交 ' + runTotal + ' 条任务：填充池提示词参考图均已达到目标数量 ' + t, 'success', 3500);
-          return;
-        }
         runBusy = false;
         showToast('已全部完成 ' + runTotal + ' 条', 'success', 3000);
         return;
@@ -4520,7 +4515,6 @@ const submitAddTab = async () => {
       let done = false;
       const timer = setTimeout(() => {
         if (!done) {
-          resetTraverseTarget();
           runBusy = false;
           runQueue = [];
           showToast('未收到画布回执，已停止（请确认画布页已打开、工作流已加载且ID一致）', 'error', 4000);
@@ -4534,7 +4528,6 @@ const submitAddTab = async () => {
         clearTimeout(timer);
         if (m.ok) runNextInQueue();
         else {
-          resetTraverseTarget();
           runBusy = false;
           runQueue = [];
           showToast('运行失败：' + (m.error || '未知错误') + '，已停止', 'error', 4000);
@@ -4544,94 +4537,44 @@ const submitAddTab = async () => {
 
     const runGenerate = async () => {
       const count = pref.genCount;
-      // 运行前统一自愈选区 id（普通/遍历/填充三条出口都依赖 selected 里的词条 id）
+      // 运行前统一自愈选区 id（遍历分支与普通模式两条出口都依赖 selected 里的词条 id）
       healSelectedIds();
-      if (data.fillMode || data.traverseMode) {
+      // 默认跑法 = 遍历：有 ∞ 遍历池时，遍历池词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条，
+      // 「次数」= 整套组合重复几轮（0 按 1 轮）。没有 ∞ 遍历池时退回普通模式（手选词条 / 随机池各抽一条），
+      // 填充模式已移除，也不再有模式开关。
+      if (traversePoolItems().length) {
         if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
         const ready = await ensurePoolData();
         if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
-      if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
+        if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
-        let combos;
-        let traverseInfo = null;
-        if (data.traverseMode) {
-          // 遍历模式（单次平等）：遍历池 ∞ 的词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条；
-          // 「次数」= 最外层大 for —— 整套组合重复跑 rounds 轮（0 按 1 轮）。
-          // 必须至少有一个 ∞ 遍历池：否则单轮只有一条空组合，等效于「每轮把随机池各抽一条」，
-          // 跑起来就是完全乱序（与用户「先做完这一类再下一类」的预期相反），这里直接拦截说明。
-          if (!traversePoolItems().length) {
-            return showToast('遍历模式需要至少一个遍历池 ∞：右键池子把 🎲 改成 ∞ 才会按顺序穷举，否则每条都是现抽、顺序会全乱', 'warn', 4600);
-          }
-          const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
-          if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
-          if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
-          const rounds = Math.max(1, count || 0);
-          combos = [];
-          for (let r = 0; r < rounds; r++) {
-            for (const combo of built) {
-              const full = withRandomPick(combo);
-              if (!full) return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000);
-              combos.push(arrangeBySelection(full));
-            }
-          }
-          traverseInfo = { rounds, oneRound: built.length };
-          zhuleLog('runGenerate: 遍历模式全组合', '遍历池=', traversePoolItems().map(p => p.tab),
-            '随机池=', randomPoolItems().map(p => p.tab),
-            '单轮组合数=', built.length, '次数(外层轮数)=', rounds, '总任务数=', combos.length);
-          // 顺序自检：打印单轮前 10 条组合的词条名，方便一眼核对是否按池内顺序推进
-          zhuleLog('runGenerate: 遍历顺序抽样', built.slice(0, 10).map(c => c.map(e => e.name || e.relPath).join(' + ')));
-        } else {
-          if (!traversePoolItems().length) return showToast('填充模式需要至少一个遍历池 ∞：右键可把随机池 🎲 改成遍历池', 'warn', 4200);
-          const built = buildTraverseCombos();
-          if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
-          if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_MAX_COMBOS + '）', 'warn', 4000);
-          // 目标数量：以当前池条目参考图数最多的为基准（maxGot），
-          // 设置 0 时目标 = 基准，把不足的提示词全部补到当前最多那个的数量；
-          // 设置自然数 N 时目标 = 基准 + N，所有提示词补到（最多数量 + N）。
-          // 集中填充：不追求均匀，先从第一个不足目标数量的组合开始持续提交到达标，
-          // 倒满一桶再下一桶；轮间自动循环直至全部达标。
-          // 启动时对每个池条目已收录参考图数做一次快照，此后仅按「快照 + 累计提交次数」判定，
-          // 不再依赖轮间 index 刷新（避免下方标签反复变化，也杜绝收录延迟导致的无限循环）。
-          extraRuns = new Map();
-          initialGot = new Map();
+        const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
+        if (!built) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
+        if (built.tooMany) return showToast('遍历组合数过多（' + built.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
+        const rounds = Math.max(1, count || 0);
+        const combos = [];
+        for (let r = 0; r < rounds; r++) {
           for (const combo of built) {
-            for (const e of combo) {
-              if (e._pool && !initialGot.has(e.relPath)) {
-                initialGot.set(e.relPath, wordImageCount(findWordFile(e.tab, e.relPath)) || 0);
-              }
-            }
-          }
-          let maxGot = 0;
-          for (const got of initialGot.values()) if (got > maxGot) maxGot = got;
-          traverseTarget = maxGot + count;
-          const pending = filterTraversePending(built, traverseTarget);
-          if (!pending.length) {
-            resetTraverseTarget();
-            return showToast('填充池提示词参考图均已达到目标数量 ' + traverseTarget + '，无需补跑', 'success', 3000);
-          }
-          combos = [];
-          for (const combo of pending) {
             const full = withRandomPick(combo);
-            if (!full) { resetTraverseTarget(); return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000); }
+            if (!full) return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000);
             combos.push(arrangeBySelection(full));
           }
         }
-        // 遍历模式不做目标数量补跑，清掉可能残留的填充目标，避免队列跑完后又进入补跑循环
-        if (data.traverseMode) resetTraverseTarget();
+        zhuleLog('runGenerate: 遍历全组合', '遍历池=', traversePoolItems().map(p => p.tab),
+          '随机池=', randomPoolItems().map(p => p.tab),
+          '单轮组合数=', built.length, '次数(外层轮数)=', rounds, '总任务数=', combos.length);
+        // 顺序自检：打印单轮前 10 条组合的词条名，方便一眼核对是否按池内顺序推进
+        zhuleLog('runGenerate: 遍历顺序抽样', built.slice(0, 10).map(c => c.map(e => e.name || e.relPath).join(' + ')));
         runQueue = combos;
         runTotal = combos.length;
         runBusy = true;
-        if (data.traverseMode) {
-          const info = traverseInfo || { rounds: 1, oneRound: runTotal };
-          // 池名一律打出来：跑之前一眼看清哪个池被当成「穷举」、哪个被当成「随机」，
-          // 避免"我以为角色是 ∞ 实际却是 🎲"的误判（角色随机出图就是这里错了）。
-          const poolName = (p) => p.display || p.tab;
-          const tNames = traversePoolItems().map(poolName);
-          const rNames = randomPoolItems().map(poolName);
-          showToast('遍历模式｜穷举池 ∞：' + (tNames.join('、') || '（无）')
-            + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
-            + '｜单轮 ' + info.oneRound + ' 组合 × ' + info.rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
-        }
+        // 池名一律打出来：跑之前一眼看清哪个池被当成「穷举」、哪个被当成「随机」
+        const poolName = (p) => p.display || p.tab;
+        const tNames = traversePoolItems().map(poolName);
+        const rNames = randomPoolItems().map(poolName);
+        showToast('遍历｜穷举池 ∞：' + (tNames.join('、') || '（无）')
+          + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
+          + '｜单轮 ' + built.length + ' 组合 × ' + rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
         runNextInQueue();
         return;
       }
@@ -4739,12 +4682,17 @@ const submitAddTab = async () => {
           const [moved] = ordered.splice(from, 1);
           ordered.splice(to, 0, moved);
           // 按「层级+父节点id」隔离记录顺序，再把这层的 id 新顺序直接落库
-          const parentId = chipParentId(depth) || '';
+          const parentId = chipParentIdOf(depth) || '';
+          if (!parentId) {
+            // 这一行是多个父分类的子项合并显示的，顺序没有唯一归属 → 先让用户选中父分类
+            showToast('这一行混了多个父分类，先选中父分类再拖拽排序', 'warn', 2800);
+          } else {
           const orderedIds = ordered.map(c => String(c.id));
           chipOrder[data.activeTab] = { ...chipOrder[data.activeTab], [depth + '|' + parentId]: orderedIds };
           const ids = childLayerIds(data.activeTab, depth, parentId, orderedIds);
           if (ids.length) postSortOrder({ [String(parentId)]: ids }, '分类顺序已保存');
           else showToast('分类顺序已调整（未取到该层节点 id，仅本地生效）', 'warn', 2600);
+          }
         }
       }
       chipDrag = { depth: -1, id: null, overId: null };
@@ -4830,7 +4778,7 @@ const submitAddTab = async () => {
         sourceType: 'card',
         // tab 以卡片自带的为准（全库搜索结果里卡片可能不属于当前 activeTab）
         // _vgKey：变体组键，随已选项一起带走，标签三态与运行取变体都靠它回查变体池
-        item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _vgKey: file._vgKey || '' },
+        item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '' },
         noDrag: existIdx >= 0,
       };
       pDrag.pendingTime = performance.now();
@@ -4880,7 +4828,7 @@ const submitAddTab = async () => {
         document.body.classList.add('zhule-dragging');
         const ghost = document.createElement('div');
         ghost.className = 'drag-ghost';
-        ghost.textContent = p.item.name;
+        ghost.textContent = selDisplayName(p.item);
         document.body.appendChild(ghost);
         pDrag.ghostEl = ghost;
       }
@@ -4984,7 +4932,7 @@ const submitAddTab = async () => {
           else t = fromIdx < idx ? idx : idx + 1;
           data.selected.splice(t, 0, moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           const existIdx = data.selected.findIndex(s => sameCard(s, item));
           let targetIdx = idx;
           if (existIdx >= 0) {
@@ -5002,7 +4950,7 @@ const submitAddTab = async () => {
           const [moved] = data.selected.splice(p.sourceIdx, 1);
           data.selected.push(moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
+          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           if (data.selected.some(s => sameCard(s, item))) return;
           data.selected.push(item);
         }
@@ -5017,7 +4965,7 @@ const submitAddTab = async () => {
         const target = rel ? listFiles.value.find(x => x.relPath === rel && (!tabAttr || String(x.tab || '') === tabAttr)) : null;
         if (!target) return;
         const targetIdx = data.selected.findIndex(s => sameCard(s, target));
-        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '' };
+        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
         if (targetIdx >= 0) {
           data.selected.splice(targetIdx, 1, item);
         } else {
@@ -5037,7 +4985,7 @@ const submitAddTab = async () => {
         // 父级分类属性链随选区一起存快照：运行/预览都按它递归继承，历史选区也能自解释
         anc: file.anc || [],
         // 变体组键：标签三态与运行时取变体靠它回查变体池（非变体组为空串，逻辑全跳过）
-        _vgKey: file._vgKey || '',
+        _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '',
       });
     };
 
@@ -5139,15 +5087,15 @@ const submitAddTab = async () => {
       onCardNewVersion, onCardVgJoin, openNewVersionFor,
       // 并入变体组（提示词入口，单卡 / 多选共用）：弹框输总名，现名退到 # 后当变体名
       vgJoin, vgJoinPreview, vgJoinNames, openVgJoin, closeVgJoin, submitVgJoin,
-      // 名字两段显示「组名#短名」：库里只存短名，组名由渲染层沿祖先动态拼（搜索/标签/提示统一走全名）
-      vgShortName, fullNameOf, selDisplayName, vgGroupTitleOf, cardDisplayName, cardNamePrefix, editNamePrefix,
+      // 名字显示口径：标题只放这一版自己的名字（「默认」版放组名），组名单独作为卡片上方的标志
+      vgShortName, vgFullName, vgStripName, fullNameOf, selDisplayName, vgGroupTitleOf, cardDisplayName, cardGroupBadge, cardNamePrefix, editNamePrefix,
 
       vgRenameOpen, vgRenaming, vgRenameName, vgRenameCount, vgRenamePreview,
       openVgRename, closeVgRename, submitVgRename,
       toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
-      removeSelected, clearAll, toggleFillMode, toggleTraverseMode, singleRandom, runGenerate,
+      removeSelected, clearAll, singleRandom, runGenerate,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,

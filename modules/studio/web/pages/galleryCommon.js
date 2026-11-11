@@ -1613,13 +1613,21 @@ export function useGalleryCommon(opts = {}) {
       run: () => deleteDetailTag(t),
     });
   }
-  // 真正执行删除：只改这一张图的 PNG 元数据（提示词标签走 remove_prompt，自定义标签走 remove_custom）。
+  // 真正执行删除：只改这一张图的 PNG 元数据。
+  // 提示词标签一律走 remove_prompt_ids（词条 id）——同名节点（「默认」有 25 个）只删当前这一条；
+  // 无 id 的存量/自由文本标签才退回 remove_prompt（名字），后端遇到重名会拒绝按名删。
   async function deleteDetailTag(t) {
-    if (!t || !t.name) return;
+    if (!t) return;
     if (t.prompt) {
+      if (t.id != null && t.id !== '') {
+        await annotate({ remove_prompt_ids: [String(t.id)] });
+        return;
+      }
+      if (!t.name) return;
       await annotate({ remove_prompt: [t.name] });
       return;
     }
+    if (!t.name) return;
     // 自定义标签删除：优先 id（唯一标识）；无 id 的存量/自由文本标签退回完整路径，
     // 再退回叶子名（后端 remove_custom 兼容 id/路径/叶子名三种匹配，不查数据库）。
     const key = (t.id != null && t.id !== '') ? String(t.id) : (t.path || t.name);
@@ -1802,8 +1810,9 @@ export function useGalleryCommon(opts = {}) {
       });
       // 删除后本地移除必须按「id / 完整路径 / 叶子名」三态匹配：
       // 此前只比 x.name，而自定义标签传的是 id（或路径）→ 详情 chip 不消失，看起来像没删掉
-      const gone = ('remove_prompt' in payload || 'remove_custom' in payload)
-        ? new Set((payload.remove_prompt || []).concat(payload.remove_custom || [])) : null;
+      const gone = ('remove_prompt_ids' in payload || 'remove_prompt' in payload || 'remove_custom' in payload)
+        ? new Set((payload.remove_prompt_ids || []).map(String)
+          .concat(payload.remove_prompt || []).concat(payload.remove_custom || [])) : null;
       if ('tags' in payload) d.tags = mergeDetailTags(payload.tags);
       if (gone) {
         const isGone = (x) => {

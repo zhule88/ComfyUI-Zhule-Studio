@@ -56,6 +56,8 @@ _index = None  # 内存缓存：list[dict]
 _index_built_at = 0.0
 _index_rev = 0  # 索引变更版本号（build/get/load/删/增量 6 处 +1），get_tag_ref_index 据此失效重建
 _ref_cache = {"sig": None, "data": None}  # tag -> [zhule_img/ 相对路径] 反向索引缓存
+# prompt_id -> [zhule_img/ 相对路径] 精确反向索引缓存（同名不同节点必须互不串图）
+_ref_id_cache = {"sig": None, "data": None}
 
 
 def _gallery_root():
@@ -361,11 +363,11 @@ def get_index():
 
 
 def get_tag_ref_index():
-    """tag -> [带 zhule_img/ 前缀的相对 output 路径] 反向引用索引（词库参考图数据源）。
+    """tag 名 -> [带 zhule_img/ 前缀的相对 output 路径] 反向引用索引。
 
-    以内存 _index 为唯一事实源（写入点行级写库维护其正确性），一次遍历构建
-    {tag: [path, ...]} 并按 _index_rev 版本号失效重建，避免词库每卡片 O(N) 全扫。
-    索引不可用（缺失/损坏未重建）时返回空 dict。
+    **已不参与任何定位**：词库参考图一律走 get_ref_index_by_prompt_id()（词条 id 精确反查）。
+    本函数按展示名聚合，同名节点（「默认」有 25 个）会被合并成一堆，只能用于「按标签筛选」
+    这类展示统计场景；当前代码无调用者，保留仅为兼容外部引用与调试，**禁止**再接回参考图链路。
     """
     global _index_rev
     if _ref_cache["sig"] == _index_rev and _ref_cache["data"] is not None:
@@ -386,6 +388,41 @@ def get_tag_ref_index():
                     data.setdefault(t, []).append(path)
     _ref_cache["sig"] = _index_rev
     _ref_cache["data"] = data
+    return data
+
+
+def get_ref_index_by_prompt_id():
+    """prompt_id -> [带 zhule_img/ 前缀的相对 output 路径] 精确反向索引（词库参考图数据源）。
+
+    gallery_tag.prompt_id 是精确的词条 id，所以同一个名字（「默认」有十几个同名节点）
+    也绝不会互相串图。名字索引 get_tag_ref_index 只适合「按标签筛选」，
+    拿来填某一张卡片的参考图会把全库同名条目的图全吸过来（几百张），必须用这个。
+    """
+    global _index_rev
+    if _ref_id_cache["sig"] == _index_rev and _ref_id_cache["data"] is not None:
+        return _ref_id_cache["data"]
+    data = {}
+    try:
+        conn = db.connect()
+        try:
+            rows = conn.execute(
+                "SELECT gt.prompt_id AS pid, gi.name AS gname FROM gallery_tag gt "
+                "JOIN gallery_image gi ON gi.id = gt.gallery_id "
+                "WHERE gt.prompt_id IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+        for r in rows:
+            pid = r["pid"]
+            gname = r["gname"]
+            if pid is None or not gname:
+                continue
+            data.setdefault(int(pid), []).append("zhule_img/" + str(gname).replace(os.sep, "/"))
+    except Exception as e:
+        print("[ZhuleGallery] prompt_id 反查索引构建失败:", e)
+        data = {}
+    _ref_id_cache["sig"] = _index_rev
+    _ref_id_cache["data"] = data
     return data
 
 
@@ -751,23 +788,71 @@ def _custom_tag_path_index():
     return data
 
 
-def _remove_prompt_tags(cur, names):
-    """按展示名从提示词标签数组里删除条目。
+def _prompt_tag_raw_list(raw):
+    """原样解析 zhule_prompt_tags 的 JSON 数组（**保留元素形态**：新格式是 {"id","n"} 对象，
+    老数据是纯名字/纯 id）。
 
-    PNG 内提示词标签是词条 id，而前端删除时给的是展示名，故须把名字映射回 id 再比对
-    （直接按名字过滤会一个都删不掉）。同时兼容数组里残留的老名字。
+    删除写回必须用它：_json_list 会把元素展平成展示名，一写回就把 id 对象数组降级成名字
+    数组，同名词条随即失去 id 归属、再次按名字串图。
     """
-    rm = {n for n in (names or []) if n}
-    if not rm:
-        return [str(x).strip() for x in cur or [] if str(x).strip()]
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _tag_ref_one(x):
+    """单个标签元素 -> (id, name)，与 _parse_tag_refs 同口径。"""
+    if isinstance(x, dict):
+        tid = str(x.get("id") or "").strip()
+        nm = str(x.get("n") or x.get("name") or "").strip()
+        return (tid if tid.isdigit() else ""), nm
+    if isinstance(x, bool) or x is None:
+        return "", ""
+    if isinstance(x, (int, float)):
+        return str(int(x)), ""
+    s = str(x).strip()
+    return (s, "") if s.isdigit() else ("", s)
+
+
+def _remove_prompt_tags(cur, ids=None, names=None):
+    """从提示词标签数组里删除条目，**一律按词条 id 定位**。
+
+    cur 为原始元素数组（保留 dict 形态），元素经 _tag_ref_one 归一成 (id, name)：
+    ① 主路径 remove_prompt_ids：前端给词条 id，按 id 精确删 —— 同名节点（「默认」有 25 个、
+       id 各不相同）互不误伤；
+    ② names 仅作历史调用兜底：该名字在词库里**唯一**映射到一个 id 时才按 id 删；
+       重名（≥2 个 id）一律拒绝按名删，否则删一张图会连带删掉所有同名节点；
+    ③ 老格式纯名字残留元素（本身无 id）：按名字字符串删，对应词库查不到该名字时同样允许。
+    """
+    id_set = {str(i).strip() for i in (ids or [])
+              if str(i).strip().isdigit()}
+    nm_set = {str(n).strip() for n in (names or []) if str(n).strip()}
+    legacy_names = set()
+    if nm_set:
+        inv = {}
+        for tid, nm in (_tag_name_index() or {}).items():
+            if nm:
+                inv.setdefault(nm, set()).add(str(tid))
+        for n in nm_set:
+            got = inv.get(n) or set()
+            if len(got) == 1:
+                id_set |= got
+            elif not got:
+                # 词库里没有这个名字 → 只可能是老格式纯名字元素，按名删是安全的
+                legacy_names.add(n)
+            # len(got) > 1：重名歧义，拒绝按名删（宁可不删，也不误删同名词条）
     out = []
     for x in cur or []:
-        s = str(x).strip()
-        if not s or s in rm:
+        tid, nm = _tag_ref_one(x)
+        if tid and tid in id_set:
             continue
-        if s.isdigit() and _tag_name(s) in rm:
+        if not tid and nm and nm in legacy_names:
             continue
-        out.append(s)
+        out.append(x)
     return out
 
 
@@ -1885,7 +1970,11 @@ def _norm_tag_names(v):
 
 
 async def post_gallery_annotate(request):
-    """body: { path, tags?: [str], remove_prompt?: [str], remove_custom?: [str] } 打标/删标（写 PNG 元数据）。"""
+    """body: { path, tags?: [str], remove_prompt_ids?: [id], remove_prompt?: [str], remove_custom?: [str] } 打标/删标（写 PNG 元数据）。
+
+    删提示词标签走 remove_prompt_ids（词条 id）；remove_prompt（名字）只为兼容历史调用，
+    且重名时拒绝删除。
+    """
     try:
         body = await request.json()
     except Exception:
@@ -1937,13 +2026,22 @@ async def post_gallery_annotate(request):
                     kept.append(x)
         custom_cur = kept
         updates["zhule_custom_tags"] = json.dumps(custom_cur, ensure_ascii=False)
-    if body.get("remove_prompt") is not None:
-        names = _norm_tag_names(body.get("remove_prompt"))
-        if names is None:
-            return web.json_response({"error": "remove_prompt 必须是字符串数组"}, status=400)
-        cur = _json_list(texts.get("zhule_prompt_tags"), "zhule_prompt_tags")
+    if body.get("remove_prompt_ids") is not None or body.get("remove_prompt") is not None:
+        # 主路径 remove_prompt_ids：前端直接给词条 id（同名节点互不误伤）
+        ids = body.get("remove_prompt_ids")
+        if ids is not None:
+            if not isinstance(ids, list):
+                return web.json_response({"error": "remove_prompt_ids 必须是数组"}, status=400)
+            ids = [str(x).strip() for x in ids if str(x).strip().isdigit()]
+        # 兜底 remove_prompt（名字）：仅历史调用，重名一律不删
+        names = None
+        if body.get("remove_prompt") is not None:
+            names = _norm_tag_names(body.get("remove_prompt"))
+            if names is None:
+                return web.json_response({"error": "remove_prompt 必须是字符串数组"}, status=400)
+        cur = _prompt_tag_raw_list(texts.get("zhule_prompt_tags"))
         updates["zhule_prompt_tags"] = json.dumps(
-            _remove_prompt_tags(cur, names), ensure_ascii=False)
+            _remove_prompt_tags(cur, ids, names), ensure_ascii=False)
     if not updates:
         return web.json_response({"error": "没有可更新字段"}, status=400)
 
@@ -2358,9 +2456,9 @@ def _make_record(rel, full):
 def _write_index_cache():
     """全量写回 zhule.db 图库表（gallery_image / gallery_tag）。
 
-    内存内部格式（tags 为 name 字符串数组 + tagIds）直接交给 DB 层：
-    prompt 类标签按词库显示名反查 id 落 prompt_id 外键；custom 类标签按
-    custom_tag 字典反查/插入落 custom_id 外键。
+    内存内部格式（rec["promptIds"] 为词条 id 数组）直接交给 DB 层：
+    prompt 类标签**按词条 id 直落 prompt_id 外键**（不做名字反查，改名/移动不脱钩）；
+    custom 类标签按 custom_tag 字典反查/插入落 custom_id 外键。
     """
     try:
         return db.gallery_save_records(_index)
