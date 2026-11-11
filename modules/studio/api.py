@@ -279,10 +279,10 @@ def _cards_from_tree(tree):
         child_anc = tuple(anc) + ((my_attr,) if my_attr["provide"] else ())
 
         def _chip_fields(end):
-            """chips / chipKeys / chipIds：只取分类节点，版本组（entry）这一层不算分类层级。
+            """chips / chipKeys / chipIds：只取分类节点，变体组（entry）这一层不算分类层级。
 
-            版本组的组名不入 chips —— 组卡片合并后统一用组头那张的分类链，
-            子版本若把组名也算成一级，左栏就会多出一行并不存在的假分类。
+            变体组的组名不入 chips —— 组卡片合并后统一用组头那张的分类链，
+            子变体若把组名也算成一级，左栏就会多出一行并不存在的假分类。
             """
             sp, si, sk = parts[1:end], ids[1:end], kinds[1:end]
             cp = [p for p, t in zip(sp, sk) if t != "entry"]
@@ -465,7 +465,7 @@ async def post_rename(request):
     if node is None:
         return web.json_response({"error": "节点不存在"}, status=404)
     nid = int(node["id"])
-    # 名字只存短名：版本条目的「组名#」前缀不再入库，由渲染层按祖先链动态拼接，
+    # 名字只存短名：变体条目的「组名#」前缀不再入库，由渲染层按祖先链动态拼接，
     # 因此这里既不剥前缀、也不回写前缀，用户输入什么就是什么（同级重名仍要拦）。
     if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response(
@@ -538,18 +538,18 @@ def _unique_child_name(parent_id, want, exclude_id=None):
 
 
 async def post_wordbank_convert(request):
-    """分类 ⇄ 版本组 互转：两者本质同构，只差 type 一个位。
+    """分类 ⇄ 变体组 互转：两者本质同构，只差 type 一个位。
 
-    新模型里没有额外的版本标记位：
+    新模型里没有额外的变体标记位：
       - 分类 = type='category'，子节点各自独立成卡，名字不加任何前缀；
-      - 版本组 = type='entry' 且有子节点，它自己就是组名，子节点是它的各版本。
+      - 变体组 = type='entry' 且有子节点，它自己就是组名，子节点是它的各变体。
     因此互转只需改 type 一位，名字原样不动（组名前缀由前端按祖先链动态拼，不入库）。
 
     body {id, to}：
-      to="vg"（分类 → 版本）：末级分类聚拢成版本组 —— type 改成 entry，分类名即组名，
-        分类自身的 en/cn/neg 变成组级共有描述（沿 parent_id 下传），子词条原样充当各版本。
-      to="category"（版本 → 分类）：版本组拆成正经分类 —— type 改回 category，组名当分类名，
-        原组头内容变成分类级描述，各版本子条目平铺成该分类下的独立卡片。
+      to="vg"（分类 → 变体）：末级分类聚拢成变体组 —— type 改成 entry，分类名即组名，
+        分类自身的 en/cn/neg 变成组级共有描述（沿 parent_id 下传），子词条原样充当各变体。
+      to="category"（变体 → 分类）：变体组拆成正经分类 —— type 改回 category，组名当分类名，
+        原组头内容变成分类级描述，各变体子条目平铺成该分类下的独立卡片。
 
     两边都拦同级重名：互转后若与同级同类节点撞名，树里会出现两个同名入口，得先改名。
     """
@@ -578,14 +578,14 @@ async def post_wordbank_convert(request):
 
     if to == "category":
         if ntype != "entry":
-            return web.json_response({"error": "只有版本卡（提示词）才能转成分类"}, status=400)
+            return web.json_response({"error": "只有变体卡（提示词）才能转成分类"}, status=400)
         kids = db.direct_children(nid)
         if any(str(k["type"]) == "category" for k in kids):
             return web.json_response(
-                {"error": "该版本组下还挂着分类，先把子分类挪出去再转"}, status=400)
+                {"error": "该变体组下还挂着分类，先把子分类挪出去再转"}, status=400)
         if not kids:
             return web.json_response(
-                {"error": "该提示词下没有版本，转成分类只会得到一个空分类"}, status=400)
+                {"error": "该提示词下没有变体，转成分类只会得到一个空分类"}, status=400)
         if not db.set_type(nid, "category"):
             return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
         return web.json_response({"ok": True, "to": "category", "id": str(nid),
@@ -593,14 +593,14 @@ async def post_wordbank_convert(request):
 
     # to == "vg"
     if ntype != "category":
-        return web.json_response({"error": "只有分类才能聚拢成版本组"}, status=400)
+        return web.json_response({"error": "只有分类才能聚拢成变体组"}, status=400)
     if db.has_child_category(nid):
         return web.json_response(
-            {"error": "该分类下还有子分类，只有末级分类才能聚拢成版本组"}, status=400)
+            {"error": "该分类下还有子分类，只有末级分类才能聚拢成变体组"}, status=400)
     kids = [k for k in db.direct_children(nid) if str(k["type"]) == "entry"]
     if not kids:
         return web.json_response(
-            {"error": "该分类下还没有词条，聚拢成版本组会变成一个没有任何版本的组"}, status=400)
+            {"error": "该分类下还没有词条，聚拢成变体组会变成一个没有任何变体的组"}, status=400)
     if not db.set_type(nid, "entry"):
         return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
     return web.json_response({"ok": True, "to": "vg", "id": str(nid),
@@ -608,13 +608,13 @@ async def post_wordbank_convert(request):
 
 
 async def post_wordbank_vg_join(request):
-    """把若干提示词并入同一个版本组：body { ids:[...], name:"组名" }。
+    """把若干提示词并入同一个变体组：body { ids:[...], name:"组名" }。
 
-    「版本组」在新模型里就是一棵两层 entry 树：外层 entry 自己就是组名，子 entry 是各版本，
+    「变体组」在新模型里就是一棵两层 entry 树：外层 entry 自己就是组名，子 entry 是各变体，
     名字只存短名（组名前缀由渲染层动态拼）。所以并入流程只剩三件事：
-    - 组名由用户在弹框里现输，选中的第一张（已是版本组的优先）改名成组名，当组头；
+    - 组名由用户在弹框里现输，选中的第一张（已是变体组的优先）改名成组名，当组头；
     - 其余卡片 parent_id 改挂到组头下面，名字原样保留（同父重名则自动追加序号）；
-    - 组头自己的提示词内容原样留在组头上，它是组级共有描述，沿 parent_id 下传给各版本。
+    - 组头自己的提示词内容原样留在组头上，它是组级共有描述，沿 parent_id 下传给各变体。
     """
     try:
         body = await request.json()
@@ -647,9 +647,9 @@ async def post_wordbank_vg_join(request):
             return web.json_response({"error": "有提示词已被删除，刷新后再试"}, status=404)
         if str(n.get("type") or "") != "entry":
             return web.json_response(
-                {"error": "只有提示词卡片才能并入版本组；分类请用分类右键的「聚拢成版本卡」"}, status=400)
+                {"error": "只有提示词卡片才能并入变体组；分类请用分类右键的「聚拢成变体卡」"}, status=400)
         nodes.append(n)
-    # 组头优先取已经是版本组的那张（它的子版本要一起并到新组里），否则取第一张
+    # 组头优先取已经是变体组的那张（它的子变体要一起并到新组里），否则取第一张
     anchor = next((n for n in nodes if db.direct_children(int(n["id"]))), nodes[0])
     aid = int(anchor["id"])
     a_parent = db.get_parent_id(aid)
@@ -657,7 +657,7 @@ async def post_wordbank_vg_join(request):
     for n in members:
         if db.direct_children(int(n["id"])):
             return web.json_response(
-                {"error": "选中的卡片里还有版本组：" + str(n.get("name") or "")
+                {"error": "选中的卡片里还有变体组：" + str(n.get("name") or "")
                           + "，请拆开再并入"}, status=400)
     # 环检测：被并入的卡若正好是组头的祖先，挂过去会把组头自己拖进自己的子树里
     up = a_parent
@@ -796,17 +796,17 @@ async def post_wordbank_card_create(request):
         name = stem
     pnode = db.node_by_id(parent_id)
     # 父节点两种都合法：普通分类（type=category），或词条节点（entry）——entry 一旦有子词条，
-    # 它就是「版本组」，新建出来的卡片即它的又一个版本（名字只存短名，组名前缀由渲染层动态拼）。
+    # 它就是「变体组」，新建出来的卡片即它的又一个变体（名字只存短名，组名前缀由渲染层动态拼）。
     if pnode is None or str(pnode.get("type") or "") not in ("category", "entry"):
         return web.json_response({"error": "父分类不存在"}, status=404)
     pid = int(pnode["id"])
-    # 版本组不支持再嵌套版本组：父若是某个版本组里的版本，新建出来的卡会变成三层，
+    # 变体组不支持再嵌套变体组：父若是某个变体组里的变体，新建出来的卡会变成三层，
     # 前端翻页逻辑只认两层，直接拦掉比事后整理干净。
     if str(pnode.get("type") or "") == "entry" and pnode.get("parent_id"):
         gparent = db.node_by_id(pnode.get("parent_id"))
         if gparent is not None and str(gparent.get("type") or "") == "entry":
             return web.json_response(
-                {"error": "版本不能再用作版本组的容器，请换到分类下新建"}, status=400)
+                {"error": "变体不能再用作变体组的容器，请换到分类下新建"}, status=400)
     if INVALID_NAME.search(name):
         return web.json_response(
             {"error": '名字含非法字符（不能包含 \\ / : * ? " < > |）'}, status=400)

@@ -513,8 +513,8 @@ const App = {
       } catch (e) { console.warn('zhule: 设置页写词库偏好失败:', e); }
       window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: { searchByPath: v } }));
     }
-    // 词库设置「隐藏版本切换框」：默认关闭。开启后版本组卡片右上角不再显示「‹ 1/3 ›」，
-    // 卡面与参考图翻页条不再抢位；版本切换改走卡片右键「版本胶片条」。存储与下发方式同上。
+    // 词库设置「隐藏变体切换框」：默认关闭。开启后变体组卡片右上角不再显示「‹ 1/3 ›」，
+    // 卡面与参考图翻页条不再抢位；变体切换改走卡片右键「变体胶片条」。存储与下发方式同上。
     const wordbankHideVgNav = ref(readWordbankHideVgNav());
     function readWordbankHideVgNav() {
       try {
@@ -909,13 +909,13 @@ const App = {
                 </div>
                 <div class="settings-hint">关闭时搜索只匹配词条名；开启后词条名或所在分类路径（含 tab 与各级分类）任一命中即算命中。</div>
                 <div class="settings-row">
-                  <span class="settings-label">隐藏版本切换框</span>
+                  <span class="settings-label">隐藏变体切换框</span>
                   <label class="settings-switch">
                     <input type="checkbox" :checked="wordbankHideVgNav" @change="toggleWordbankHideVgNav">
                     <span class="settings-switch-slider"></span>
                   </label>
                 </div>
-                <div class="settings-hint">开启后版本组卡片不再显示右上角「‹ 序号/总数 ›」翻页框，避免与参考图翻页条挤在一起；版本切换改在卡片上右键，用版本胶片条切换。</div>
+                <div class="settings-hint">开启后变体组卡片不再显示右上角「‹ 序号/总数 ›」翻页框，避免与参考图翻页条挤在一起；变体切换改在卡片上右键，用变体胶片条切换。</div>
                 </div>
               </div>
             </template>

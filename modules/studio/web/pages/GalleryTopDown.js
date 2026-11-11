@@ -17,7 +17,7 @@ export default {
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              :data-tip="'快捷导出选中的图片：硬链接 = 给原图建分身入口，不复制图片数据、几乎不占额外空间（需与图库同一磁盘分区），按当前命名设置直接导出；自定义分层里有标签失效时会弹框让你先修。当前目录：' + (pref.gallery.link.dir || 'output/zhule_studio/zhule_link')" @click="batchLink">
+              :data-tip="'快捷导出选中的图片：硬链接给原图建分身入口，不复制图片数据、几乎不占额外空间'" @click="batchLink">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path></svg>
       </button>
       <!-- 设置页可关掉这个入口（hideGear）：别人用图库时不必看到「自定义分层」；

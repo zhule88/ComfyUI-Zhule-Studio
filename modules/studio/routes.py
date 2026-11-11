@@ -22,9 +22,9 @@ def register_routes():
     routes.post("/zhule_studio/api/rename")(api.post_rename)
     routes.post("/zhule_studio/api/wordbank/delete")(api.post_wordbank_delete)
     routes.post("/zhule_studio/api/wordbank/mute")(api.post_wordbank_mute)
-    # 提示词（单个 / 多选）右键「并入版本组」：弹框输组名，一次性把选的卡固化成同组多版本
+    # 提示词（单个 / 多选）右键「并入变体组」：弹框输组名，一次性把选的卡固化成同组多变体
     routes.post("/zhule_studio/api/wordbank/vg-join")(api.post_wordbank_vg_join)
-    # 分类 ⇄ 版本组 互转（两者本质同构，只差 type 一位）：版本卡拆回分类 / 末级分类聚拢成版本卡
+    # 分类 ⇄ 变体组 互转（两者本质同构，只差 type 一位）：变体卡拆回分类 / 末级分类聚拢成变体卡
     routes.post("/zhule_studio/api/wordbank/convert")(api.post_wordbank_convert)
     routes.post("/zhule_studio/api/wordbank/tab")(api.post_wordbank_tab_create)
     routes.post("/zhule_studio/api/wordbank/chip")(api.post_wordbank_chip_create)
