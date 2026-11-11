@@ -53,17 +53,6 @@ NUMBER_PREFIX = re.compile(r"^(\d+)[_ ]+(.+)$")
 NUMBER_SEP = re.compile(r"^\d+([_ ])")
 INVALID_NAME = re.compile(r'[\\/:*?"<>|]')
 
-def _vg_prefix_of(name):
-    """版本组锚点（组头）的「组名」部分。
-
-    卡片级锚点自己的名字也是「组名#版本名」两段（它既是组头、又是组里的一版），
-    所以取前缀必须先拆 # 再回退：拆出前缀就用前缀，没 # 就整串当组名（分类级老形态）。
-    直接拿锚点全名当前缀会把「组名#默认#新版本」这种套娃名字写进库。
-    """
-    head, _tail = db.split_vg_name(name)
-    return (head or str(name or "")).strip()
-
-
 MAIN_FILE = "prompt.txt"
 CN_FILE = "prompt_cn.txt"
 IMAGES_FILE = "images.txt"
@@ -262,7 +251,7 @@ def _cards_from_tree(tree):
     tabs = []
     data = {}
 
-    def collect(node, parts, ids, out, anc=()):
+    def collect(node, parts, ids, out, anc=(), kinds=()):
         """按原 _folder_card/_txt_card 公式还原卡片字段。
 
         parts = 从 Tab 根到当前节点父级的原始目录名列表（不含当前节点）。
@@ -275,6 +264,7 @@ def _cards_from_tree(tree):
         raw = _node_raw_name(node)
         children = node.get("children") or []
         nid = str(node.get("id") or "")
+        ntype = str(node.get("type") or "")
         my_attr = {
             "id": nid,
             "name": node.get("name") or "",
@@ -287,7 +277,20 @@ def _cards_from_tree(tree):
         }
         # 下钻时带下去的继承链：只有 provide 的节点才把自己的属性加进链里
         child_anc = tuple(anc) + ((my_attr,) if my_attr["provide"] else ())
-        if node.get("type") == "entry":
+
+        def _chip_fields(end):
+            """chips / chipKeys / chipIds：只取分类节点，版本组（entry）这一层不算分类层级。
+
+            版本组的组名不入 chips —— 组卡片合并后统一用组头那张的分类链，
+            子版本若把组名也算成一级，左栏就会多出一行并不存在的假分类。
+            """
+            sp, si, sk = parts[1:end], ids[1:end], kinds[1:end]
+            cp = [p for p, t in zip(sp, sk) if t != "entry"]
+            ci = [i for i, t in zip(si, sk) if t != "entry"]
+            return ([parse_folder(p)[1] for p in cp],
+                    _chip_keys(([parts[0]] + cp) if parts else []),
+                    ci)
+        if ntype == "entry":
             rel = "/".join(parts + [raw]) if parts else raw
             if raw.lower().endswith(".txt"):
                 # 散 txt 卡片：卡片层 = parts 中显示名与 txt stem 相同的层（原 _txt_card 逻辑）
@@ -299,15 +302,16 @@ def _cards_from_tree(tree):
                         entry_idx = i
                         break
                 end = entry_idx if entry_idx > 0 else len(parts) - 1
+                _chips, _ck, _ci = _chip_fields(end)
                 out.append({
                     "name": stem_disp,
                     "id": node.get("id") or "",
                     "number": parse_folder(stem)[0],
                     "rawName": raw,
                     "relPath": rel,
-                    "chips": [parse_folder(p)[1] for p in parts[1:end]],
-                    "chipKeys": _chip_keys(parts, end=end),
-                    "chipIds": ids[1:end],
+                    "chips": _chips,
+                    "chipKeys": _ck,
+                    "chipIds": _ci,
                     "content": node.get("en") or "",
                     "content_cn": "",
                     "neg": node.get("neg") or "",
@@ -316,23 +320,20 @@ def _cards_from_tree(tree):
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
-                    # 1 = 本卡片自己是「版本组锚点」（卡片级空壳）：卡面只挂组名、不出词，
-                    # 其下子条目是平等版本，各自写完整提示词，互不继承
-                    "vg": 1 if node.get("vg") else 0,
                 })
             else:
                 # 文件夹卡片（DB 中统一为 entry 节点）
                 # parts 不含卡片层，end=len(parts) 等价于原公式中的 len(parts)-1
-                end = len(parts)
+                _chips, _ck, _ci = _chip_fields(len(parts))
                 out.append({
                     "name": parse_folder(raw)[1],
                     "id": node.get("id") or "",
                     "number": parse_folder(raw)[0],
                     "rawName": raw,
                     "relPath": rel,
-                    "chips": [parse_folder(p)[1] for p in parts[1:end]],
-                    "chipKeys": _chip_keys(parts, end=end),
-                    "chipIds": ids[1:end],
+                    "chips": _chips,
+                    "chipKeys": _ck,
+                    "chipIds": _ci,
                     "content": node.get("en") or "",
                     "content_cn": node.get("cn") or "",
                     "neg": node.get("neg") or "",
@@ -341,17 +342,16 @@ def _cards_from_tree(tree):
                     "images": _card_images(node),
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
-                    # 1 = 本卡片自己是「版本组锚点」（卡片级空壳）：卡面只挂组名、不出词，
-                    # 其下子条目是平等版本，各自写完整提示词，互不继承
-                    "vg": 1 if node.get("vg") else 0,
                 })
             # entry 带 children（含 prompt.txt 仍下钻，如 01_嘴部）：继续递归
             if children:
                 for child in children:
-                    collect(child, parts + [raw], ids + [nid], out, child_anc)
+                    collect(child, parts + [raw], ids + [nid], out, child_anc,
+                            kinds + (ntype,))
             return
         for child in children:
-            collect(child, parts + [raw], ids + [nid], out, child_anc)
+            collect(child, parts + [raw], ids + [nid], out, child_anc,
+                    kinds + (ntype,))
 
     for tab_node in tree:
         cards = []
@@ -398,8 +398,6 @@ def _nodes_index(tree):
                 "override": n.get("override") or "",
                 # 1 = 本节点属性可向下继承（编辑分类弹层里的「向下继承」开关）
                 "provide": 1 if n.get("provide") else 0,
-                # 1 = 本分类是「版本组」：其下多条词条是同一提示词的多版本，前端合并成 1 张卡
-                "vg": 1 if n.get("vg") else 0,
             }
             walk(n.get("children"))
     walk(tree)
@@ -467,41 +465,15 @@ async def post_rename(request):
     if node is None:
         return web.json_response({"error": "节点不存在"}, status=404)
     nid = int(node["id"])
-    # 版本条目（挂在版本组锚点下面）：「组名#版本名」的前半段由锚点强制管理，用户只能改 # 后面那段。
-    # 前端可能带着全名提交（编辑弹层回填的就是全名），这里统一剥掉前缀、按锚点当前名字重拼，
-    # 保证前缀永远等于锚点名，不会因为手改而和组名脱节。
-    parent = db.node_by_id(node.get("parent_id")) if node.get("parent_id") else None
-    is_vg_parent = bool(parent and parent.get("vg"))
-    is_vg_anchor_parent = bool(is_vg_parent and str(parent.get("type") or "") == "entry")
-    # 前缀只取锚点名的「组名」段：卡片级锚点自己的名字也是「组名#版本名」，
-    # 直接拿全名当前缀会拼出「组名#默认#新版本」这种套娃名字。
-    pre = _vg_prefix_of(parent.get("name")) if is_vg_parent else ""
-    tail = ""
-    if pre and (is_vg_anchor_parent or name.startswith(pre + db.VG_SEP)):
-        _, tail = db.split_vg_name(name)
-        tail = (tail or name.lstrip("#")).strip()
-    # 锚点自身（卡片级）：它名字里也带「组名#版本名」，用户在这里输入的其实是新组名，
-    # # 后面那段的版本名要原样保留，否则改一次组名，这颗卡的版本名就被吃掉了。
-    self_tail = ""
-    if bool(node.get("vg")) and str(node.get("type") or "") == "entry" and not pre:
-        old_head, old_tail = db.split_vg_name(str(node.get("name") or ""))
-        if old_head and old_tail and db.VG_SEP not in name:
-            self_tail = old_tail
-    # 非法字符校验同样只看用户输入的版本名那一段：锚点名自带的中文标点（如 /）不参与校验，
-    # 否则编辑一个干净版本名也会被锚点前缀连累成「名字含非法字符」。
-    check_name = tail if tail else name
-    if INVALID_NAME.search(check_name) or check_name.startswith("."):
+    # 名字只存短名：版本条目的「组名#」前缀不再入库，由渲染层按祖先链动态拼接，
+    # 因此这里既不剥前缀、也不回写前缀，用户输入什么就是什么（同级重名仍要拦）。
+    if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response(
             {"error": '名字含非法字符（不能包含 \\ / : * ? " < > |）'}, status=400)
-    if pre and tail:
-        name = pre + db.VG_SEP + tail
-    elif self_tail:
-        name = name.strip() + db.VG_SEP + self_tail
     dup = db.sibling_dup(db.get_parent_id(nid), name, exclude_id=nid)
     if dup is not None and dup != name:
         kind = "分类" if node.get("type") != "entry" else "词条"
         return web.json_response({"error": kind + "已存在: " + dup}, status=409)
-    old_name = str(node.get("name") or "")
     content = body.get("content")
     content_cn = body.get("content_cn")
     neg = body.get("neg")
@@ -518,14 +490,8 @@ async def post_rename(request):
     )
     if not ok:
         return web.json_response({"error": "更新失败"}, status=500)
-    # 锚点（版本组组长）改名 → 名下所有版本条目的「组名#」前缀整组刷新，
-    # 组名就是前缀，二者必须永远同步，否则卡片标题、搜索、导出会各说各话。
-    # 注意新旧前缀都只取「组名」段：卡片级锚点自己的名字是「组名#版本名」，
-    # 拿整串去 LIKE 匹配「组名#%」一条都命中不了，级联就会静默失效。
-    renamed = 0
-    if bool(node.get("vg")) and name != old_name:
-        renamed = db.cascade_vg_prefix(nid, _vg_prefix_of(old_name), _vg_prefix_of(name))
-    return web.json_response({"ok": True, "name": name, "cascade": renamed})
+    # 组名就是锚点自己的名字，改名即改组名；子条目只存短名，无需级联刷新。
+    return web.json_response({"ok": True, "name": name})
 
 async def post_wordbank_mute(request):
     """静音（mute）开关（DB 版）：按节点 id 写 prompt.mute，词条与分类通用。
@@ -556,51 +522,10 @@ async def post_wordbank_mute(request):
     return web.json_response({"ok": True, "id": node["id"], "mute": 1 if mute else 0})
 
 
-async def post_wordbank_vg(request):
-    """版本组（vg）开关（DB 版）：按节点 id 写 prompt.vg。
-
-    vg=1：该节点下的多条词条视为同一提示词的不同版本，前端把整组合并成 1 张卡，
-    卡片内翻页（默认）/ 右键呼出胶片条 / 已选标签切随机·遍历，三种用法同时可用。
-    vg=0：拆回原样，每条词条各占一张卡（默认行为，老数据零影响）。
-
-    两种承载层级都允许：
-    - 分类节点（老形态）：整个分类的词条是同一提示词的多版本；
-    - 卡片节点（新形态，推荐）：卡片自己是组头，卡面放共有描述，下面挂版本子项，
-      共有描述沿 parent_id 强制下传给每个版本（关系固定，不做可关的 provide 开关）。
-    顶层 Tab 不参与。
-
-    入参 {id, vg?}：vg 缺省时按当前值取反（前端右键一键切换用）。
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "JSON 解析失败"}, status=400)
-    raw_id = str(body.get("id") or "").strip()
-    if not raw_id:
-        return web.json_response({"error": "缺少 id"}, status=400)
-    node = db.node_by_id(raw_id)
-    if node is None:
-        return web.json_response({"error": "节点不存在"}, status=404)
-    if not node.get("parent_id"):
-        return web.json_response({"error": "版本组不能标在顶层 Tab 上"}, status=400)
-    # 分类级版本组只允许落在「末级分类」上：分类下若还有子分类，把它标成版本组等于把整棵
-    # 子树的词条都压进一张卡，既不符合「一分类=同意图的多版本」语义，也会让子分类失去独立入口。
-    if str(node.get("type") or "") == "category" and db.has_child_category(int(node["id"])):
-        return web.json_response(
-            {"error": "该分类下还有子分类，只有末级分类才能标为版本组"}, status=400)
-    if "vg" in body:
-        vg = bool(body.get("vg"))
-    else:
-        vg = not bool(node.get("vg"))
-    if not db.set_vg(int(node["id"]), vg):
-        return web.json_response({"error": "设置失败"}, status=500)
-    return web.json_response({"ok": True, "id": node["id"], "vg": 1 if vg else 0})
-
-
 def _unique_child_name(parent_id, want, exclude_id=None):
     """同父下重名就追加序号。
 
-    分类 ⇄ 版本组互转时要成批给条目摘/补「组名#」前缀，摘完可能撞上同父下已有的同名卡，
+    并发入组、转分类等批量改名场景摘完前缀可能撞上同父下已有的同名卡，
     这时候不能顶掉别人，也不能静默吞掉，给个「名字 2」让人一眼看出是新落的那条。
     """
     name = str(want or "").strip() or "默认"
@@ -613,19 +538,20 @@ def _unique_child_name(parent_id, want, exclude_id=None):
 
 
 async def post_wordbank_convert(request):
-    """分类 ⇄ 版本组 互转：两者本质同构，只差 type（category / entry）与 vg 两个位。
+    """分类 ⇄ 版本组 互转：两者本质同构，只差 type 一个位。
+
+    新模型里没有额外的版本标记位：
+      - 分类 = type='category'，子节点各自独立成卡，名字不加任何前缀；
+      - 版本组 = type='entry' 且有子节点，它自己就是组名，子节点是它的各版本。
+    因此互转只需改 type 一位，名字原样不动（组名前缀由前端按祖先链动态拼，不入库）。
 
     body {id, to}：
-      to="category"（版本 → 分类）：卡片级版本组（entry + vg=1，组头卡下挂各版本）拆成正经分类 ——
-        type 改回 category、vg 清零，组名当分类名，组内各版本名字摘掉「组名#」前缀，
-        平铺成该分类下的多张普通卡片；组头自己若有词条内容，先落成一条子条目再让它当分类，
-        内容不丢。
-      to="vg"（分类 → 版本）：末级分类聚拢成卡片级版本组 —— type 改成 entry、vg 置 1，
-        分类名当组名（分类自身带内容时，它自己就是组里第一版「组名#默认」；内容全空则当空壳组头），
-        组内每条词条名字补上「组名#」前缀，整类收成一张可翻页的多版本卡。
+      to="vg"（分类 → 版本）：末级分类聚拢成版本组 —— type 改成 entry，分类名即组名，
+        分类自身的 en/cn/neg 变成组级共有描述（沿 parent_id 下传），子词条原样充当各版本。
+      to="category"（版本 → 分类）：版本组拆成正经分类 —— type 改回 category，组名当分类名，
+        原组头内容变成分类级描述，各版本子条目平铺成该分类下的独立卡片。
 
-    两种形态的组名口径都由锚点名字前半段（# 前）决定，因此前缀必须由后端统一摘/补，
-    前端只负责点菜单。
+    两边都拦同级重名：互转后若与同级同类节点撞名，树里会出现两个同名入口，得先改名。
     """
     try:
         body = await request.json()
@@ -643,103 +569,52 @@ async def post_wordbank_convert(request):
     nid = int(node["id"])
     ntype = str(node.get("type") or "")
     parent_id = node.get("parent_id")
+    name = str(node.get("name") or "").strip()
+    if parent_id is None:
+        return web.json_response({"error": "顶层大类不能互转"}, status=400)
+    if db.sibling_dup(parent_id, name, exclude_id=nid) is not None:
+        return web.json_response(
+            {"error": "同级已有同名节点，先改名再转换"}, status=409)
 
     if to == "category":
-        # 只有「卡片级」版本组（entry + vg）能转分类：分类级版本组的锚点本来就是分类
-        if ntype != "entry" or not node.get("vg"):
-            return web.json_response(
-                {"error": "只有卡片级版本组（版本卡）才能转成分类"}, status=400)
-        if parent_id is None:
-            return web.json_response({"error": "顶层节点不能转成分类"}, status=400)
+        if ntype != "entry":
+            return web.json_response({"error": "只有版本卡（提示词）才能转成分类"}, status=400)
         kids = db.direct_children(nid)
         if any(str(k["type"]) == "category" for k in kids):
             return web.json_response(
                 {"error": "该版本组下还挂着分类，先把子分类挪出去再转"}, status=400)
-        old_group = _vg_prefix_of(node["name"])
-        own_tail = db.split_vg_name(node["name"])[1].strip()
-        own_en = str(node.get("en") or "").strip()
-        own_cn = str(node.get("cn") or "").strip()
-        own_neg = str(node.get("neg") or "").strip()
-        has_own = bool(own_en or own_cn or own_neg)
-        cat_name = _unique_child_name(parent_id, old_group or node["name"] or own_tail,
-                                      exclude_id=nid)
-        # 先换招牌（type=category）再清内容：组头内容不能随类型一起蒸发，有内容就落成第一条子条目
+        if not kids:
+            return web.json_response(
+                {"error": "该提示词下没有版本，转成分类只会得到一个空分类"}, status=400)
         if not db.set_type(nid, "category"):
             return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
-        if not db.update_node(nid, name=cat_name, en="", cn="", neg="", vg=0):
-            return web.json_response({"error": "转换失败：节点写入失败"}, status=500)
-        self_kid = 0
-        if has_own:
-            vname = _unique_child_name(nid, own_tail or "默认")
-            new_id, ok = db.insert_node(nid, "entry", vname, en=own_en, cn=own_cn)
-            if not ok:
-                return web.json_response(
-                    {"error": "已转为分类，但组头内容落成词条失败，请手动补一条「%s」" % vname},
-                    status=500)
-            if own_neg:
-                db.update_node(new_id, neg=own_neg)
-            self_kid = 1
-        moved = 0
-        for k in kids:
-            if str(k["type"]) != "entry":
-                continue
-            head, tail = db.split_vg_name(k["name"])
-            if head != old_group:
-                continue          # 不属于本组前缀的条目原样不动
-            want = _unique_child_name(nid, tail or head, exclude_id=k["id"])
-            if want != k["name"] and db.update_node(k["id"], name=want):
-                moved += 1
         return web.json_response({"ok": True, "to": "category", "id": str(nid),
-                                  "name": cat_name, "moved": moved, "self_kept": self_kid})
+                                  "name": name, "children": len(kids)})
 
     # to == "vg"
     if ntype != "category":
         return web.json_response({"error": "只有分类才能聚拢成版本组"}, status=400)
-    if parent_id is None:
-        return web.json_response({"error": "顶层大类不能聚拢成版本组"}, status=400)
     if db.has_child_category(nid):
         return web.json_response(
             {"error": "该分类下还有子分类，只有末级分类才能聚拢成版本组"}, status=400)
-    group = str(node.get("name") or "").strip()
-    if not group:
-        return web.json_response({"error": "该分类没有名字，先给它起个名字"}, status=400)
     kids = [k for k in db.direct_children(nid) if str(k["type"]) == "entry"]
-    own_has = bool(str(node.get("en") or "").strip()
-                   or str(node.get("cn") or "").strip()
-                   or str(node.get("neg") or "").strip())
-    if not kids and not own_has:
+    if not kids:
         return web.json_response(
             {"error": "该分类下还没有词条，聚拢成版本组会变成一个没有任何版本的组"}, status=400)
-    # 分类自己带内容 → 它就是组里第一版「组名#默认」；内容全空 → 纯组名当空壳组头
-    anchor_name = _unique_child_name(
-        parent_id, (group + db.VG_SEP + "默认") if own_has else group, exclude_id=nid)
     if not db.set_type(nid, "entry"):
         return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
-    if not db.update_node(nid, name=anchor_name, vg=1):
-        return web.json_response({"error": "转换失败：节点写入失败"}, status=500)
-    # 组名若因撞名加了序号，条目前缀要跟最终锚点名的组名段走，否则组头与版本前缀脱节
-    pre = _vg_prefix_of(anchor_name) or anchor_name
-    moved = 0
-    for k in kids:
-        head, _tail = db.split_vg_name(k["name"])
-        if head == pre:
-            continue
-        want = _unique_child_name(nid, pre + db.VG_SEP + k["name"], exclude_id=k["id"])
-        if db.update_node(k["id"], name=want):
-            moved += 1
     return web.json_response({"ok": True, "to": "vg", "id": str(nid),
-                              "name": anchor_name, "moved": moved})
+                              "name": name, "children": len(kids)})
 
 
 async def post_wordbank_vg_join(request):
     """把若干提示词并入同一个版本组：body { ids:[...], name:"组名" }。
 
-    这是「从提示词入手」建版本组的唯一入口（单个 / 多选共用）：
-    - 组名由用户在弹框里现输，不沿用任何一张卡的现名；
-    - 每张被并入的卡统一固化成「组名#版本名」，版本名取它自己的现名（已有 # 前缀的取 # 后那段，
-      不然多选几张老版本卡会拼出「组名#旧组名#版本」的套娃名字）；
-    - 组头（锚点）优先选已经是版本组头的那张，没有就用第一张（右键/主选的那张），
-      其余卡 parent_id 改挂到组头下面，于是它们成为同一提示词的不同版本，一张卡翻页切换。
+    「版本组」在新模型里就是一棵两层 entry 树：外层 entry 自己就是组名，子 entry 是各版本，
+    名字只存短名（组名前缀由渲染层动态拼）。所以并入流程只剩三件事：
+    - 组名由用户在弹框里现输，选中的第一张（已是版本组的优先）改名成组名，当组头；
+    - 其余卡片 parent_id 改挂到组头下面，名字原样保留（同父重名则自动追加序号）；
+    - 组头自己的提示词内容原样留在组头上，它是组级共有描述，沿 parent_id 下传给各版本。
     """
     try:
         body = await request.json()
@@ -762,7 +637,7 @@ async def post_wordbank_vg_join(request):
         return web.json_response({"error": "组名不能为空"}, status=400)
     if name.startswith("."):
         return web.json_response({"error": "组名不能以点开头"}, status=400)
-    if INVALID_NAME.search(name) or db.VG_SEP in name:
+    if INVALID_NAME.search(name) or "#" in name:
         return web.json_response(
             {"error": '组名含非法字符（不能包含 \\ / : * ? " < > | #）'}, status=400)
     nodes = []
@@ -772,15 +647,18 @@ async def post_wordbank_vg_join(request):
             return web.json_response({"error": "有提示词已被删除，刷新后再试"}, status=404)
         if str(n.get("type") or "") != "entry":
             return web.json_response(
-                {"error": "只有提示词卡片才能并入版本组；分类请用分类右键的「标为版本组」"}, status=400)
+                {"error": "只有提示词卡片才能并入版本组；分类请用分类右键的「聚拢成版本卡」"}, status=400)
         nodes.append(n)
-    anchors = [n for n in nodes if n.get("vg")]
-    if len(anchors) > 1:
-        return web.json_response(
-            {"error": "选中的卡片里有多个版本组头，一次只能并入一个组，请拆开再试"}, status=400)
-    anchor = anchors[0] if anchors else nodes[0]
+    # 组头优先取已经是版本组的那张（它的子版本要一起并到新组里），否则取第一张
+    anchor = next((n for n in nodes if db.direct_children(int(n["id"]))), nodes[0])
     aid = int(anchor["id"])
     a_parent = db.get_parent_id(aid)
+    members = [n for n in nodes if int(n["id"]) != aid]
+    for n in members:
+        if db.direct_children(int(n["id"])):
+            return web.json_response(
+                {"error": "选中的卡片里还有版本组：" + str(n.get("name") or "")
+                          + "，请拆开再并入"}, status=400)
     # 环检测：被并入的卡若正好是组头的祖先，挂过去会把组头自己拖进自己的子树里
     up = a_parent
     hops = 0
@@ -789,51 +667,33 @@ async def post_wordbank_vg_join(request):
             return web.json_response({"error": "选中的卡片存在上下级关系，无法并入同一组"}, status=400)
         up = db.get_parent_id(up)
         hops += 1
-    # 先整体算好新名字并查重，任一条冲突就整批不动，避免只改一半留下残局
-    plan = []
-    seen_new = set()
-    for n in nodes:
+    # 先整体算好名字并查重，任一条冲突就整批不动，避免只改一半留下残局
+    group = _unique_child_name(a_parent, name, exclude_id=aid)
+    plan, seen = [], set()
+    for n in members:
         nid = int(n["id"])
-        old_name = str(n.get("name") or "").strip()
-        tail = db.split_vg_name(old_name)[1].strip() or old_name
-        if not tail:
+        short = str(n.get("name") or "").strip()
+        if not short:
             return web.json_response({"error": "有提示词名字为空，无法并入"}, status=400)
-        new_name = name + db.VG_SEP + tail
-        # 批内自查：多选里有两条同名词条时，它们会拼出同一个「组名#版本名」，
-        # 光靠 sibling_dup 查不出来（此刻还没改名），必须先在本次计划里排掉
-        if new_name in seen_new:
-            return web.json_response(
-                {"error": "选中的提示词里有同名版本，会拼出重复的「" + new_name + "」，请先改名再并入"},
-                status=400)
-        seen_new.add(new_name)
-        if nid != aid:
-            dup = db.sibling_dup(a_parent, new_name, exclude_id=nid)
-            if dup is not None and dup != new_name:
-                return web.json_response(
-                    {"error": "组里已有同名的版本: " + dup}, status=400)
-        elif db.sibling_dup(a_parent, new_name, exclude_id=aid) is not None and new_name != old_name:
-            return web.json_response({"error": "同一位置已有同名卡片: " + new_name}, status=400)
-        plan.append((nid, old_name, new_name))
-    old_group = _vg_prefix_of(anchor.get("name"))
-    # 组头先立：改名为「组名#它自己的版本名」并置 vg=1；其余成员改名后改挂到它名下
-    for nid, old_name, new_name in plan:
-        if nid == aid:
-            if not db.update_node(nid, name=new_name, vg=1):
-                return web.json_response({"error": "设置组头失败"}, status=500)
-        else:
-            if not db.update_node(nid, name=new_name):
-                return web.json_response({"error": "改名失败: " + old_name}, status=500)
-            if not db.relocate(nid, aid):
-                return web.json_response({"error": "并入失败: " + old_name}, status=500)
-    # 组头若原本就带老组名，把它名下老版本的前缀一起刷成新组名
-    cascaded = 0
-    if old_group and old_group != name:
-        cascaded = db.cascade_vg_prefix(aid, old_group, name)
+        want = _unique_child_name(aid, short)
+        if want in seen:
+            want = _unique_child_name(aid, "%s %d" % (short, len(seen) + 2))
+        seen.add(want)
+        plan.append((nid, short, want))
+    if not db.update_node(aid, name=group):
+        return web.json_response({"error": "设置组头失败"}, status=500)
+    moved = 0
+    for nid, short, want in plan:
+        if want != short and not db.update_node(nid, name=want):
+            return web.json_response({"error": "改名失败: " + short}, status=500)
+        if not db.relocate(nid, aid):
+            return web.json_response({"error": "并入失败: " + short}, status=500)
+        moved += 1
     return web.json_response({
         "ok": True,
         "anchorId": str(aid),
-        "count": len(plan),
-        "cascade": cascaded,
+        "group": group,
+        "count": moved,
     })
 
 
@@ -935,34 +795,21 @@ async def post_wordbank_card_create(request):
             return web.json_response({"error": "散 txt 卡片暂不支持中文提示词"}, status=400)
         name = stem
     pnode = db.node_by_id(parent_id)
-    # 父节点两种都合法：普通分类（type=category），或版本组锚点卡（entry 且 vg=1，「新建版本」的落点）。
-    # 锚点是空壳不出词，但它照样能挂子条目，所以不能再拿 type=="category" 一刀切。
-    is_vg_anchor = bool(pnode and pnode.get("vg") and str(pnode.get("type") or "") == "entry")
-    if pnode is None or (str(pnode.get("type") or "") != "category" and not is_vg_anchor):
+    # 父节点两种都合法：普通分类（type=category），或词条节点（entry）——entry 一旦有子词条，
+    # 它就是「版本组」，新建出来的卡片即它的又一个版本（名字只存短名，组名前缀由渲染层动态拼）。
+    if pnode is None or str(pnode.get("type") or "") not in ("category", "entry"):
         return web.json_response({"error": "父分类不存在"}, status=404)
     pid = int(pnode["id"])
-    # 非法字符校验只针对「用户真正输入的那一段」：版本组的锚点名（组名）是库里既有的名字，
-    # 中文词库场景里常自带 / 之类的标点（如「时间/环境光（单选）」）。若把前缀拼进全名后再整串校验，
-    # 锚点自带的 / 会被当成用户输入，新建版本就莫名报「名字含非法字符」。
-    pre = _vg_prefix_of(pnode.get("name")) if pnode.get("vg") else ""
-    tail = ""
-    if pre and (is_vg_anchor or name.startswith(pre + db.VG_SEP)):
-        _, tail = db.split_vg_name(name)
-        tail = (tail or name.lstrip("#")).strip()
-    # 新建版本（父是锚点卡）：前缀由锚点强制管理，前端只填 # 后面那段，这里统一拼成「锚点名#版本名」
-    if is_vg_anchor:
-        if not tail:
-            return web.json_response({"error": "版本名不能为空"}, status=400)
-    elif not (pre and tail):
-        # 分类级版本组（老形态）：前端没带「锚点名#」前缀时按普通词条处理，
-        # 不能因为分类被标了 vg 就给该分类下所有普通词条强塞前缀。
-        tail = ""
-    check_name = tail if tail else name
-    if INVALID_NAME.search(check_name):
+    # 版本组不支持再嵌套版本组：父若是某个版本组里的版本，新建出来的卡会变成三层，
+    # 前端翻页逻辑只认两层，直接拦掉比事后整理干净。
+    if str(pnode.get("type") or "") == "entry" and pnode.get("parent_id"):
+        gparent = db.node_by_id(pnode.get("parent_id"))
+        if gparent is not None and str(gparent.get("type") or "") == "entry":
+            return web.json_response(
+                {"error": "版本不能再用作版本组的容器，请换到分类下新建"}, status=400)
+    if INVALID_NAME.search(name):
         return web.json_response(
             {"error": '名字含非法字符（不能包含 \\ / : * ? " < > |）'}, status=400)
-    if pre and tail:
-        name = pre + db.VG_SEP + tail
     dup = db.sibling_dup(pid, name)
     if dup is not None:
         return web.json_response({"error": "词条已存在: " + dup}, status=400)
