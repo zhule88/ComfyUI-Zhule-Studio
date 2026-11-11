@@ -32,7 +32,6 @@ def register_routes():
     routes.post("/zhule_studio/api/wordbank/image")(api.post_wordbank_image)
     routes.post("/zhule_studio/api/wordbank/image-upload")(api.post_wordbank_image_upload)
     routes.post("/zhule_studio/api/wordbank/sort-save")(api.post_wordbank_sort_save)
-    routes.post("/zhule_studio/api/wordbank/clean-cn")(api.post_wordbank_clean_cn)
     routes.post("/zhule_studio/api/debug_log")(api.post_debug_log)
 
     # 图库 API

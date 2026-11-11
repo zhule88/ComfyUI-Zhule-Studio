@@ -299,6 +299,29 @@ export default {
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
                   @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
           <div class="ctx-sep"></div>
+          <!-- 整类选中 / 整类凝结：把「Ctrl/⌘+左键整类选中 → 点状态条凝结」两步压成一次右键。
+               选中项与卡片框选共用同一个 pickSel，所以「仅选中」可与别处多选叠加，
+               而「凝结」只认这一个分类（先按整类覆盖已选，避免把无关已选项一起凝进同一个池）。 -->
+          <button type="button" class="ctx-item" :class="{ on: catMenu.catPicked }"
+                  :data-tip="catMenu.catPicked
+                    ? '把该分类（含全部子分类）从已选集合里整类剔除，与 Ctrl/⌘+左键再点一次等价'
+                    : '等价于按住 Ctrl/⌘ 左键点这个分类：把它连同所有子分类的词条整批加入已选，之后还能继续多选别的分类，最后统一凝结'"
+                  @pointerdown.stop @click="onCtxCatPick">
+            {{ catMenu.catPicked ? '☑ 取消整类选中' : '☑ 整类选中' }}{{ catMenu.fileCount === -1 ? '（大类未加载）' : '（' + catMenu.fileCount + ' 项）' }}
+          </button>
+          <button type="button" class="ctx-item" :class="{ disabled: catMenu.fileCount === 0 }"
+                  :disabled="catMenu.fileCount === 0"
+                  :data-tip="'只凝这一个分类：整类选中（含全部子分类）后立刻凝成 🎲 随机池；会用该分类覆盖当前已选'"
+                  @pointerdown.stop @click="onCtxCatCondense(false)">
+            🎲 整类凝为随机池{{ catMenu.fileCount > 0 ? '（' + catMenu.fileCount + ' 项）' : '' }}
+          </button>
+          <button type="button" class="ctx-item" :class="{ disabled: catMenu.fileCount === 0 }"
+                  :disabled="catMenu.fileCount === 0"
+                  :data-tip="'只凝这一个分类：整类选中（含全部子分类）后立刻凝成 ∞ 遍历池；会用该分类覆盖当前已选'"
+                  @pointerdown.stop @click="onCtxCatCondense(true)">
+            ∞ 整类凝为遍历池{{ catMenu.fileCount > 0 ? '（' + catMenu.fileCount + ' 项）' : '' }}
+          </button>
+          <div class="ctx-sep"></div>
           <!-- 分类 ⇄ 版本 互转：两者本质同构，只差 type 一位。
                聚拢后该分类自己变成 type=entry 的版本组节点（它就是组名），其下词条成为各版本；
                 卡片右键「转为分类」可原路拆回（type 改回 category，各版本平铺）。 -->
@@ -3158,7 +3181,8 @@ const submitAddTab = async () => {
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, canToVg: false });
+    // fileCount：该分类（含子分类）下的词条数，-1 = 大类数据还没加载；catPicked：该分类是否正处在整类选中态。
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, canToVg: false, fileCount: -1, catPicked: false });
 
     // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
@@ -3224,9 +3248,17 @@ const submitAddTab = async () => {
         && !catMenu.hasChildCat
         && !!String(catNode.parentId || '')
         && catHasEntry(id);
+      // 整类选中 / 整类凝结两项的可用状态：大类是懒加载的，没拉过就只能是「未加载」，
+      // 给个 -1 让菜单显示「大类未加载」，点了由函数内部先补拉再提示重试。
+      const pickTab = isChip ? data.activeTab : keyOrNode;
+      const pickId = isChip ? id : '';
+      catMenu.fileCount = Array.isArray((bankData.value || {})[pickTab])
+        ? catFilesOf(pickTab, pickId).length
+        : -1;
+      catMenu.catPicked = catPickSel.has(catPickKey(pickTab, pickId));
       // 贴边翻转，避免菜单跑出窗口
-      catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
-      catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 320));
+      catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 240));
+      catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 430));
     };
     const closeCatMenu = () => { catMenu.open = false; };
 
@@ -3387,6 +3419,39 @@ const submitAddTab = async () => {
       const m = { kind: catMenu.kind, key: catMenu.key, name: catMenu.name };
       closeCatMenu();
       setPoolBy(m.kind, m.key, want);
+    };
+
+    // ---- 分类右键「整类选中 / 整类凝结」 ----
+    // 与 Ctrl/⌘+左键点分类用的是同一套数据（pickSel + catPickSel），只是入口从「左键+修饰键」挪到右键：
+    //   · 仅选中：等价于 Ctrl 点一下，可叠加（还能继续选别的分类，最后走状态条凝结）；
+    //   · 凝结：把「整类选中 → 状态条点凝结」两步压成一步，直接复用 onCardCondense 造池逻辑。
+    const onCtxCatPick = () => {
+      const kind = catMenu.kind;
+      // tab 传入大类名；chip 传入分类节点 id（catMenu.id 对两者都是真实节点 id，但 tab 走的是类名键）
+      const key = kind === 'tab' ? catMenu.key : catMenu.id;
+      const name = catMenu.name;
+      closeCatMenu();
+      toggleCatPick(kind, key, name);
+    };
+    const onCtxCatCondense = (traverse) => {
+      const kind = catMenu.kind;
+      const label = catMenu.name || (kind === 'tab' ? tabLabel(catMenu.key) : '');
+      const tab = kind === 'tab' ? catMenu.key : data.activeTab;
+      const id = kind === 'tab' ? '' : String(catMenu.id || '');
+      closeCatMenu();
+      // 大类懒加载：没拉过先补拉，提示再右键一次（与 Ctrl 点未加载大类的行为保持一致）
+      if (!Array.isArray((bankData.value || {})[tab])) {
+        load(false, tab);
+        return showToast(`正在加载「${label}」的词条，稍等再右键一次即可整类凝结`, 'warn', 2800);
+      }
+      const files = catFilesOf(tab, id);
+      if (!files.length) return showToast(`「${label}」下还没有词条，无法凝结成池`, 'warn', 2400);
+      // 凝结语义是「只凝这一个分类」：先整类覆盖已选，免得把别处挑的卡片一起凝进同一个池。
+      // 想跨分类合并，请用上面的「整类选中」或 Ctrl/⌘+左键逐个加，最后走状态条凝结。
+      clearPick();
+      files.forEach(f => pickSel.add(pickKey({ tab: f.tab || tab, relPath: f.relPath })));
+      catPickSel.add(catPickKey(tab, id));
+      onCardCondense(traverse);
     };
 
 
@@ -4617,8 +4682,6 @@ const submitAddTab = async () => {
       };
     };
 
-    // ============ 去中文清理已移入导航栏设置面板（main.js 词库设置分组），本页不再保留按钮与逻辑 ============
-
     // ============ Tab / Chip 拖动排序（HTML5 DnD） ============
     const tabLabel = (n) => (n || '').replace(/^\d+[_ ]+/, '');
     let tabDrag = { name: null };
@@ -5055,7 +5118,7 @@ const submitAddTab = async () => {
       onTabClick, onChipClick,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
-      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToVg,
+      catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxCatPick, onCtxCatCondense, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToVg,
 
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
     isCatMuted, toggleCatMute,

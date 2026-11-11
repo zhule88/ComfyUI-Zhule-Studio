@@ -572,37 +572,6 @@ const App = {
           rebuilding.value = false;
         });
     }
-    // 词库去中文清理：扫描英文 prompt.txt，删除混入的中文字符（中文提示词文件跳过），仅设置面板保留入口
-    const wordbankCleaningCn = ref(false);
-    const wordbankCleanNotice = ref('');
-    function wordbankCleanCn() {
-      if (wordbankCleaningCn.value) return;
-      wordbankCleaningCn.value = true;
-      wordbankCleanNotice.value = '正在扫描英文提示词文件…';
-      fetch('/zhule_studio/api/wordbank/clean-cn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-        .then(async (resp) => {
-          const d = await resp.json();
-          if (!resp.ok) {
-            wordbankCleanNotice.value = (d && d.error) || '清理失败，请查看后端日志';
-            return;
-          }
-          const s = (d && d.stats) || {};
-          wordbankCleanNotice.value = '扫描 ' + (s.scanned || 0) + ' 个：清理 ' + (s.cleaned || 0)
-            + '，中文文件跳过 ' + (s.chinese_files || 0) + '，无中文 ' + (s.no_cn || 0)
-            + '，未变跳过 ' + (s.skipped_unchanged || 0);
-          setTimeout(() => { wordbankCleanNotice.value = ''; }, 8000);
-        })
-        .catch(() => {
-          wordbankCleanNotice.value = '清理失败：无法连接后端接口';
-        })
-        .finally(() => {
-          wordbankCleaningCn.value = false;
-        });
-    }
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, toggleHideHints,
       panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
@@ -613,8 +582,7 @@ const App = {
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
-      wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB,
-      wordbankCleaningCn, wordbankCleanNotice, wordbankCleanCn };
+      wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB };
   },
   computed: {
     // 演示块颜色：随机颜色种子联动，主题/边角演示块随种子换色
@@ -948,12 +916,6 @@ const App = {
                   </label>
                 </div>
                 <div class="settings-hint">开启后版本组卡片不再显示右上角「‹ 序号/总数 ›」翻页框，避免与参考图翻页条挤在一起；版本切换改在卡片上右键，用版本胶片条切换。</div>
-                <div class="settings-row">
-                  <span class="settings-label">去中文清理</span>
-                  <button class="btn" :disabled="wordbankCleaningCn" @click="wordbankCleanCn">{{ wordbankCleaningCn ? '清理中…' : '开始清理' }}</button>
-                </div>
-                <div class="settings-hint">扫描英文 prompt.txt，删除混入的中文字符；中文提示词文件自动跳过。</div>
-                <div class="settings-hint keep-hint" v-if="wordbankCleanNotice">{{ wordbankCleanNotice }}</div>
                 </div>
               </div>
             </template>

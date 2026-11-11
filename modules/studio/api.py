@@ -975,18 +975,6 @@ async def post_wordbank_sort_save(request):
     return web.json_response({"ok": True, "layers": layers, "total": total, "renamed": total,
                               "errors": errors})
 
-async def post_wordbank_clean_cn(request):
-    """去中文清理（DB 版）：遍历 zhule.db 的 en 字段，移除中文字符与中文标点。"""
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    updated, total = db.clean_en_cn()
-    return web.json_response({"ok": True, "stats": {
-        "scanned": total, "checked": total, "cleaned": updated,
-        "skipped_unchanged": 0, "chinese_files": 0, "no_cn": 0, "errors": 0,
-    }})
-
 async def get_index(request):
     index = os.path.join(WEB_DIR, "index.html")
     if not os.path.isfile(index):

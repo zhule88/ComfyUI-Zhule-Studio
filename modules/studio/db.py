@@ -686,37 +686,6 @@ def tag_en_index():
     return data
 
 
-def clean_en_cn():
-    """去中文清理（en 字段中移除中文字符与中文标点）。返回 (updated, total)。"""
-    cjk = "".join([
-        "[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3000-\u303f\uff00-\uffef]",
-    ])
-    import re as _re
-    pat = _re.compile(cjk)
-    with _lock:
-        conn = connect()
-        try:
-            rows = conn.execute(
-                "SELECT id, en FROM {0} WHERE type='entry' AND en IS NOT NULL AND en<>'' AND isdel=0".format(TABLE)
-            ).fetchall()
-            updated = 0
-            now = _now()
-            for r in rows:
-                cleaned = pat.sub("", r["en"] or "")
-                if cleaned != (r["en"] or ""):
-                    conn.execute(
-                        "UPDATE {0} SET en=?, updated_at=? WHERE id=?".format(TABLE),
-                        (cleaned, now, r["id"]),
-                    )
-                    updated += 1
-            conn.commit()
-            if updated:
-                _bump()
-            return updated, len(rows)
-        finally:
-            conn.close()
-
-
 # ==================== 图库数据层（gallery_image / gallery_tag / custom_tag） ====================
 # 图库索引从 gallery_index.json 迁移到 SQLite：gallery_image 表存图片记录
 # （name 为图库相对路径定位字段，与磁盘按名定位行为一致），gallery_tag 表存标签
