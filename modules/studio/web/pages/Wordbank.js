@@ -2261,6 +2261,14 @@ export default {
             all.push(c);
           }
         }
+        // 分类静音只在内存里按 id 祖先链向下继承、不写库，bankData 那份已被 inheritCategoryMute
+        // 打过派生标记；全库快照是另一次请求拿到的独立对象，不会自动带上，所以这里按同一套
+        // 规则补一遍：全库搜索的「隐藏静音」过滤与卡片静音图标才能和当前分类视图同口径。
+        all.forEach(c => {
+          if (c.mute) return;                    // 词条自身已静音，保留原状
+          const hit = mutedByCat(c.id, c.tab);   // tab 根 / 任一祖先分类静音都覆盖
+          if (hit) { c.mute = 1; c.muteFromCat = hit; }
+        });
         searchAll.value = all;
         zhuleLog('ensureSearchAll: 全库快照就绪', all.length);
       } catch (e) {
@@ -2279,8 +2287,9 @@ export default {
       const q = searchQ.value;
       if (!q) return null;   // 没有搜索词 = 不在搜索态，列表交回分类浏览
       const src = searchScope.value === 'all' ? (searchAll.value || []) : filteredFiles.value;
-      // 搜索一律忽略静音词条：静音＝不参与自动选词，搜索里也不该冒出来（不受「隐藏静音」设置影响）
-      return src.filter(c => !c.mute && hitSearch(c, q));
+      // 静音词条在搜索里是否出现，统一跟随通用设置「隐藏被静音的提示词」（hideMuted）：
+      // 开启 = 搜索也不展示；关闭 = 照常命中，卡片上仍显示静音标记。与浏览态口径保持一致
+      return src.filter(c => hitSearch(c, q) && (!hideMuted.value || !c.mute));
     });
     // 列表唯一出口：有词 → 搜索结果；无词 → 原分类浏览结果
     const listFiles = computed(() => searchHits.value || filteredFiles.value);
@@ -2303,11 +2312,12 @@ export default {
         ? '没有名字或分类路径含「' + String(searchText.value || '').trim() + '」的词条'
         : '没有名字含「' + String(searchText.value || '').trim() + '」的词条';
     });
-    // 搜索框提示随「搜索是否对分类生效」设置联动：关闭时只提示搜词条名；搜索始终忽略静音词条
+    // 搜索框提示随「搜索是否对分类生效」设置联动：关闭时只提示搜词条名；静音提示随 hideMuted 联动
     const searchPh = computed(() => (pref.searchByPath === true ? '搜词条 / 分类' : '搜词条名'));
-    const searchTip = computed(() => (pref.searchByPath === true
-      ? '搜词条名或分类路径（Ctrl+F）｜静音词条不参与搜索'
-      : '搜词条名（Ctrl+F）｜静音词条不参与搜索'));
+    const searchTip = computed(() => {
+      const base = pref.searchByPath === true ? '搜词条名或分类路径（Ctrl+F）' : '搜词条名（Ctrl+F）';
+      return base + (hideMuted.value ? '｜静音词条已隐藏' : '');
+    });
     const toggleSearchScope = () => {
       searchScope.value = searchScope.value === 'all' ? 'filter' : 'all';
       if (searchScope.value === 'all') ensureSearchAll();
@@ -4177,11 +4187,10 @@ const submitAddTab = async () => {
         if (!f) continue;
         const k = vgKeyOf(f);
         if (!k) {
-          // 非版本组：空壳锚点（自己标了 vg 但内容为空）不能进池，否则会抽出空词条
           // 非版本组：空壳节点（组头自己没内容）不能进池，否则会抽出空词条
           if (!vgIsShellCard(f)) out.push(f);
           continue;
-
+        }
         if (seen.has(k)) continue;
         seen.add(k);
         // 抽到的是「组」而不是「某一条」：代表固定取真实版本里的当前游标那一版，
@@ -4194,7 +4203,6 @@ const submitAddTab = async () => {
         out.push(Object.assign({}, vs[idx], {
           _vgKey: k, _vgVersions: vs, _vgIdx: idx, _vgCount: vs.length,
           _vgTitle: grp.title || '',
-
         }));
       }
       return out;
