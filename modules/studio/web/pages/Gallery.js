@@ -94,7 +94,7 @@ export default {
               <span class="zhg-tag-gear" data-tip="编辑标签" @click.stop="tagPanelOpen = true">⚙</span>
             </div>
             <div class="zhg-block-body">
-              <!-- 外部过滤区：俄罗斯套娃包裹式展开；左键切换启用（红虚线=待生效/实色=生效/斜纹+圆点=半选：分支内有生效子标签），右键展开子标签，Ctrl+右键逐级优先收起，✕暂时隐藏 -->
+              <!-- 外部过滤区：俄罗斯套娃包裹式展开；左键切换启用（红虚线=待生效/实色=生效/斜纹+圆点=半选：子树内有生效子标签），右键展开子标签，Ctrl+右键逐级优先收起，✕暂时隐藏 -->
               <div class="zhg-sel-tags" v-if="visibleTags.length">
                 <out-node v-for="t in visibleTags" :key="tagKey(t)" :node="t" :depth="0"
                           :in-filter="inTagFilter" :is-active="isTagActive" :is-hidden="isTagHidden" :sel-state="nodeSelState" :tree-kids-fn="treeKids" :theme-cls="tagThemeClass" :color-of="tagColorOf"

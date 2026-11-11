@@ -75,7 +75,7 @@ const OutNode = {
     inFilter: { type: Function, required: true },
     isActive: { type: Function, required: true },
     isHidden: { type: Function, default: null },
-    // 勾选态上卷（父组件传入 nodeSelState）：'on' 自身启用 / 'part' 分支内有启用项 / '' 无。
+    // 勾选态上卷（父组件传入 nodeSelState）：'on' 自身启用 / 'part' 子树内有启用项 / '' 无。
     // 缺失时退化为原来的 isActive 二态，保持组件单独可用
     selState: { type: Function, default: null },
     treeKidsFn: { type: Function, default: null },
@@ -144,10 +144,10 @@ const OutNode = {
     function fwdToggle(name) { emit('toggle', name); }
     function fwdAdd(node) { emit('add', node); }
     function fwdHide(name) { emit('hide', name); }
-    // 当前节点的勾选态：on（自身启用）/ part（仅分支内有启用）/ ''（无）
+    // 当前节点的勾选态：on（自身启用）/ part（仅子树内有启用）/ ''（无）
     const st = () => (props.selState ? (props.selState(props.node) || '') : (props.isActive(props.node) ? 'on' : ''));
-    // 半选提示：说明分支内已有生效的子标签，点父级可整支启用（命中范围相同）
-    const partTip = () => (st() === 'part' ? '分支内有子标签生效中，点击启用父级（命中同样的图）' : '');
+    // 半选提示：说明子树内已有生效的子标签，点父级可整支启用（命中范围相同）
+    const partTip = () => (st() === 'part' ? '子树内有子标签生效中，点击启用父级（命中同样的图）' : '');
     return {
       expanded, kids, hasKids, chipStyle, boxStyle, leafName, st, partTip,
       onClick, onCtx, fwdToggle, fwdAdd, fwdHide,
@@ -932,10 +932,10 @@ export function useGalleryCommon(opts = {}) {
     const t = findTagEntry(name);
     return !!(t && t.active);
   }
-  // 外部过滤区节点的「勾选态」上卷：on = 自身已启用；part = 自身未启用但分支内有启用的后代。
+  // 外部过滤区节点的「勾选态」上卷：on = 自身已启用；part = 自身未启用但子树内有启用的后代。
   // 起因：右键展开只选子标签（璃月）后收起，外层大标签（角色）看不出里面已选好，误以为没生效。
   // 判定按 rel 前缀（同域 + 路径前缀）层层递归，父链上每一层都会返回 part；
-  // 只影响显示，不改查询语义——后端 _tag_hit 选父级时本就会展开整个子树命中，而选子级只命中该分支。
+  // 只影响显示，不改查询语义——后端 _tag_hit 选父级时本就会展开整个子树命中，而选子级只命中该子树。
   function nodeSelState(node) {
     const info = tagInfo(node);
     if (!info.name) return '';

@@ -300,7 +300,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card.image { padding: 0; }
 .card-thumb-wrap { position: relative; width: 100%; padding-top: 133.3333%;
   background: #0b0e13; overflow: hidden;
-  /* 卡内浮层（参考图翻页条 / 变体切换框）尺寸随卡片宽度等比缩放：
+  /* 卡内浮层（参考图翻页条 / 分支切换框）尺寸随卡片宽度等比缩放：
      以卡片宽度为容器查询基准，按钮边长约 10.5% 卡宽，最小 20px（窄卡仍可点）、最大 32px（大图不失控）；
      胶囊本体统一占卡片总宽的 70%，左右箭头贴边、内容居中均匀分布。 */
   container-type: inline-size;
@@ -363,10 +363,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 6;
   opacity: 0; transition: opacity 0.15s; }
 .card.image:hover .thumb-nav { opacity: 1; }
-/* 参考图翻页条让位版：这张卡同时显示变体切换框（vg-nav 在更下一层）时整体上移一层，
-   与下方变体框保持固定间距；隐藏变体切换框后不挂本类，自动落回原位。 */
+/* 参考图翻页条让位版：这张卡同时显示分支切换框（vg-nav 在更下一层）时整体上移一层，
+   与下方分支框保持固定间距；隐藏分支切换框后不挂本类，自动落回原位。 */
 .thumb-nav.thumb-nav-up { bottom: 74px;
-  /* 下方变体框高 = 按钮高×0.92 + 上下内边距，再留 8px 空隙，保证两者永不重叠 */
+  /* 下方分支框高 = 按钮高×0.92 + 上下内边距，再留 8px 空隙，保证两者永不重叠 */
   bottom: calc(var(--zh-nav-btn) * 1.92 + var(--zh-nav-pady) * 2 + 28px); }
 .thumb-nav button { width: 22px; height: 22px; width: var(--zh-nav-btn); height: var(--zh-nav-btn);
   padding: 0; border: none;
@@ -396,8 +396,8 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   /* 仅名字恢复指针事件，便于悬停看完整名（点击仍冒泡到卡片，不打断选中/拖拽） */
   pointer-events: auto;
 }
-/* 变体身份牌：钉在缩略图顶部居中，比底部名字行里的小角标显眼得多（旧 .card-grp 已不再渲染）。
-   凡是变体组成员一律挂上 —— 变体名与组名同名时也照挂，否则认不出这张是变体卡 */
+/* 分支身份牌：钉在缩略图顶部居中，比底部名字行里的小角标显眼得多（旧 .card-grp 已不再渲染）。
+   凡是分支组成员一律挂上 —— 分支名与组名同名时也照挂，否则认不出这张是分支卡 */
 .card-vg {
   position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
   z-index: 6; max-width: calc(100% - 64px);
@@ -630,7 +630,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 }
 .edit-dialog textarea { resize: vertical; }
 .edit-dialog input[type="text"] { font-weight: 600; letter-spacing: 0.2px; }
-/* 名字输入框的只读前缀「组名#」：变体组的前缀由锚点强制管理，
+/* 名字输入框的只读前缀「组名#」：分支组的前缀由锚点强制管理，
    用户只能改 # 后面那段，前缀做成灰底标签贴在输入框左侧，点不动也改不了 */
 .name-with-prefix { display: flex; align-items: stretch; }
 .name-with-prefix .name-prefix {
@@ -1037,7 +1037,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-sel-tag.zhg-out-tag.on:hover { border-color: var(--tag-bg, var(--primary)); }
 .zhg-sel-tag.zhg-out-tag.off { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 45%, transparent); border-style: dashed; }
 .zhg-sel-tag.zhg-out-tag.off:hover { border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 62%, transparent); }
-/* part=半选上卷：自身没启用，但分支里有启用的子标签（选 璃月 → 角色/璃月/原神 整条父链都点亮）。
+/* part=半选上卷：自身没启用，但子树里有启用的子标签（选 璃月 → 角色/璃月/原神 整条父链都点亮）。
    与 on 的区分不靠颜色（要沿用标签主题色），而靠通用「半选」视觉语言：
    斜纹底 + 实线同色描边 + 右上角实心圆点（不加 opacity，否则又像 off 那样被误判为没生效）。
    只用 background-image，不覆盖主题类设置的 background-color。 */
@@ -1056,7 +1056,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: var(--tag-bg, var(--primary));
   box-shadow: 0 0 0 2px var(--bg, #1a1d23);
 }
-/* 展开态容器同样上卷提示：分支内有生效项时加同色外发光 + 右下角圆点 */
+/* 展开态容器同样上卷提示：子树内有生效项时加同色外发光 + 右下角圆点 */
 .zhg-out-open.part {
   border-color: color-mix(in srgb, var(--tag-bg, var(--primary)) 72%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--tag-bg, var(--primary)) 26%, transparent);
@@ -2120,14 +2120,14 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 
 
 /* ==========================================================================
-   提示词多变体组（A 卡内翻页 / B 胶片条 / C 标签三态）
+   提示词多分支组（A 卡内翻页 / B 胶片条 / C 标签三态）
    —— A 默认生效；B 从卡片右键菜单呼出；C 挂在已选标签上点一下循环切换。
    单条分类（_vgCount<=1）不下发任何类名，整块样式不参与，等于关闭。
    ========================================================================== */
 
-/* ---- A：卡片内变体翻页器（与 thumb-nav 同款胶囊，压在名字条上方） ----
-   分层：变体切换框在下（最下一层），参考图翻页条让它一层（.thumb-nav.thumb-nav-up）。
-   隐藏变体切换框时参考图条自动落回最下。尺寸同样随卡片宽度等比缩放。 */
+/* ---- A：卡片内分支翻页器（与 thumb-nav 同款胶囊，压在名字条上方） ----
+   分层：分支切换框在下（最下一层），参考图翻页条让它一层（.thumb-nav.thumb-nav-up）。
+   隐藏分支切换框时参考图条自动落回最下。尺寸同样随卡片宽度等比缩放。 */
 .card.image .vg-nav {
   position: absolute; left: 50%; transform: translateX(-50%);
   bottom: 42px; bottom: calc(var(--zh-nav-btn) + 20px); z-index: 7;
@@ -2154,7 +2154,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   pointer-events: none; white-space: nowrap;
   display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden;
 }
-/* 组名与「＋新建变体」已从卡面移除：组名/新建变体/胶片条统一走卡片右键菜单，
+/* 组名与「＋新建分支」已从卡面移除：组名/新建分支/胶片条统一走卡片右键菜单，
    卡面只保留 ‹ 序号/总数 › 这一个极简翻页胶囊，避免缩略图被工具栏挤掉。 */
 
 /* ---- C：已选标签上的三态徽标 ---- */

@@ -161,14 +161,14 @@ def _purge_ref_dir(entry_id):
         return False
 
 
-# 变体组里不带语义的占位短名（仅展示层判重/命名用，**不参与任何按名字定位**）
+# 分支组里不带语义的占位短名（仅展示层判重/命名用，**不参与任何按名字定位**）
 _GENERIC_VG_SHORT = {"默认", "默认版", "默认版本", "缺省", "default", "无", "空", "空白"}
 
 
 def _vg_full_name(name, group):
-    """变体条目的完整名（与前端 vgFullName 同一口径）。
+    """分支条目的完整名（与前端 vgFullName 同一口径）。
 
-    库里变体条目只存短名（如「默认」「单侧」），组名由渲染层沿祖先拼出来：
+    库里分支条目只存短名（如「默认」「单侧」），组名由渲染层沿祖先拼出来：
       - 短名空 / 是「默认」/ 本身等于组名 → 组名
       - 短名里已经包含组名 → 原样
       - 其余 → 短名 + 组名
@@ -190,9 +190,9 @@ def _vg_full_name(name, group):
 
 
 def _vg_group_of(node):
-    """按 DB 关系求词条所属变体组的组名（不在变体组里返回空串）。
+    """按 DB 关系求词条所属分支组的组名（不在分支组里返回空串）。
 
-    变体组 = type 为 entry、且直接子里还有 entry 的那个节点，它自己的 name 就是组名；
+    分支组 = type 为 entry、且直接子里还有 entry 的那个节点，它自己的 name 就是组名；
     组内条目只存短名。上传/删除参考图后刷新卡片图、以及树里递归时都走这一套，
     保证任何出口反查图库用的都是完整名。
     """
@@ -224,7 +224,7 @@ def _card_images(node, vg_group=""):
     为什么必须按 id：同名节点在库里大量存在（光「默认」就有 25 个、id 各不相同），
     按名字反查会把所有同名条目的图全并到一张卡上，表现为「参考图凭空多出一堆别人的图」。
 
-    **本函数不按名字定位**：没有名字分支、也没有名字兜底。
+    **本函数不按名字定位**：没有按名字走的逻辑分支、也没有名字兜底。
     图库反查图唯一数据源 = gallery_tag.prompt_id == 该词条 id。
     词条 id 是节点自身字段、必然存在；库里 12532 条标签关联中仅 5 条 prompt_id 为空，
     不足以支撑一条名字兜底路径——宁可少显示，也绝不串图。
@@ -325,7 +325,7 @@ def _cards_from_tree(tree):
         anc   = 从 Tab 根到当前节点父级的分类属性链（含 Tab 根，不含当前节点），
                 每项 {id, name, en, cn, neg, override}。子类继承父类属性时前端直接用它拼接，
                 不再二次请求（继承结果只在前端临时展开，不落库）。
-        vg_group = 所属变体组的组名（空串=不在变体组里）。变体组 = 自己 type 为 entry
+        vg_group = 所属分支组的组名（空串=不在分支组里）。分支组 = 自己 type 为 entry
                 且直接子里有 entry 的那个节点（它就是组名），其下条目只存短名，
                 参考图反查必须补全成完整名，否则短名「默认」会把全库同名的图全吸过来。
         """
@@ -345,16 +345,16 @@ def _cards_from_tree(tree):
         }
         # 下钻时带下去的继承链：只有 provide 的节点才把自己的属性加进链里
         child_anc = tuple(anc) + ((my_attr,) if my_attr["provide"] else ())
-        # 本节点如果是变体组头（entry 且直接子也是 entry），组名往下带一层，供子条目拼完整名
+        # 本节点如果是分支组头（entry 且直接子也是 entry），组名往下带一层，供子条目拼完整名
         is_vg_head = ntype == "entry" and any(
             str(c.get("type") or "") == "entry" for c in children)
         child_vg = my_attr["name"] if is_vg_head else vg_group
 
         def _chip_fields(end):
-            """chips / chipKeys / chipIds：只取分类节点，变体组（entry）这一层不算分类层级。
+            """chips / chipKeys / chipIds：只取分类节点，分支组（entry）这一层不算分类层级。
 
-            变体组的组名不入 chips —— 组卡片合并后统一用组头那张的分类链，
-            子变体若把组名也算成一级，左栏就会多出一行并不存在的假分类。
+            分支组的组名不入 chips —— 组卡片合并后统一用组头那张的分类链，
+            子分支若把组名也算成一级，左栏就会多出一行并不存在的假分类。
             """
             sp, si, sk = parts[1:end], ids[1:end], kinds[1:end]
             cp = [p for p, t in zip(sp, sk) if t != "entry"]
@@ -537,7 +537,7 @@ async def post_rename(request):
     if node is None:
         return web.json_response({"error": "节点不存在"}, status=404)
     nid = int(node["id"])
-    # 名字只存短名：变体条目的「组名#」前缀不再入库，由渲染层按祖先链动态拼接，
+    # 名字只存短名：分支条目的「组名#」前缀不再入库，由渲染层按祖先链动态拼接，
     # 因此这里既不剥前缀、也不回写前缀，用户输入什么就是什么（同级重名仍要拦）。
     if INVALID_NAME.search(name) or name.startswith("."):
         return web.json_response(
@@ -610,18 +610,18 @@ def _unique_child_name(parent_id, want, exclude_id=None):
 
 
 async def post_wordbank_convert(request):
-    """分类 ⇄ 变体组 互转：两者本质同构，只差 type 一个位。
+    """分类 ⇄ 分支组 互转：两者本质同构，只差 type 一个位。
 
-    新模型里没有额外的变体标记位：
+    新模型里没有额外的分支标记位：
       - 分类 = type='category'，子节点各自独立成卡，名字不加任何前缀；
-      - 变体组 = type='entry' 且有子节点，它自己就是组名，子节点是它的各变体。
+      - 分支组 = type='entry' 且有子节点，它自己就是组名，子节点是它的各分支。
     因此互转只需改 type 一位，名字原样不动（组名前缀由前端按祖先链动态拼，不入库）。
 
     body {id, to}：
-      to="vg"（分类 → 变体）：末级分类聚拢成变体组 —— type 改成 entry，分类名即组名，
-        分类自身的 en/cn/neg 变成组级共有描述（沿 parent_id 下传），子词条原样充当各变体。
-      to="category"（变体 → 分类）：变体组拆成正经分类 —— type 改回 category，组名当分类名，
-        原组头内容变成分类级描述，各变体子条目平铺成该分类下的独立卡片。
+      to="vg"（分类 → 分支）：末级分类聚拢成分支组 —— type 改成 entry，分类名即组名，
+        分类自身的 en/cn/neg 变成组级共有描述（沿 parent_id 下传），子词条原样充当各分支。
+      to="category"（分支 → 分类）：分支组拆成正经分类 —— type 改回 category，组名当分类名，
+        原组头内容变成分类级描述，各分支子条目平铺成该分类下的独立卡片。
 
     两边都拦同级重名：互转后若与同级同类节点撞名，树里会出现两个同名入口，得先改名。
     """
@@ -650,14 +650,14 @@ async def post_wordbank_convert(request):
 
     if to == "category":
         if ntype != "entry":
-            return web.json_response({"error": "只有变体卡（提示词）才能转成分类"}, status=400)
+            return web.json_response({"error": "只有分支卡（提示词）才能转成分类"}, status=400)
         kids = db.direct_children(nid)
         if any(str(k["type"]) == "category" for k in kids):
             return web.json_response(
-                {"error": "该变体组下还挂着分类，先把子分类挪出去再转"}, status=400)
+                {"error": "该分支组下还挂着分类，先把子分类挪出去再转"}, status=400)
         if not kids:
             return web.json_response(
-                {"error": "该提示词下没有变体，转成分类只会得到一个空分类"}, status=400)
+                {"error": "该提示词下没有分支，转成分类只会得到一个空分类"}, status=400)
         if not db.set_type(nid, "category"):
             return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
         return web.json_response({"ok": True, "to": "category", "id": str(nid),
@@ -665,15 +665,15 @@ async def post_wordbank_convert(request):
 
     # to == "vg"
     if ntype != "category":
-        return web.json_response({"error": "只有分类才能聚拢成变体组"}, status=400)
+        return web.json_response({"error": "只有分类才能聚拢成分支组"}, status=400)
     if db.has_child_category(nid):
         return web.json_response(
-            {"error": "该分类下还有子分类，只有末级分类才能聚拢成变体组"}, status=400)
+            {"error": "该分类下还有子分类，只有末级分类才能聚拢成分支组"}, status=400)
     kids = [k for k in db.direct_children(nid) if str(k["type"]) == "entry"]
     if not kids:
         return web.json_response(
-            {"error": "该分类下还没有词条，聚拢成变体组会变成一个没有任何变体的组"}, status=400)
-    # 子项里已经有变体组（entry 且自带子节点）时不允许再聚拢：
+            {"error": "该分类下还没有词条，聚拢成分支组会变成一个没有任何分支的组"}, status=400)
+    # 子项里已经有分支组（entry 且自带子节点）时不允许再聚拢：
     # 组套组会让渲染层把内层组头当成普通卡片、外层组头又吃掉分类部件，表现为「分类消失了但词条没变化」。
     nested = [k for k in kids if db.direct_children(int(k["id"]))]
     if nested:
@@ -681,7 +681,7 @@ async def post_wordbank_convert(request):
         if len(nested) > 3:
             names += " 等"
         return web.json_response(
-            {"error": "该分类下的「%s」本身已是变体卡，聚拢会变成变体组套变体组；先把它们转回分类再聚拢"
+            {"error": "该分类下的「%s」本身已是分支卡，聚拢会变成分支组套分支组；先把它们转回分类再聚拢"
                       % names}, status=400)
     if not db.set_type(nid, "entry"):
         return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
@@ -690,10 +690,10 @@ async def post_wordbank_convert(request):
 
 
 async def post_wordbank_vg_join(request):
-    """把同一分类下的若干提示词收进一个「新建」的变体组：body { ids:[...], name:"组名" }。
+    """把同一分类下的若干提示词收进一个「新建」的分支组：body { ids:[...], name:"组名" }。
 
-    「变体组」是一棵两层 entry 树：外层 entry 就是组头（它的 name 即组名），子 entry 是各变体，
-    变体名只存短名（组名前缀由渲染层动态拼）。流程：
+    「分支组」是一棵两层 entry 树：外层 entry 就是组头（它的 name 即组名），子 entry 是各分支，
+    分支名只存短名（组名前缀由渲染层动态拼）。流程：
     - 先校验这批提示词同属一个父分类：父级必须完全一致，不允许跨分类把词条静默搬走；
     - 新建一条空 entry 当组头（parent_id = 这批卡的公共父级），组名在同父下查重；
     - 这批卡的 parent_id 全部改挂到新组头下，名字保持短名（组内重名自动追加序号）。
@@ -730,25 +730,25 @@ async def post_wordbank_vg_join(request):
             return web.json_response({"error": "有提示词已被删除，刷新后再试"}, status=404)
         if str(n.get("type") or "") != "entry":
             return web.json_response(
-                {"error": "只有提示词卡片才能并入变体组；分类请用分类右键的「聚拢成变体卡」"}, status=400)
+                {"error": "只有提示词卡片才能并入分支组；分类请用分类右键的「聚拢成分支卡」"}, status=400)
         nodes.append(n)
     # 选中集必须是「同一父分类下的一组普通提示词卡」：
-    # ① 自带子节点的卡已经是变体组，先拆再并，否则会嵌套成组套组
+    # ① 自带子节点的卡已经是分支组，先拆再并，否则会嵌套成组套组
     for n in nodes:
         if db.direct_children(int(n["id"])):
             return web.json_response(
-                {"error": "选中的卡片里还有变体组：" + str(n.get("name") or "")
+                {"error": "选中的卡片里还有分支组：" + str(n.get("name") or "")
                           + "，请拆开再并入"}, status=400)
     # ② 新组头挂在哪，由这批卡的父级唯一决定；父级不完全相等就直接拒绝，绝不跨分类搬词条
     parents = set()
     for n in nodes:
         pid = n.get("parent_id")
         if pid is None:
-            return web.json_response({"error": "顶层大类下的卡片不能并入变体组"}, status=400)
+            return web.json_response({"error": "顶层大类下的卡片不能并入分支组"}, status=400)
         parents.add(int(pid))
     if len(parents) > 1:
         return web.json_response(
-            {"error": "选中的 %d 条提示词分属 %d 个分类，只有同一分类下的提示词才能聚成变体组"
+            {"error": "选中的 %d 条提示词分属 %d 个分类，只有同一分类下的提示词才能聚成分支组"
                       % (len(nodes), len(parents))}, status=400)
     base_parent = parents.pop()
     shorts = []
@@ -763,7 +763,7 @@ async def post_wordbank_vg_join(request):
     group = _unique_child_name(base_parent, name)
     gid, ok = db.insert_node(base_parent, "entry", group)
     if not ok or not gid:
-        return web.json_response({"error": "新建变体组失败"}, status=500)
+        return web.json_response({"error": "新建分支组失败"}, status=500)
     gid = int(gid)
     # 先整体算好名字并查重，任一条冲突就整批不动，避免只改一半留下残局
     plan, seen = [], set()
@@ -784,7 +784,7 @@ async def post_wordbank_vg_join(request):
         moved += 1
     # 收尾：这批卡原来的父级若是个「空壳组头」（自己没有任何提示词内容），又被这次搬空，
     # 它就成了一张永远不出卡的幽灵组，顺手软删；组头自己带内容（老数据，本身算一版）或组里
-    # 还有别的变体，一律原样留着。
+    # 还有别的分支，一律原样留着。
     if base_parent != gid:
         bp = db.node_by_id(base_parent)
         if (bp is not None and str(bp.get("type") or "") == "entry"
@@ -901,17 +901,17 @@ async def post_wordbank_card_create(request):
         name = stem
     pnode = db.node_by_id(parent_id)
     # 父节点两种都合法：普通分类（type=category），或词条节点（entry）——entry 一旦有子词条，
-    # 它就是「变体组」，新建出来的卡片即它的又一个变体（名字只存短名，组名前缀由渲染层动态拼）。
+    # 它就是「分支组」，新建出来的卡片即它的又一个分支（名字只存短名，组名前缀由渲染层动态拼）。
     if pnode is None or str(pnode.get("type") or "") not in ("category", "entry"):
         return web.json_response({"error": "父分类不存在"}, status=404)
     pid = int(pnode["id"])
-    # 变体组不支持再嵌套变体组：父若是某个变体组里的变体，新建出来的卡会变成三层，
+    # 分支组不支持再嵌套分支组：父若是某个分支组里的分支，新建出来的卡会变成三层，
     # 前端翻页逻辑只认两层，直接拦掉比事后整理干净。
     if str(pnode.get("type") or "") == "entry" and pnode.get("parent_id"):
         gparent = db.node_by_id(pnode.get("parent_id"))
         if gparent is not None and str(gparent.get("type") or "") == "entry":
             return web.json_response(
-                {"error": "变体不能再用作变体组的容器，请换到分类下新建"}, status=400)
+                {"error": "分支不能再用作分支组的容器，请换到分类下新建"}, status=400)
     if INVALID_NAME.search(name):
         return web.json_response(
             {"error": '名字含非法字符（不能包含 \\ / : * ? " < > |）'}, status=400)

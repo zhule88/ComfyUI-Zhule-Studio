@@ -121,17 +121,17 @@ export default {
                  @pointerdown="onCardPointerDown($event, file)"
                  @contextmenu.prevent="openCardMenu($event, file)">
               <div class="card-thumb-wrap">
-                <!-- 变体组角标：整组只出这一张卡，卡面只留 ‹ 序号/总数 › 做翻页。
-                     组名、新建变体都挪进右键菜单，避免卡面挤成一条工具栏。
+                <!-- 分支组角标：整组只出这一张卡，卡面只留 ‹ 序号/总数 › 做翻页。
+                     组名、新建分支都挪进右键菜单，避免卡面挤成一条工具栏。
                      单条（_vgCount<=1）什么角标都不出现，退化成普通卡片。 -->
                 <div class="vg-nav" v-if="file._vgCount > 1 && !pref.hideVgNav" @pointerdown.stop
-                     :data-tip="(file._vgTitle ? '变体组「' + file._vgTitle + '」· ' : '') + '同一提示词的 ' + file._vgCount + ' 个变体（' + (file._vgIdx + 1) + '/' + file._vgCount + '）· 右键可呼出胶片条'">
+                     :data-tip="(file._vgTitle ? '分支组「' + file._vgTitle + '」· ' : '') + '同一提示词的 ' + file._vgCount + ' 个分支（' + (file._vgIdx + 1) + '/' + file._vgCount + '）· 右键可呼出胶片条'">
                   <button class="vg-prev" @click.stop="vgStep(file, -1)">‹</button>
                   <span class="vg-num">{{ file._vgIdx + 1 }}/{{ file._vgCount }}</span>
                   <button class="vg-next" @click.stop="vgStep(file, 1)">›</button>
                 </div>
                 <!-- 左上角徽标栈：排除/负面按需出现。
-                     多变体不做额外标记——卡名本身已按「组名#变体名」分两段着色，足以识别。 -->
+                     多分支不做额外标记——卡名本身已按「组名#分支名」分两段着色，足以识别。 -->
                 <div class="thumb-badges">
                   <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
                   <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
@@ -150,8 +150,8 @@ export default {
                 <div class="thumb-zoom" v-if="!hideCardIcons" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
                 <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="!hideCardIcons && file.images && file.images.length">🗑</div>
                 <!-- 参考图翻页条：默认压在最下面的 42px。
-                     若这张卡同时有变体切换框（vg-nav 在下），则整体上移一档，两者各占一层不打架；
-                     隐藏变体切换框时自动落回原位。 -->
+                     若这张卡同时有分支切换框（vg-nav 在下），则整体上移一档，两者各占一层不打架；
+                     隐藏分支切换框时自动落回原位。 -->
                 <div class="thumb-nav" :class="{ 'thumb-nav-up': file._vgCount > 1 && !pref.hideVgNav }"
                      @pointerdown.stop v-if="file.images && file.images.length > 1">
                   <button @click.stop="prevImage(file)">‹</button>
@@ -201,7 +201,7 @@ export default {
                 </div>
                 <!-- 底部压暗渐变 + 名字叠于图上；全库搜索时名字上方多一行真实分类链路 -->
                 <span class="card-vg" v-if="cardGroupBadge(file)"
-                      :data-tip="'这张是变体卡，属于「' + cardGroupBadge(file) + '」组'">{{ cardGroupBadge(file) }}</span>
+                      :data-tip="'这张是分支卡，属于「' + cardGroupBadge(file) + '」组'">{{ cardGroupBadge(file) }}</span>
                 <div class="card-caption" :class="{ 'has-path': showCardTab(file) }">
                   <span class="card-path" v-if="showCardTab(file)"
                         :data-tip="'所在分类：' + cardTabLabel(file)">{{ cardTabLabel(file) }}</span>
@@ -242,7 +242,7 @@ export default {
                    @pointerdown.stop="onTagPointerDown($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
                 <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
-                <!-- 变体组标签徽标：🔒 锁当前变体 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
+                <!-- 分支组标签徽标：🔒 锁当前分支 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
                 <span v-if="vgStateOf(item)"
                       class="vg-tag"
                       :class="'mode-' + vgStateOf(item).mode"
@@ -316,14 +316,14 @@ export default {
             {{ catMenu.catPicked ? '☑ 取消选中' : '☑ 选中' }}
           </button>
           <div class="ctx-sep"></div>
-          <!-- 分类 ⇄ 变体 互转：两者本质同构，只差 type 一位。
-               聚拢后该分类自己变成 type=entry 的变体组节点（它就是组名），其下词条成为各变体；
-                卡片右键「转为分类」可原路拆回（type 改回 category，各变体平铺）。 -->
+          <!-- 分类 ⇄ 分支 互转：两者本质同构，只差 type 一位。
+               聚拢后该分类自己变成 type=entry 的分支组节点（它就是组名），其下词条成为各分支；
+                卡片右键「转为分类」可原路拆回（type 改回 category，各分支平铺）。 -->
           <button type="button" class="ctx-item" :class="{ disabled: !catMenu.canToVg }" v-if="catMenu.toVgShown"
                   :disabled="!catMenu.canToVg"
-                  :data-tip="catMenu.canToVg ? ('把「' + catMenu.name + '」整个分类聚拢成一张变体卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各变体（之后可在卡片右键原路拆回分类）') : catMenu.toVgWhy"
+                  :data-tip="catMenu.canToVg ? ('把「' + catMenu.name + '」整个分类聚拢成一张分支卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各分支（之后可在卡片右键原路拆回分类）') : catMenu.toVgWhy"
                   @pointerdown.stop @click="catMenu.canToVg && onCtxToVg()">
-            🗂 聚拢成变体卡（分类 → 变体）
+            🗂 聚拢成分支卡（分类 → 分支）
           </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
@@ -347,27 +347,27 @@ export default {
             <!-- 多选态（框选/多张选中）右击时把选中张数挂到标题右侧，菜单项里就不再各自拖一串「N 项」 -->
             <span class="ctx-count" v-if="cardMenu.picked && cardMenu.pickCount > 1">{{ cardMenu.pickCount }} 项</span>
           </div>
-          <!-- 变体组卡片：右键即可把该卡的全部变体摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
+          <!-- 分支组卡片：右键即可把该卡的全部分支摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
           <button type="button" class="ctx-item vg-strip-entry" v-if="cardMenu.vgCount > 1"
                   @pointerdown.stop @click="onCardVgStrip">
-            🎞 变体胶片条（{{ cardMenu.vgCount }} 版）
+            🎞 分支胶片条（{{ cardMenu.vgCount }} 版）
           </button>
-          <!-- 变体组卡片：就地新建一个变体（落在同一分类下，自动成为组里的最新一版） -->
+          <!-- 分支组卡片：就地新建一个分支（落在同一分类下，自动成为组里的最新一版） -->
           <button type="button" class="ctx-item vg-add-entry" v-if="cardMenu.isVg"
                   @pointerdown.stop @click="onCardNewVersion">
-            ＋ 新建变体（并入本组）
+            ＋ 新建分支（并入本组）
           </button>
-          <!-- 变体组卡片：改组名 = 改这个变体组节点自己的 name；各变体只存短名，显示前缀自动跟着变 -->
+          <!-- 分支组卡片：改组名 = 改这个分支组节点自己的 name；各分支只存短名，显示前缀自动跟着变 -->
           <button type="button" class="ctx-item vg-rename-entry" v-if="cardMenu.isVg"
                   @pointerdown.stop @click="onCardVgRename">
-            ✎ 改变体组名（{{ cardMenu.vgTitle || '本组' }}）
+            ✎ 改分支组名（{{ cardMenu.vgTitle || '本组' }}）
           </button>
-          <!-- 变体组 ⇄ 分类只差 type 一位：转过去后组名当分类名，各变体成为该分类下的独立卡片。
-               各变体库里存的一直是短名，「组名#」前缀由渲染层拼，所以转换不需要动任何名字 -->
+          <!-- 分支组 ⇄ 分类只差 type 一位：转过去后组名当分类名，各分支成为该分类下的独立卡片。
+               各分支库里存的一直是短名，「组名#」前缀由渲染层拼，所以转换不需要动任何名字 -->
           <button type="button" class="ctx-item vg-to-cat-entry" v-if="cardMenu.canToCategory"
-                  :data-tip="'把这张变体卡还原成分类：组名当分类名，组内各变体平铺成独立卡片（名字本来只存短名，无需摘前缀）'"
+                  :data-tip="'把这张分支卡还原成分类：组名当分类名，组内各分支平铺成独立卡片（名字本来只存短名，无需摘前缀）'"
                   @pointerdown.stop @click="onCardToCategory">
-            🗂 转为分类（变体 → 分类）
+            🗂 转为分类（分支 → 分类）
           </button>
           <div class="ctx-sep" v-if="cardMenu.vgCount > 1 || cardMenu.isVg"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
@@ -378,9 +378,9 @@ export default {
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
               🎲 凝结为随机池
             </button>
-            <!-- 多选态：新建一个变体组（独立组头），把这批提示词整批挂上去；父级不一致会被拦下 -->
+            <!-- 多选态：新建一个分支组（独立组头），把这批提示词整批挂上去；父级不一致会被拦下 -->
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardVgJoin">
-              🗂 聚拢成变体组…
+              🗂 聚拢成分支组…
             </button>
             <div class="ctx-sep"></div>
           </template>
@@ -391,7 +391,7 @@ export default {
           <!-- 提示词卡片：新建一个独立组头，再把自己挂到这个新组头下（不借用自己当组头）；多选时整批一起挂 -->
           <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg && !cardMenu.picked"
                   @pointerdown.stop @click="onCardVgJoin">
-            🗂 聚拢成变体组…（弹框输组名）
+            🗂 聚拢成分支组…（弹框输组名）
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
@@ -403,8 +403,8 @@ export default {
         </div>
       </div>
 
-      <!-- 变体胶片条（方案 B）：从卡片右键菜单呼出，把该变体组全部变体横向摊开，
-           点一帧 = 把卡片切到该变体（与卡内 ‹ › 翻页改的是同一个游标，两处始终同步）。 -->
+      <!-- 分支胶片条（方案 B）：从卡片右键菜单呼出，把该分支组全部分支横向摊开，
+           点一帧 = 把卡片切到该分支（与卡内 ‹ › 翻页改的是同一个游标，两处始终同步）。 -->
       <div v-if="vgStrip.open" class="vg-strip-layer" @pointerdown.self="closeVgStrip">
         <div class="vg-strip">
           <div class="vg-strip-head">
@@ -515,16 +515,16 @@ export default {
       <!-- 新增词条弹窗 -->
       <div v-if="addCardOpen" class="edit-overlay" @click.self="closeAddCard">
         <div class="edit-dialog">
-          <div class="title">{{ addCardLock ? '新建变体' : '增加词条' }}</div>
+          <div class="title">{{ addCardLock ? '新建分支' : '增加词条' }}</div>
           <div class="hint" v-if="addCardLock" style="margin:-4px 0 10px">
-            将并入变体组：<b>{{ addCardLock.label }}</b>（与组内其它词条合并成 1 张卡，可翻页切换）
+            将并入分支组：<b>{{ addCardLock.label }}</b>（与组内其它词条合并成 1 张卡，可翻页切换）
           </div>
           <div class="field">
             <label>名字</label>
             <div class="name-with-prefix" v-if="addCardLock && addCardLock.label">
-              <span class="name-prefix" data-tip="前缀是所属变体组名，显示时自动拼、不入库；要改组名请右键该卡「改变体组名」">{{ addCardLock.label }}#</span>
+              <span class="name-prefix" data-tip="前缀是所属分支组名，显示时自动拼、不入库；要改组名请右键该卡「改分支组名」">{{ addCardLock.label }}#</span>
               <input ref="addCardInput" type="text" v-model="addCardName"
-                     placeholder="变体名" spellcheck="false"
+                     placeholder="分支名" spellcheck="false"
                      @keydown.enter="submitAddCard" @keydown.esc="closeAddCard">
             </div>
             <input v-else ref="addCardInput" type="text" v-model="addCardName"
@@ -600,8 +600,8 @@ export default {
               <span class="acc-arrow"></span>
             </div>
             <div v-show="acc.name" class="acc-body">
-              <!-- 变体条目也只有一个输入框：这里显示的就是这条词自己的完整名，
-                   与卡片标题、变体浮层、已选标签完全同一口径，不再拆「组名#」前缀 -->
+              <!-- 分支条目也只有一个输入框：这里显示的就是这条词自己的完整名，
+                   与卡片标题、分支浮层、已选标签完全同一口径，不再拆「组名#」前缀 -->
               <input type="text" v-model="editName" @keydown.enter="submitEdit">
             </div>
           </div>
@@ -657,14 +657,14 @@ export default {
         </div>
       </div>
 
-      <!-- 修改变体组名：组名就是这个变体组节点自己的 name。
-           各变体库里只存短名，「组名#短名」是渲染时拼的，所以改完这一个名字，全组显示名自动跟着变。 -->
+      <!-- 修改分支组名：组名就是这个分支组节点自己的 name。
+           各分支库里只存短名，「组名#短名」是渲染时拼的，所以改完这一个名字，全组显示名自动跟着变。 -->
       <div v-if="vgRenameOpen" class="edit-overlay">
         <div class="edit-dialog vg-rename-dialog">
-          <div class="title"><span class="title-text">修改变体组名</span></div>
+          <div class="title"><span class="title-text">修改分支组名</span></div>
           <div class="edit-body">
             <div class="hint" style="margin:0 0 10px">
-              改完组下 <b>{{ vgRenameCount }}</b> 个变体的显示名会自动变成「新组名#变体名」（库里只改这一个名字，各变体存的仍是自己那截短名）。
+              改完组下 <b>{{ vgRenameCount }}</b> 个分支的显示名会自动变成「新组名#分支名」（库里只改这一个名字，各分支存的仍是自己那截短名）。
             </div>
             <div class="field">
               <label>组名</label>
@@ -672,7 +672,7 @@ export default {
                      @keydown.enter="submitVgRename">
             </div>
             <div class="hint" v-if="vgRenamePreview" style="margin-top:8px">
-              变体名示例：<b>{{ vgRenamePreview }}</b>
+              分支名示例：<b>{{ vgRenamePreview }}</b>
             </div>
           </div>
           <div class="actions">
@@ -682,16 +682,16 @@ export default {
         </div>
       </div>
 
-      <!-- 聚拢成变体组（提示词入口）：先新建一条空组头，再把这批提示词整批挂到它下面。
+      <!-- 聚拢成分支组（提示词入口）：先新建一条空组头，再把这批提示词整批挂到它下面。
            组头是「新建的独立数据」，不借用选中的任何一张卡当组头，所以跟谁先被选中无关；
            这批提示词必须同属一个分类（父级完全一致），否则前端直接拦下，不跨分类搬词条。 -->
       <div v-if="vgJoin.open" class="edit-overlay">
         <div class="edit-dialog vg-rename-dialog">
-          <div class="title"><span class="title-text">聚拢成变体组</span></div>
+          <div class="title"><span class="title-text">聚拢成分支组</span></div>
           <div class="edit-body">
             <div class="hint" style="margin:0 0 10px">
-              将新建一个变体组（独立的组头数据），挂在分类 <b>{{ vgJoin.parentName || '—' }}</b> 下；
-              下面 <b>{{ vgJoin.items.length }}</b> 条提示词全部挂到这个新组头上，各自成为它的一个变体，
+              将新建一个分支组（独立的组头数据），挂在分类 <b>{{ vgJoin.parentName || '—' }}</b> 下；
+              下面 <b>{{ vgJoin.items.length }}</b> 条提示词全部挂到这个新组头上，各自成为它的一个分支，
               名字保留现在的短名，显示时自动拼成「组名#短名」，之后在同一张卡里翻页切换。
             </div>
             <div class="field">
@@ -700,10 +700,10 @@ export default {
                      @keydown.enter="submitVgJoin">
             </div>
             <div class="hint" v-if="vgJoinPreview" style="margin-top:8px">
-              变体名示例：<b>{{ vgJoinPreview }}</b>
+              分支名示例：<b>{{ vgJoinPreview }}</b>
             </div>
             <div class="hint" v-if="vgJoin.items.length > 1" style="margin-top:8px">
-              本次并入的变体名：{{ vgJoinNames }}
+              本次并入的分支名：{{ vgJoinNames }}
             </div>
           </div>
           <div class="actions">
@@ -839,7 +839,7 @@ export default {
     };
     // key 反查卡片对象：已选集合可能来自其它大类（分类整类选中 / 跨大类挑卡片），
     // 不能只查当前可见网格，否则切过大类后凝结会丢项。这里按「已加载的全部大类数据」建索引，
-    // 当前可见列表兜底（承载变体组折叠等临时字段）。
+    // 当前可见列表兜底（承载分支组折叠等临时字段）。
     const pickedFiles = () => {
       const byKey = new Map();
       const all = bankData.value || {};
@@ -958,8 +958,8 @@ export default {
       // showNegPreview：预览框是否展开「负面提示词」一行，默认展开。开关只在预览框上（pv-neg-toggle），不设独立设置面板。
       // searchByPath：搜索是否对分类生效，默认关闭（只匹配词条名）；
       // 开启后词条名或所在分类路径（tab / 各级分类）任一命中即算命中。设置入口在导航栏设置面板「词库设置」。
-      // hideVgNav：隐藏卡片右上角的变体切换框（‹ 1/3 ›），默认关闭；
-      // 开启后卡面只剩参考图翻页，变体切换改走右键「变体胶片条」。设置入口在导航栏设置面板「词库设置」。
+      // hideVgNav：隐藏卡片右上角的分支切换框（‹ 1/3 ›），默认关闭；
+      // 开启后卡面只剩参考图翻页，分支切换改走右键「分支胶片条」。设置入口在导航栏设置面板「词库设置」。
       const p = { columns: 4, translate: false, genCount: 1, autoSelectParent: true, showNegPreview: true, searchByPath: false, hideVgNav: false };
       try {
         const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
@@ -1477,7 +1477,7 @@ export default {
       }
     };
 
-    // 新建变体模式：{ parentId, label } —— parentId 锁死为变体组所在分类，忽略左侧选区
+    // 新建分支模式：{ parentId, label } —— parentId 锁死为分支组所在分类，忽略左侧选区
     const addCardLock = ref(null);
     const openAddCard = (lock) => {
       addCardLock.value = (lock && lock.parentId)
@@ -1498,13 +1498,13 @@ export default {
     };
     const submitAddCard = async () => {
       const name = addCardName.value.trim();
-      if (!name) { showToast(addCardLock.value ? '请输入变体名' : '请输入词条名', 'warn'); return; }
+      if (!name) { showToast(addCardLock.value ? '请输入分支名' : '请输入词条名', 'warn'); return; }
       // 库里只存短名，组名前缀是渲染层拼的、不入库。
       // 输入框只收 # 后那段；用户手打了「组名#」也照样剥掉，避免库里出现重复前缀。
       const pre = (addCardLock.value && addCardLock.value.label || '').trim();
       let shortName = name;
       if (pre && shortName.startsWith(pre + '#')) shortName = shortName.slice(pre.length + 1).trim();
-      if (!shortName) { showToast('请输入变体名', 'warn'); return; }
+      if (!shortName) { showToast('请输入分支名', 'warn'); return; }
       // 只校验用户真正敲进去的这一段：组名前缀是库里既有名字（可能自带 /），不该连累它报错
       if (/[\\/:*?"<>|]/.test(shortName)) {
         showToast('名字不能包含 \\ / : * ? " < > |', 'warn', 3600);
@@ -1517,7 +1517,7 @@ export default {
         for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) {
           if (Array.isArray(sel[i]) && sel[i].length) selId = String(sel[i][0] || '');
         }
-        // 父级 id：① 变体组锁定的锚点 id；② 选中的分类节点 id（左栏自带 id，不再反查）；
+        // 父级 id：① 分支组锁定的锚点 id；② 选中的分类节点 id（左栏自带 id，不再反查）；
         // ③ 整层没选分类时落到当前 tab 根。
         const parentId = addCardLock.value
           ? addCardLock.value.parentId
@@ -1542,10 +1542,10 @@ export default {
         addCardName.value = '';
         addCardContent.value = '';
         addCardContentCn.value = '';
-        showToast(lock ? '变体已创建（已并入该变体组）' : '词条已创建', 'success');
+        showToast(lock ? '分支已创建（已并入该分支组）' : '词条已创建', 'success');
         addCardLock.value = null;
         await load(true);
-        // 新建的变体自动翻到它，免得用户再一页页找
+        // 新建的分支自动翻到它，免得用户再一页页找
         if (lock) {
           const vkey = String(data.activeTab || '') + '|' + lock.parentId;
           const grp = vgRealMap.value[vkey] || { real: [] };
@@ -1595,7 +1595,7 @@ export default {
 
     // 编辑弹窗里这条词所属的组名（只用来剥「组名#xxx」这种手打前缀，不再显示成只读标签）。
     // 组名走和卡片标题同一套三级兜底，_vgTitle 丢了也能按 id 顺着树找回来。
-    // 普通词条不在变体组下，返回空串。
+    // 普通词条不在分支组下，返回空串。
     const editNamePrefix = computed(() => {
       const t = editTarget.value;
       if (!t) return '';
@@ -1605,7 +1605,7 @@ export default {
 
     const openEdit = (file) => {
       editTarget.value = file;
-      // 输入框直接显示这条词的完整名：与卡片标题、变体浮层、已选标签同一口径。
+      // 输入框直接显示这条词的完整名：与卡片标题、分支浮层、已选标签同一口径。
       // 名字没改动时按原样写回（默认版写回的就是组名，从此库里也是完整名，不再出现「默认」）。
       editName.value = cardDisplayName(file);
 
@@ -1631,7 +1631,7 @@ export default {
       const pre = (editNamePrefix.value || '').trim();
       let tail = nm;
       if (pre && tail.startsWith(pre + '#')) tail = tail.slice(pre.length + 1).trim();
-      if (!tail) return showToast('变体名不能为空', 'warn');
+      if (!tail) return showToast('分支名不能为空', 'warn');
       // 名字没动过就别改库：输入框显示的是完整名（默认版显示组名），照着写回去会把库里的
       // 「默认」改成组名，凭空制造出跟组头同名的条目。这里原样提交原值，等于什么都没改。
       const untouched = nm === cardDisplayName(editTarget.value);
@@ -1936,7 +1936,7 @@ export default {
       let max = 0;
       Object.values(bankData.value).forEach(cards => {
         cards.forEach(c => {
-          // chips 只装分类层，变体组的组名不再进 chips（组名只活在组节点 name 里），
+          // chips 只装分类层，分支组的组名不再进 chips（组名只活在组节点 name 里），
           // 所以这里直接用 chips 长度，不需要再减掉组名那一层
           const n = (c.chips && c.chips.length) || 0;
 
@@ -2085,8 +2085,8 @@ export default {
       return base.replace(/^\d+[_ ]+/, '');
     };
 
-    // parentId -> 子分类；跳过 Tab 根、词条节点（空壳锚点/变体条目的 type 不是 category，天然过滤）。
-    // 注意：分类级 vg（末级分类标了变体组）**仍然是分类层**，必须照常出现在左栏，
+    // parentId -> 子分类；跳过 Tab 根、词条节点（空壳锚点/分支条目的 type 不是 category，天然过滤）。
+    // 注意：分类级 vg（末级分类标了分支组）**仍然是分类层**，必须照常出现在左栏，
     // 它只影响「其下词条合并成一张卡」，不能连分类一起隐藏，否则用户会以为分类丢了。
     // 抽成 computed：左栏渲染、排序落库、唯一链下钻共用同一份分类树。
     const catKids = computed(() => {
@@ -2417,11 +2417,11 @@ export default {
       if (searchQ.value && searchScope.value === 'all') ensureSearchAll();
     });
 
-    // ============ 变体组（同一提示词的多变体） ============
-    // 数据侧：分类节点 prompt.vg=1 → 该分类下所有词条视为「同一提示词的多个变体」。
+    // ============ 分支组（同一提示词的多分支） ============
+    // 数据侧：分类节点 prompt.vg=1 → 该分类下所有词条视为「同一提示词的多个分支」。
     // 前端三种用法共用同一个游标 vgState[key].idx，互不打架：
-    //   A 常规：整组只出 1 张卡，卡面 ‹ › 翻页换变体（不用翻页器找"同一张脸"）
-    //   B 右键：卡片右键「变体胶片条」，把全部变体横向摊开，点哪帧切哪版
+    //   A 常规：整组只出 1 张卡，卡面 ‹ › 翻页换分支（不用翻页器找"同一张脸"）
+    //   B 右键：卡片右键「分支胶片条」，把全部分支横向摊开，点哪帧切哪版
     //   C 已选：标签上挂三态徽标 —— 🔒 锁定当前版（默认）/ 🎲 每次随机 / ∞ 顺序轮转
     const vgState = reactive({});   // { [vgKey]: { mode: 'locked'|'random'|'traverse', idx: 0, cursor: 0 } }
     // 三态独立存档：不能塞进 saveState —— saveState 在 setup 早期就会被调用，
@@ -2444,9 +2444,9 @@ export default {
     }, { deep: true });
     const VG_MODE_NEXT = { locked: 'random', random: 'traverse', traverse: 'locked' };
     // ---- 名字两段展示：库里只存短名，组名由渲染层沿祖先动态拼 ----
-    // 变体组 = type 为 entry、且其下有 entry 子节点的那个节点（它自己就是组名，不入 name）。
-    // 其下每条子提示词是同一组里的一个变体，name 只存短名；显示成「组名#变体名」时，前缀是拼的、永不入库。
-    // 这样改建组名只改这一个节点的 name（零级联），分类 ⇄ 变体互转也只改 type 一位，名字完全不动。
+    // 分支组 = type 为 entry、且其下有 entry 子节点的那个节点（它自己就是组名，不入 name）。
+    // 其下每条子提示词是同一组里的一个分支，name 只存短名；显示成「组名#分支名」时，前缀是拼的、永不入库。
+    // 这样改建组名只改这一个节点的 name（零级联），分类 ⇄ 分支互转也只改 type 一位，名字完全不动。
     const vgShortName = (name, group) => {
       const s = String(name || '');
       const g = String(group || '').trim();
@@ -2474,7 +2474,7 @@ export default {
       if (short.includes(g)) return short;
       return short + g;
     };
-    // 这条词所在变体组的组名：三种来源依次兜底，保证任何出口都能拼出完整名
+    // 这条词所在分支组的组名：三种来源依次兜底，保证任何出口都能拼出完整名
     //   1. 卡片/已选项上带的 _vgTitle（跨 tab、存档恢复、随机池都随项传递）
     //   2. 按组键回查（vgRealMap，全库索引）
     //   3. 按 id 顺着 bankNodes 的 parentId 找父节点是不是组头（历史存档只存了 id 的场景）
@@ -2499,14 +2499,14 @@ export default {
       const g = vgTitleFor(file);
       return vgFullName(file.name, g);
     };
-    // 变体身份牌：只要这张卡是某个变体组里的成员就挂（组头自己那张不挂）。
-    // 文案就是组名本身（不再加「变体 · 」前缀，卡名已含组名，不需要额外解释）。
+    // 分支身份牌：只要这张卡是某个分支组里的成员就挂（组头自己那张不挂）。
+    // 文案就是组名本身（不再加「分支 · 」前缀，卡名已含组名，不需要额外解释）。
     const cardGroupBadge = (file) => {
       if (!file) return '';
       if (vgGroupIds.value.has(String(file.id || ''))) return '';
       return vgTitleFor(file);
     };
-    // 兼容旧调用点：现在等于卡片上的变体身份牌文案（组名）
+    // 兼容旧调用点：现在等于卡片上的分支身份牌文案（组名）
     const cardNamePrefix = cardGroupBadge;
     // 悬浮提示就是这张卡自己的名字，不再拼「组名#」
     const fullNameOf = (file) => cardDisplayName(file);
@@ -2516,7 +2516,7 @@ export default {
       if (item._ph) return item.name || '';
       return cardDisplayName(item);
     };
-    // 变体组节点集合：自己 type=entry，且其下有 type=entry 的子节点
+    // 分支组节点集合：自己 type=entry，且其下有 type=entry 的子节点
     const vgGroupIds = computed(() => {
       const set = new Set();
       const nodes = bankNodes.value || {};
@@ -2537,9 +2537,9 @@ export default {
         && !String(card.content_cn || '').trim()
         && !String(card.neg || '').trim();
     };
-    // 卡片所属的变体组节点：卡片自己就是组节点时取自己；否则看库里真实的父节点是不是变体组。
+    // 卡片所属的分支组节点：卡片自己就是组节点时取自己；否则看库里真实的父节点是不是分支组。
     // 注意不能拿 chipIds 反推 —— chips 只装分类节点（组名那一层不入 chips），
-    // 子变体往上找只能靠 bankNodes 的 parentId 链。
+    // 子分支往上找只能靠 bankNodes 的 parentId 链。
     const vgNodeOf = (card) => {
       if (!card) return null;
       const nodes = bankNodes.value || {};
@@ -2556,7 +2556,7 @@ export default {
       const last = String(ids[ids.length - 1]);
       return vgGroupIds.value.has(last) ? (nodes[last] || null) : null;
     };
-    // 变体组键 = tab + 组节点 id：跨 tab 同 id 不撞车，改组名/改路径都不影响已选标签挂靠
+    // 分支组键 = tab + 组节点 id：跨 tab 同 id 不撞车，改组名/改路径都不影响已选标签挂靠
     const vgKeyOf = (card) => {
       const n = vgNodeOf(card);
       return n ? String(card.tab || '') + '|' + String(n.id) : '';
@@ -2565,7 +2565,7 @@ export default {
       if (!vgState[key]) vgState[key] = { mode: 'locked', idx: 0, cursor: 0 };
       return vgState[key];
     };
-    // 全量变体索引（不受当前筛选/搜索影响）：已选标签的变体池要能自解释，不能因切了筛选就失效
+    // 全量分支索引（不受当前筛选/搜索影响）：已选标签的分支池要能自解释，不能因切了筛选就失效
     const vgGroupMap = computed(() => {
       const map = {};
       for (const t of Object.keys(bankData.value)) {
@@ -2578,7 +2578,7 @@ export default {
       }
       // 排序口径：空壳组头永远排最前（它只是组名，不参与翻页编号）；
       // 组节点自己那张卡（有内容时也算一版，名字就是组名）紧随其后当 version 1；
-      // 剩下「默认」条目当第二，其余动作变体按库里原顺序（sort 稳定）。
+      // 剩下「默认」条目当第二，其余动作分支按库里原顺序（sort 稳定）。
       Object.keys(map).forEach((k) => {
         map[k].sort((a, b) => {
           const rank = (c) => {
@@ -2591,7 +2591,7 @@ export default {
       });
       return map;
     });
-    // 组内「真实变体」= 全量里剔除空壳组头。组头只提供组名与分组关系，
+    // 组内「真实分支」= 全量里剔除空壳组头。组头只提供组名与分组关系，
     // 因此翻页编号、出词、随机/遍历池一律只看 real，组头天然被跳过（不需要额外的 mute 特判）。
     const vgRealMap = computed(() => {
       const m = {};
@@ -2616,7 +2616,7 @@ export default {
       const vs = (g && g.real) || [];
       return (vs.length > 1) ? vs : null;
     };
-    // 变体组归并内核：把一组多变体压成一张代表卡（空壳组头自身永不出卡）。
+    // 分支组归并内核：把一组多分支压成一张代表卡（空壳组头自身永不出卡）。
     // 所有「会看到卡片」的出口——列表、左侧分类、层级深度、随机池、遍历池——都必须走它。
     // 只要哪个出口漏了归并，组名就会以「分类」的身份冒出来（左树凭空多一行「山间凉亭」）。
     function vgMergeCards(list) {
@@ -2632,11 +2632,11 @@ export default {
       const done = new Set();
       for (const c of src) {
         const k = vgKeyOf(c);
-        if (!k) { if (!vgIsShellCard(c)) out.push(c); continue; }  // 非变体组：原样输出
+        if (!k) { if (!vgIsShellCard(c)) out.push(c); continue; }  // 非分支组：原样输出
         if (done.has(k)) continue;
         done.add(k);
-        // 变体池取「真实变体」全量索引（已剔除空壳组头、已把「默认」排到 version 1），
-        // 不受当前筛选/搜索影响：同一提示词的动作变体被筛选条件滤掉时，卡内翻变体仍应能翻到它。
+        // 分支池取「真实分支」全量索引（已剔除空壳组头、已把「默认」排到 version 1），
+        // 不受当前筛选/搜索影响：同一提示词的动作分支被筛选条件滤掉时，卡内翻分支仍应能翻到它。
         const grp = vgRealMap.value[k] || { head: null, real: [], title: '' };
         const vs = (grp.real && grp.real.length) ? grp.real : (groups.get(k) || []).filter(c => !vgIsShellCard(c));
         if (!vs.length) continue;                 // 组里只剩空壳组头：没有任何词可出，整组不出卡
@@ -2650,7 +2650,7 @@ export default {
           _vgKey: k, _vgVersions: vs, _vgIdx: idx, _vgCount: vs.length,
           // 组名取组节点自己的 name（已在 vgRealMap 里解析好）
           _vgTitle: grp.title || '',
-          // 变体条目在库里的链路比组节点多一层（组名），合并成一张卡后统一用组节点的链路，
+          // 分支条目在库里的链路比组节点多一层（组名），合并成一张卡后统一用组节点的链路，
           // 这样左侧筛选、全库搜索的「所在分类」与合并后的卡一致，不会露出组名这一层
           chips: head ? head.chips : base.chips,
           chipKeys: head ? head.chipKeys : base.chipKeys,
@@ -2660,7 +2660,7 @@ export default {
       return out;
     }
 
-    // 当前可见卡片按变体组归并：组内只保留一张代表卡，其余变体挂在 _vgVersions 上随卡走
+    // 当前可见卡片按分支组归并：组内只保留一张代表卡，其余分支挂在 _vgVersions 上随卡走
     const viewCards = computed(() => vgMergeCards(listFiles.value || []));
     // 手动翻页：只挪游标（不改用户设的三态模式，避免静默推翻他的设置）
     const vgStep = (file, d) => {
@@ -2672,12 +2672,12 @@ export default {
       st.idx = ((cur + d) % vs.length + vs.length) % vs.length;
     };
     const vgGroupTitle = (file) => {
-      // 卡片级变体组：组名就是空壳锚点（组头节点）的名字，如「进气口刘海」。
+      // 卡片级分支组：组名就是空壳锚点（组头节点）的名字，如「进气口刘海」。
       // 一律走 vgTitleFor 的三级兜底；绝不能拿分类 chips 拼路径当组名（那不是组名，
       // 画到卡面/胶片条上会变成「刘海／侧发」这种长串，看起来就像认错了人）。
       return vgTitleFor(file);
     };
-    // 新建变体时的组名提示：只用于弹窗里给用户看，名字本身仍只存短名、不拼前缀
+    // 新建分支时的组名提示：只用于弹窗里给用户看，名字本身仍只存短名、不拼前缀
     const vgNewVersionPrefix = (file) => {
       if (!file) return '';
       return String(vgGroupTitle(file) || '').trim();
@@ -2699,7 +2699,7 @@ export default {
     const closeVgStrip = () => { vgStrip.open = false; };
     // 胶片条帧名：与卡片标题同一口径（该版叫「默认」就直接显示组名，不显示占位词）；
     // 帧里的对象是库里的原始卡，没有 _vgKey，所以组名一律取 vgStrip.title
-    // 变体切换浮层里也显示完整名（「单眼刘海」），与卡片标题同一口径
+    // 分支切换浮层里也显示完整名（「单眼刘海」），与卡片标题同一口径
     const vgStripName = (v) => vgFullName((v && v.name) || '', String(vgStrip.title || '').trim());
     const pickVgStrip = (i) => {
       if (!vgStrip.versions[i]) return;
@@ -2734,9 +2734,9 @@ export default {
     };
     const vgTagTip_text = (st) => {
       if (!st) return '';
-      if (st.mode === 'random') return '随机变体：预览/运行时每次从这一组里随机取一版（点击 → 切换为顺序轮转）';
-      if (st.mode === 'traverse') return '轮转变体：预览/运行时按顺序一版一版轮着走（点击 → 切回锁定）';
-      return '锁定变体：固定用卡片当前这一版（点击 → 切换为随机）';
+      if (st.mode === 'random') return '随机分支：预览/运行时每次从这一组里随机取一版（点击 → 切换为顺序轮转）';
+      if (st.mode === 'traverse') return '轮转分支：预览/运行时按顺序一版一版轮着走（点击 → 切回锁定）';
+      return '锁定分支：固定用卡片当前这一版（点击 → 切换为随机）';
     };
     const vgCycleMode = (item) => {
       const st = vgStateOf(item);
@@ -2744,8 +2744,8 @@ export default {
       st.mode = VG_MODE_NEXT[st.mode] || 'locked';
       if (st.mode === 'locked') st.cursor = 0;
     };
-    // 运行出口取变体：locked 用当前版；random 每次随机；traverse 顺序轮转并推进游标。
-    // 自动模式下一律跳过已静音的变体（整组都静音则不过滤，保证总有变体可用）。
+    // 运行出口取分支：locked 用当前版；random 每次随机；traverse 顺序轮转并推进游标。
+    // 自动模式下一律跳过已静音的分支（整组都静音则不过滤，保证总有分支可用）。
     const resolveVgForRun = (item) => {
       const vs = vgVersionsOf(item);
       if (!vs) return item;
@@ -2772,7 +2772,7 @@ export default {
         _vgTitle: (vgRealMap.value[item._vgKey] || {}).title || item._vgTitle || '',
       });
     };
-    // 预览出口取变体：随机模式下也不抖 —— 只按当前游标展示，不推进游标
+    // 预览出口取分支：随机模式下也不抖 —— 只按当前游标展示，不推进游标
     const resolveVgForPreview = (item) => {
       const vs = vgVersionsOf(item);
       if (!vs) return item;
@@ -3265,8 +3265,8 @@ const submitAddTab = async () => {
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
       ? (bankNodes.value[String(tabIds.value[keyOrId] || '')] || null)
       : (bankNodes.value[String(keyOrId || '')] || null));
-    // 该分类下是否还挂着子分类：变体组的分类级形态只允许落在「末级分类」。
-    // 分类下还有子分类时，把它标成变体组会把整棵子树的词条都压进一张卡，语义和入口全乱，
+    // 该分类下是否还挂着子分类：分支组的分类级形态只允许落在「末级分类」。
+    // 分类下还有子分类时，把它标成分支组会把整棵子树的词条都压进一张卡，语义和入口全乱，
     // 所以菜单项直接不给点（后端 post_wordbank_vg 也会再拦一次，前端只是提前告知）。
     const catHasChildCat = (id) => {
       const key = String(id || '');
@@ -3277,7 +3277,7 @@ const submitAddTab = async () => {
         return n && String(n.parentId || '') === key && String(n.type || 'category') === 'category';
       });
     };
-    // 该分类下是否已经挂着词条：空分类聚拢成变体组只会得到一个「没有任何变体的组」，
+    // 该分类下是否已经挂着词条：空分类聚拢成分支组只会得到一个「没有任何分支的组」，
     // 菜单项直接不给点（后端 post_wordbank_convert 也会再拦一次，前端只是提前告知）。
     const catHasEntry = (id) => {
       const key = String(id || '');
@@ -3288,8 +3288,8 @@ const submitAddTab = async () => {
         return n && String(n.parentId || '') === key && String(n.type || 'category') === 'entry';
       });
     };
-    // 该分类下是否已经挂着「变体卡」（= 子项是 entry 且自己还有子条目）。
-    // 这种子项本身就是变体组，再往上聚拢就会变成「变体组里套变体组」，前端渲染时组头渲染成组头、
+    // 该分类下是否已经挂着「分支卡」（= 子项是 entry 且自己还有子条目）。
+    // 这种子项本身就是分支组，再往上聚拢就会变成「分支组里套分支组」，前端渲染时组头渲染成组头、
     // 内层组头又被当成普通卡片，结果就是分类部件消失但提示词看起来没变化。所以这种情况不给聚拢。
     const catHasVgChild = (id) => {
       const key = String(id || '');
@@ -3335,14 +3335,14 @@ const submitAddTab = async () => {
       catMenu.pool = poolKindOf(kind, isChip ? id : keyOrNode);
       catMenu.muted = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).mute);
 
-      // 该分类下是否还挂着子分类：变体组的分类级形态只允许落在「末级分类」上
+      // 该分类下是否还挂着子分类：分支组的分类级形态只允许落在「末级分类」上
       catMenu.hasChildCat = isChip ? catHasChildCat(id) : false;
-      // 该分类下是否已经挂着变体卡：变体卡自己就是一个组，再往上聚拢会变成组套组
+      // 该分类下是否已经挂着分支卡：分支卡自己就是一个组，再往上聚拢会变成组套组
       catMenu.hasVgChild = isChip ? catHasVgChild(id) : false;
-      // 「分类 → 变体」互转是否可用：非 Tab、真分类、末级（无子分类）、有父级、且其下已有词条。
+      // 「分类 → 分支」互转是否可用：非 Tab、真分类、末级（无子分类）、有父级、且其下已有词条。
       // chip 视图对象只带 {id,parentId,name}（没有 type/vg），所以类型一律回 bankNodes 里查全量节点。
       const catNode = isChip ? ((bankNodes.value || {})[id] || null) : null;
-      // 是真分类（非 Tab 根、非变体卡/组头）就一直显示这一项，不满足条件时置灰并说明原因，
+      // 是真分类（非 Tab 根、非分支卡/组头）就一直显示这一项，不满足条件时置灰并说明原因，
       // 避免「菜单里莫名其妙没有这一项」。
       catMenu.toVgShown = isChip && !!catNode
         && String(catNode.type || '') === 'category'
@@ -3353,9 +3353,9 @@ const submitAddTab = async () => {
         && catHasEntry(id);
       catMenu.toVgWhy = !catMenu.toVgShown ? ''
         : (catMenu.hasVgChild
-          ? '该分类下已经是变体卡，再聚拢会变成「变体组里套变体组」；先把它们转回分类再聚拢'
+          ? '该分类下已经是分支卡，再聚拢会变成「分支组里套分支组」；先把它们转回分类再聚拢'
           : (catMenu.hasChildCat
-            ? '该分类下还有子分类，只能对末级分类聚拢成变体卡'
+            ? '该分类下还有子分类，只能对末级分类聚拢成分支卡'
             : (!catHasEntry(id) ? '该分类下还没有词条，聚拢只会得到一个空组' : '')));
       // 分类项数：只喂给标题右上角的数量角标（大类是懒加载的，没拉过给 -1，角标显示「未加载」）。
       const pickTab = isChip ? data.activeTab : keyOrNode;
@@ -3453,12 +3453,12 @@ const submitAddTab = async () => {
       // 该卡片是否在框选集合里 → 决定右键菜单是否多出「凝结为池」两项
       cardMenu.picked = isPicked(file);
       cardMenu.pickCount = pickSel.size;
-      // 变体组卡片才有「变体胶片条」入口；单条/非变体组恒为 0，菜单项自动隐藏
+      // 分支组卡片才有「分支胶片条」入口；单条/非分支组恒为 0，菜单项自动隐藏
       cardMenu.vgCount = (file._vgVersions && file._vgVersions.length) || 0;
       cardMenu.isVg = !!file._vgKey;
       cardMenu.vgTitle = vgGroupTitle(file) || '';
-      // 「变体 → 分类」：只要是变体组（组节点是 entry）就能拆回分类，改的只是 type 一位，
-      // 各变体库里存的一直是短名，不需要摘任何前缀。
+      // 「分支 → 分类」：只要是分支组（组节点是 entry）就能拆回分类，改的只是 type 一位，
+      // 各分支库里存的一直是短名，不需要摘任何前缀。
       const aid = vgAnchorIdOf(file);
       const anode = aid ? ((bankNodes.value || {})[String(aid)] || null) : null;
       cardMenu.canToCategory = !!(cardMenu.isVg && anode && String(anode.type || '') === 'entry');
@@ -3543,10 +3543,10 @@ const submitAddTab = async () => {
     };
 
 
-    // ============ 分类 ⇄ 变体 互转（两者本质同构，只差 type 一位） ============
+    // ============ 分类 ⇄ 分支 互转（两者本质同构，只差 type 一位） ============
     // 同一件事的两个方向，走同一个后端接口，只差 to：
-    //   to='vg'       末级分类 → 变体组（该分类自己变成 type=entry 的组节点，其下词条成为各变体）
-    //   to='category' 变体组 → 分类（组名当分类名，各变体平铺成该分类下的独立卡片）
+    //   to='vg'       末级分类 → 分支组（该分类自己变成 type=entry 的组节点，其下词条成为各分支）
+    //   to='category' 分支组 → 分类（组名当分类名，各分支平铺成该分类下的独立卡片）
     // 名字一律只存短名、组名靠渲染层拼，所以转换只动 type 一位，一个字的名字都不用改。
 
     const convertBusy = ref(false);
@@ -3565,10 +3565,10 @@ const submitAddTab = async () => {
         const moved = Number(json.children || json.moved || 0);
 
         showToast(to === 'category'
-          ? '已把变体组「' + (json.name || '') + '」还原成分类'
-            + (moved ? '（' + moved + ' 个变体平铺成该分类下的独立卡片）' : '')
-          : '已把分类「' + (json.name || '') + '」聚拢成变体卡'
-            + (moved ? '（' + moved + ' 条提示词成为组内各变体，合并成 1 张卡翻页）' : ''),
+          ? '已把分支组「' + (json.name || '') + '」还原成分类'
+            + (moved ? '（' + moved + ' 个分支平铺成该分类下的独立卡片）' : '')
+          : '已把分类「' + (json.name || '') + '」聚拢成分支卡'
+            + (moved ? '（' + moved + ' 条提示词成为组内各分支，合并成 1 张卡翻页）' : ''),
 
           'success', 3800);
         await load(true);
@@ -3589,7 +3589,7 @@ const submitAddTab = async () => {
       doConvert(id, 'category');
     };
 
-    // ---- 从卡片直接管变体：新建变体 / 一键标为变体组（不必再回左侧分类树右键） ----
+    // ---- 从卡片直接管分支：新建分支 / 一键标为分支组（不必再回左侧分类树右键） ----
     // 卡片所属的最末级分类 id（必须真是分类节点，Tab 根与散卡返回空）
     const cardCatIdOf = (card) => {
       const ids = Array.isArray(card && card.chipIds) ? card.chipIds : [];
@@ -3599,7 +3599,7 @@ const submitAddTab = async () => {
       if (!n || String(n.type || '') !== 'category') return '';
       return String(id);
     };
-    // 变体组锚点 id：_vgKey 形如 tab|锚点id。新变体一律挂到锚点下面（变体之间平等，无母体继承）
+    // 分支组锚点 id：_vgKey 形如 tab|锚点id。新分支一律挂到锚点下面（分支之间平等，无母体继承）
     const vgAnchorIdOf = (f) => {
       const k = f && f._vgKey;
       if (!k) return '';
@@ -3610,12 +3610,12 @@ const submitAddTab = async () => {
     const openNewVersionFor = (f) => {
       if (!f) return;
       const anchorId = vgAnchorIdOf(f) || cardCatIdOf(f);
-      if (!anchorId) { showToast('这张卡不在分类或变体组下，先把它放进分类再建变体', 'warn'); return; }
+      if (!anchorId) { showToast('这张卡不在分类或分支组下，先把它放进分类再建分支', 'warn'); return; }
       openAddCard({ parentId: anchorId, label: vgNewVersionPrefix(f) });
     };
 
-    // ============ 修改变体组名（只改组节点自己的 name，零级联） ============
-    // 组名就是这个变体组节点自己的 name；各变体库里只存短名，「组名#短名」是渲染时拼的，
+    // ============ 修改分支组名（只改组节点自己的 name，零级联） ============
+    // 组名就是这个分支组节点自己的 name；各分支库里只存短名，「组名#短名」是渲染时拼的，
     // 所以改完这一个名字，全组显示名自动跟着变，不需要刷新任何子条目。
 
     const vgRenameOpen = ref(false);
@@ -3688,13 +3688,13 @@ const submitAddTab = async () => {
       closeCardMenu();
       openNewVersionFor(f);
     };
-    // ============ 聚拢成变体组（提示词入口，单个 / 多选共用） ============
+    // ============ 聚拢成分支组（提示词入口，单个 / 多选共用） ============
     // 组头一律新建：后端在建组时插一条空 entry 当组头，再把这批卡改挂到它下面，
     // 所以不存在「借第一张卡当组头」这种由点击顺序决定的结构，也没有随机的挂载父级。
     // 前提是这批卡父级完全一致（同一个分类），否则没法确定组头挂哪儿，直接拒绝。
 
     const vgJoin = reactive({ open: false, name: '', suggest: '', parentName: '', busy: false, items: [] });
-    // 变体名：只留短名那段；老库里残留的「旧组#名」前缀在这里现剥，避免拼出「新组#旧组#变体」套娃
+    // 分支名：只留短名那段；老库里残留的「旧组#名」前缀在这里现剥，避免拼出「新组#旧组#分支」套娃
     const vgJoinTail = (f) => vgShortName((f && f.name) || '').trim();
 
     const vgJoinPreview = computed(() => {
@@ -3724,7 +3724,7 @@ const submitAddTab = async () => {
         if (k) keys.add(String(k));
       });
       if (keys.size > 1) {
-        showToast('选中的卡片分属 ' + keys.size + ' 个不同变体组，一次只能并入同一个组', 'warn', 3600);
+        showToast('选中的卡片分属 ' + keys.size + ' 个不同分支组，一次只能并入同一个组', 'warn', 3600);
         return;
       }
       // 新组头挂到哪个父级下，由这批卡在库里的「真实父节点」唯一决定（不是点击先后）。
@@ -3737,7 +3737,7 @@ const submitAddTab = async () => {
         pids.add(pid);
       });
       if (orphan || pids.size !== 1) {
-        showToast('选中的这批提示词不在同一个分类下（父级必须完全一致），无法聚拢成一个变体组', 'warn', 4400);
+        showToast('选中的这批提示词不在同一个分类下（父级必须完全一致），无法聚拢成一个分支组', 'warn', 4400);
         return;
       }
       const parentNode = bankNodes.value[[...pids][0]] || {};
@@ -3768,7 +3768,7 @@ const submitAddTab = async () => {
         if (json.error) { showToast('聚拢失败：' + json.error, 'error', 4400); return; }
         const n = Number(json.count || 0);
         const gname = String(json.group || nm);
-        showToast('已新建变体组「' + gname + '」，' + n + ' 条提示词挂到该组下', 'success', 3600);
+        showToast('已新建分支组「' + gname + '」，' + n + ' 条提示词挂到该组下', 'success', 3600);
 
         closeVgJoin();
         clearPick();
@@ -4169,7 +4169,7 @@ const submitAddTab = async () => {
       if (file.images && file.images.length) fullViewer.open(imageUrl(file.images[getImgIdx(file)]), file.name || '');
       else fullViewer.open(defaultImageUrl, (file.name || '') + '（暂无参考图）');
     };
-    // 切换提示词：以当前可见卡片（分类浏览结果或搜索结果，已按变体组归并）为范围，dir=±1 上下一条
+    // 切换提示词：以当前可见卡片（分类浏览结果或搜索结果，已按分支组归并）为范围，dir=±1 上下一条
     const zoomWordAt = (dir) => {
       const cur = zoomCtx.file;
       const list = viewCards.value;
@@ -4313,9 +4313,9 @@ const submitAddTab = async () => {
       zhuleLog('poolCandidates: chip池', 'tab=', item.tab, 'chipId=', id, 'count=', out.length, 'total=', files.length, 'sampleChipIds=', files.slice(0, 3).map(f => f.chipIds));
       return out;
     };
-    // 变体组在池子里只算「一个可抽项」：同组多变体折叠成 1 条代表（带上 _vgKey），
+    // 分支组在池子里只算「一个可抽项」：同组多分支折叠成 1 条代表（带上 _vgKey），
     // 抽中后由该组的三态（锁定当前版 / 每次随机 / 顺序轮转）决定最终用哪一版。
-    // 不折叠的话，一个 6 变体分类会在随机池里被当成 6 条不同提示词，抽重率被放大 6 倍。
+    // 不折叠的话，一个 6 分支分类会在随机池里被当成 6 条不同提示词，抽重率被放大 6 倍。
     const poolCandidates = (item) => {
       const raw = poolCandidatesRaw(item);
       if (!raw || !raw.length) return raw;
@@ -4325,14 +4325,14 @@ const submitAddTab = async () => {
         if (!f) continue;
         const k = vgKeyOf(f);
         if (!k) {
-          // 非变体组：空壳节点（组头自己没内容）不能进池，否则会抽出空词条
+          // 非分支组：空壳节点（组头自己没内容）不能进池，否则会抽出空词条
           if (!vgIsShellCard(f)) out.push(f);
           continue;
         }
         if (seen.has(k)) continue;
         seen.add(k);
-        // 抽到的是「组」而不是「某一条」：代表固定取真实变体里的当前游标那一版，
-        // 与卡片上看到的变体一致；最终用哪一版仍由三态在出词时决定。
+        // 抽到的是「组」而不是「某一条」：代表固定取真实分支里的当前游标那一版，
+        // 与卡片上看到的分支一致；最终用哪一版仍由三态在出词时决定。
         const grp = vgRealMap.value[k] || { head: null, real: [], title: '' };
         const vs = grp.real || [];
         if (!vs.length) continue;
@@ -4537,7 +4537,7 @@ const submitAddTab = async () => {
 
     const runGenerate = async () => {
       const count = pref.genCount;
-      // 运行前统一自愈选区 id（遍历分支与普通模式两条出口都依赖 selected 里的词条 id）
+      // 运行前统一自愈选区 id（遍历模式与普通模式两条出口都依赖 selected 里的词条 id）
       healSelectedIds();
       // 默认跑法 = 遍历：有 ∞ 遍历池时，遍历池词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条，
       // 「次数」= 整套组合重复几轮（0 按 1 轮）。没有 ∞ 遍历池时退回普通模式（手选词条 / 随机池各抽一条），
@@ -4601,7 +4601,7 @@ const submitAddTab = async () => {
         return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
       }
       // 运行前统一展开继承：分类链上的 en/cn/neg/override 逐层拼到词条自己身上
-      // 变体组在这里定版：锁定=当前版、随机=这次抽一版、轮转=顺序推进一格（一次点运行定一次）
+      // 分支组在这里定版：锁定=当前版、随机=这次抽一版、轮转=顺序推进一格（一次点运行定一次）
       const expanded = expandItems(applyVgToItems(readyItems));
       const text = expanded.map(s => s.content).join(', ');
       // 通过 BroadcastChannel 广播运行指令，节点 _selected 直接承载词条。
@@ -4777,7 +4777,7 @@ const submitAddTab = async () => {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
         // tab 以卡片自带的为准（全库搜索结果里卡片可能不属于当前 activeTab）
-        // _vgKey：变体组键，随已选项一起带走，标签三态与运行取变体都靠它回查变体池
+        // _vgKey：分支组键，随已选项一起带走，标签三态与运行取分支都靠它回查分支池
         item: { tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '' },
         noDrag: existIdx >= 0,
       };
@@ -4788,7 +4788,7 @@ const submitAddTab = async () => {
     };
 
     const onTagPointerDown = (e, idx) => {
-      // .vg-tag 是标签上的变体三态徽标，点它切模式，不能触发标签拖拽
+      // .vg-tag 是标签上的分支三态徽标，点它切模式，不能触发标签拖拽
       if (e.button !== 0 || e.target.closest('.close') || e.target.closest('.vg-tag')) return;
       if (pDrag.pending) {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
@@ -4984,7 +4984,7 @@ const submitAddTab = async () => {
         neg: file.neg || '', override: file.override || '',
         // 父级分类属性链随选区一起存快照：运行/预览都按它递归继承，历史选区也能自解释
         anc: file.anc || [],
-        // 变体组键：标签三态与运行时取变体靠它回查变体池（非变体组为空串，逻辑全跳过）
+        // 分支组键：标签三态与运行时取分支靠它回查分支池（非分支组为空串，逻辑全跳过）
         _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '',
       });
     };
@@ -5054,7 +5054,7 @@ const submitAddTab = async () => {
       showCardTab, cardTabLabel,
       listCountLabel, emptyText, searchPh, searchTip, toggleSearchScope, clearSearch, onSearchEsc, onBoardBlankDown,
       pageIndex, pageCount, pageNumbers, visibleFiles, goPrevPage, goNextPage, goPage,
-      // 变体组（同一提示词的多变体）：A 卡片翻页 / B 右键胶片条 / C 已选标签三态
+      // 分支组（同一提示词的多分支）：A 卡片翻页 / B 右键胶片条 / C 已选标签三态
       viewCards, vgStep, vgState, vgStateOf, vgTagLabel, vgTagTip, vgCycleMode,
       vgStrip, openVgStrip, closeVgStrip, pickVgStrip, onCardVgStrip, onCardVgRename,
       getSelections,
@@ -5085,7 +5085,7 @@ const submitAddTab = async () => {
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
       addCardOpen, addCardName, addCardContent, addCardContentCn, addCardInput, addingCard, openAddCard, closeAddCard, submitAddCard, addCardLock,
       onCardNewVersion, onCardVgJoin, openNewVersionFor,
-      // 并入变体组（提示词入口，单卡 / 多选共用）：弹框输总名，现名退到 # 后当变体名
+      // 并入分支组（提示词入口，单卡 / 多选共用）：弹框输总名，现名退到 # 后当分支名
       vgJoin, vgJoinPreview, vgJoinNames, openVgJoin, closeVgJoin, submitVgJoin,
       // 名字显示口径：标题只放这一版自己的名字（「默认」版放组名），组名单独作为卡片上方的标志
       vgShortName, vgFullName, vgStripName, fullNameOf, selDisplayName, vgGroupTitleOf, cardDisplayName, cardGroupBadge, cardNamePrefix, editNamePrefix,

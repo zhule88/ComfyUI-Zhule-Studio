@@ -546,12 +546,12 @@ def _tag_tree_from_cache(tree_nodes):
             if nd.get("type") == "entry":
                 # mute：词条静音标记（1=静音）。前端「隐藏被静音的提示词」开关开启时据此过滤节点
                 #
-                # 变体组入口是一种特殊 entry：它自己有名字（组名）也可能带内容，下面挂的是
-                # 同一提示词的各个变体（同样都是 entry）。判据只有一条——有子节点就是变体组，
-                # 没有就是普通词条。标签树必须把它当「可展开的分组容器」往下递归，否则各变体
+                # 分支组入口是一种特殊 entry：它自己有名字（组名）也可能带内容，下面挂的是
+                # 同一提示词的各个分支（同样都是 entry）。判据只有一条——有子节点就是分支组，
+                # 没有就是普通词条。标签树必须把它当「可展开的分组容器」往下递归，否则各分支
                 # 标签在树里彻底消失，连带三个后果：
-                #   ① 词库卡片跳图库带的是变体 id，树里查不到名字，过滤区只能露出裸数字 id；
-                #   ② 组头自己若不出词，不汇总子变体时它的关联数恒为 0；
+                #   ① 词库卡片跳图库带的是分支 id，树里查不到名字，过滤区只能露出裸数字 id；
+                #   ② 组头自己若不出词，不汇总子分支时它的关联数恒为 0；
                 #   ③ 点组头做不了「整组聚合筛选」（子树 id 展开依赖树结构）。
                 # 普通 entry 仍是叶子。
                 _vg = 1 if (nd.get("children") or []) else 0
@@ -561,7 +561,7 @@ def _tag_tree_from_cache(tree_nodes):
                         "depth": depth, "leaf": not bool(kids), "children": kids,
                         "mute": int(nd.get("mute") or 0)}
                 if _vg:
-                    # 前端据此把该词条当变体组入口（可展开/整组筛选），与普通词条标签区分
+                    # 前端据此把该词条当分支组入口（可展开/整组筛选），与普通词条标签区分
                     node["vg"] = 1
             else:
                 kids = build(nd.get("children") or [], depth + 1,
@@ -676,7 +676,7 @@ def _tag_name_index():
             and _TAG_NAME_CACHE["sig"] == sig \
             and (now - _TAG_NAME_CACHE["ts"]) < _TREE_TTL:
         return _TAG_NAME_CACHE["data"]
-    # 按 id 直取（不做同名去重）：同名词条存在于多个分支时，非首个 id 也必须能还原
+    # 按 id 直取（不做同名去重）：同名词条存在于多个子树时，非首个 id 也必须能还原
     data = db.tag_name_by_id_index()
     _TAG_NAME_CACHE.update({"ts": now, "sig": sig, "data": data})
     return data
@@ -1067,7 +1067,7 @@ def _tag_anc_ids():
 def _prompt_subtree_ids(pid):
     """词条 id 的子树 id 集合（含自身）。
 
-    SQL 过滤前把父级词条展开成全部后代，保持"筛选父级词条命中其分支下图片"
+    SQL 过滤前把父级词条展开成全部后代，保持"筛选父级词条命中其子树下图片"
     的既有 anc 语义（gallery_tag.prompt_id 只存直接关联的叶子词条）。
     """
     pid = str(pid).strip()
@@ -1119,7 +1119,7 @@ def _tag_id_global():
 
 def _tag_hit(tag, rec_tags, anc, rel_map=None):
     """标签命中：直接匹配 或 图片某直接 tag 的祖先归属包含该标签；
-    带 rel（词条相对路径）时按 rel 子树精确匹配，仅命中该层级分支下的词条。
+    带 rel（词条相对路径）时按 rel 子树精确匹配，仅命中该层级子树下的词条。
 
     id 归并兜底：词条改名/移动后，图片上仍存旧 name，而筛选用的是新 name；
     通过 tagIds 把双方归并到同一 id 后仍可命中（定位用 id、展示用 name）。
@@ -1317,7 +1317,7 @@ def _gallery_filtered(query):
         _, anc = get_tag_tree()
         use_tags = tags + ltags
         filtered = [r for r in records if _matches(r, use_tags, models, loras, q, anc, tag_mode)]
-        # 自定义标签 id 不被 legacy 路径吞掉：老状态混入任一无 id 标签（ltags 非空）即走进本分支，
+        # 自定义标签 id 不被 legacy 路径吞掉：老状态混入任一无 id 标签（ltags 非空）即走本逻辑分支，
         # 此前 ctags 在此被完全忽略 → 自定义标签筛选整体失效。ctags 仍走 SQL 直查后按 mode 合并：
         # and=与内存结果交集；or=把 ctags 命中但 tags/ltags 未命中的图补入（其余条件仍需满足）
         if ctags:
@@ -1332,7 +1332,7 @@ def _gallery_filtered(query):
                     filtered = [r for r in filtered if r.get("id") in cgids]
     else:
         # 父级词条展开为子树 id（保持 anc 语义），再交给 SQL 直查 gallery_tag；
-        # 每个词条一个分组，and 模式逐组命中后交集（图须同时挂这些词条分支的标签）
+        # 每个词条一个分组，and 模式逐组命中后交集（图须同时挂这些词条子树的标签）
         prompt_groups = []
         for t in tags:
             n = t[0] if isinstance(t, tuple) else t
@@ -1477,7 +1477,7 @@ def _build_custom_tag_tree():
 
     custom_tag 表按 parent_id 组织层级；构造为与词库树同构的节点
     [{id, name, rel, leaf, children}]，rel 用**完整路径**（'测试/喜欢'）保证节点 key 唯一。
-    顶层**不包总壳**：直接返回自定义标签的顶层节点数组（如 '测试' 分支），
+    顶层**不包总壳**：直接返回自定义标签的顶层节点数组（如 '测试' 子树），
     由调用方拼到词库树之后，二者同级并列（来源靠 isCustom 标记区分）。
     """
     rows = db.custom_tag_rows()
@@ -1588,7 +1588,7 @@ async def get_gallery_detail(request):
     _counts = db.gallery_tag_counts()
     tags = []
     # rec['tags'] 是「词条名 + 自定义标签完整路径」的合并数组（列表卡片共用同一份），
-    # 详情需把自定义标签全部交给下方 custom 分支渲染，否则同一自定义标签会以
+    # 详情需把自定义标签全部交给下方 custom 逻辑分支渲染，否则同一自定义标签会以
     # 「提示词标签」身份多出现一次（如自定义『喜欢』变两个『喜欢』）。
     # 若同名既是词条又是自定义标签，tagIds 里能取到 prompt id，则保留词条那一条。
     _custom_set = {c for c in (rec.get("customTags") or []) if c}
