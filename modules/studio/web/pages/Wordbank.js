@@ -319,9 +319,10 @@ export default {
           <!-- 分类 ⇄ 变体 互转：两者本质同构，只差 type 一位。
                聚拢后该分类自己变成 type=entry 的变体组节点（它就是组名），其下词条成为各变体；
                 卡片右键「转为分类」可原路拆回（type 改回 category，各变体平铺）。 -->
-          <button type="button" class="ctx-item" v-if="catMenu.canToVg"
-                  :data-tip="'把「' + catMenu.name + '」整个分类聚拢成一张变体卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各变体（之后可在卡片右键原路拆回分类）'"
-                  @pointerdown.stop @click="onCtxToVg">
+          <button type="button" class="ctx-item" :class="{ disabled: !catMenu.canToVg }" v-if="catMenu.toVgShown"
+                  :disabled="!catMenu.canToVg"
+                  :data-tip="catMenu.canToVg ? ('把「' + catMenu.name + '」整个分类聚拢成一张变体卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各变体（之后可在卡片右键原路拆回分类）') : catMenu.toVgWhy"
+                  @pointerdown.stop @click="catMenu.canToVg && onCtxToVg()">
             🗂 聚拢成变体卡（分类 → 变体）
           </button>
           <div class="ctx-sep"></div>
@@ -3176,7 +3177,7 @@ const submitAddTab = async () => {
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
     // fileCount：该分类（含子分类）下的词条数，-1 = 大类数据还没加载；catPicked：该分类是否正处在整类选中态。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, canToVg: false, fileCount: -1, catPicked: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, hasVgChild: false, toVgShown: false, canToVg: false, toVgWhy: '', fileCount: -1, catPicked: false });
 
     // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
@@ -3203,6 +3204,26 @@ const submitAddTab = async () => {
       return Object.keys(idx).some((k) => {
         const n = idx[k];
         return n && String(n.parentId || '') === key && String(n.type || 'category') === 'entry';
+      });
+    };
+    // 该分类下是否已经挂着「变体卡」（= 子项是 entry 且自己还有子条目）。
+    // 这种子项本身就是变体组，再往上聚拢就会变成「变体组里套变体组」，前端渲染时组头渲染成组头、
+    // 内层组头又被当成普通卡片，结果就是分类部件消失但提示词看起来没变化。所以这种情况不给聚拢。
+    const catHasVgChild = (id) => {
+      const key = String(id || '');
+      if (!key) return false;
+      const idx = bankNodes.value || {};
+      const withKids = new Set();
+      Object.keys(idx).forEach((k) => {
+        const n = idx[k];
+        if (n && String(n.parentId || '')) withKids.add(String(n.parentId));
+      });
+      return Object.keys(idx).some((k) => {
+        const n = idx[k];
+        return n
+          && String(n.parentId || '') === key
+          && String(n.type || 'category') === 'entry'
+          && withKids.has(String(n.id));
       });
     };
     // 池三态：tab 传入大类名，chip 传入节点 id
@@ -3234,14 +3255,26 @@ const submitAddTab = async () => {
 
       // 该分类下是否还挂着子分类：变体组的分类级形态只允许落在「末级分类」上
       catMenu.hasChildCat = isChip ? catHasChildCat(id) : false;
+      // 该分类下是否已经挂着变体卡：变体卡自己就是一个组，再往上聚拢会变成组套组
+      catMenu.hasVgChild = isChip ? catHasVgChild(id) : false;
       // 「分类 → 变体」互转是否可用：非 Tab、真分类、末级（无子分类）、有父级、且其下已有词条。
       // chip 视图对象只带 {id,parentId,name}（没有 type/vg），所以类型一律回 bankNodes 里查全量节点。
       const catNode = isChip ? ((bankNodes.value || {})[id] || null) : null;
-      catMenu.canToVg = isChip && !!catNode
+      // 是真分类（非 Tab 根、非变体卡/组头）就一直显示这一项，不满足条件时置灰并说明原因，
+      // 避免「菜单里莫名其妙没有这一项」。
+      catMenu.toVgShown = isChip && !!catNode
         && String(catNode.type || '') === 'category'
+        && !!String(catNode.parentId || '');
+      catMenu.canToVg = catMenu.toVgShown
         && !catMenu.hasChildCat
-        && !!String(catNode.parentId || '')
+        && !catMenu.hasVgChild
         && catHasEntry(id);
+      catMenu.toVgWhy = !catMenu.toVgShown ? ''
+        : (catMenu.hasVgChild
+          ? '该分类下已经是变体卡，再聚拢会变成「变体组里套变体组」；先把它们转回分类再聚拢'
+          : (catMenu.hasChildCat
+            ? '该分类下还有子分类，只能对末级分类聚拢成变体卡'
+            : (!catHasEntry(id) ? '该分类下还没有词条，聚拢只会得到一个空组' : '')));
       // 分类项数：只喂给标题右上角的数量角标（大类是懒加载的，没拉过给 -1，角标显示「未加载」）。
       const pickTab = isChip ? data.activeTab : keyOrNode;
       const pickId = isChip ? id : '';

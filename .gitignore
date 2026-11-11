@@ -26,3 +26,5 @@ modules/studio/zhule.db.*
 
 # 改动前文件备份（*.bak_时间戳，仅本机使用，不上传）
 *.bak_*
+# 修改前的数据库备份（含本地数据，不上传）
+modules/studio/backup/

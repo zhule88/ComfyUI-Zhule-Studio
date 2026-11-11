@@ -601,6 +601,16 @@ async def post_wordbank_convert(request):
     if not kids:
         return web.json_response(
             {"error": "该分类下还没有词条，聚拢成变体组会变成一个没有任何变体的组"}, status=400)
+    # 子项里已经有变体组（entry 且自带子节点）时不允许再聚拢：
+    # 组套组会让渲染层把内层组头当成普通卡片、外层组头又吃掉分类部件，表现为「分类消失了但词条没变化」。
+    nested = [k for k in kids if db.direct_children(int(k["id"]))]
+    if nested:
+        names = "、".join(str(k.get("name") or "") for k in nested[:3])
+        if len(nested) > 3:
+            names += " 等"
+        return web.json_response(
+            {"error": "该分类下的「%s」本身已是变体卡，聚拢会变成变体组套变体组；先把它们转回分类再聚拢"
+                      % names}, status=400)
     if not db.set_type(nid, "entry"):
         return web.json_response({"error": "转换失败：类型写入失败"}, status=500)
     return web.json_response({"ok": True, "to": "vg", "id": str(nid),
