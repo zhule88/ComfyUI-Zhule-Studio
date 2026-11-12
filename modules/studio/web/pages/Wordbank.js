@@ -17,6 +17,7 @@ export default {
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
           <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
+          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ∞ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
@@ -878,8 +879,10 @@ export default {
       randomPools: [],
       // 池子只有两种类型（由每个池自己的 traverse 字段标记，不再是全局模式）：
       // 🎲 随机池：traverse=false，每次现抽 1 条；∞ 遍历池：traverse=true，所有词条参与全组合。
-      // 跑法不再有全局开关：遍历是默认跑法（∞ 遍历池做全组合各跑一次，🎲 随机池每组现抽 1 条），
-      // 填充模式（按参考图数补跑）已移除。
+      // 跑法不再有全局开关：遍历是默认跑法（∞ 遍历池做全组合各跑一次，🎲 随机池每组现抽 1 条）。
+      // 填充模式 ⏩（fillMode）：点运行先给遍历池 ∞ 里每条提示词补参考图——目标张数 = 词库里设的「次数」，
+      // 不足该数量的逐条补跑，已达标（比如几百张的老词条）直接跳过；不再以「图最多的那条」为基准。
+      fillMode: false,
     });
 
     // ============ 卡片框选（多选 → 凝结成池）============
@@ -1109,8 +1112,9 @@ export default {
         selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined, chance: normalizeChance(s.chance), lock: !!s.lock }),
         randomPools: data.randomPools,
         // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
-        // 4 起移除填充模式与遍历开关，遍历恒为默认跑法（旧存档的 fillMode/traverseMode 读档时忽略）。
+        // 4 起移除遍历开关（遍历恒为默认跑法）；填充模式 ⏩ 重新加入，但目标数量改为「词库里设的次数」。
         modeVer: 4,
+        fillMode: data.fillMode,
         imgIndices: data.imgIndices,
         chipsCollapsed: chipsCollapsed.value,
         chipsHeight: chipsHeight.value,
@@ -1244,7 +1248,8 @@ export default {
         // 遍历池 ∞ 不吃参与率，读档时把残留值一律拨回 100，避免存档里留着无意义的百分比
         data.randomPools.forEach(it => { it.chance = it.traverse ? 100 : normalizeChance(it.chance); });
         // 旧存档迁移：modeVer < 3 时旧「随机模式 🔄」= 各池各抽一条逐条出图，等价于「所有池都是 🎲 随机池」。
-        // 填充模式（fillMode）与遍历开关（traverseMode）已移除：遍历恒为默认跑法，旧字段读档时一律忽略。
+        // 遍历开关已移除（遍历恒为默认跑法）；填充模式 ⏩ 已回归，存档里的 fillMode 照原样恢复。
+        if (typeof state.fillMode === 'boolean') data.fillMode = state.fillMode;
         if (!(state.modeVer >= 3) && state.randomMode) {
           data.randomPools.forEach(it => { it.traverse = false; });
         }
@@ -2677,13 +2682,17 @@ export default {
       }
       // 排序口径：空壳组头永远排最前（它只是组名，不参与翻页编号）；
       // 组节点自己那张卡（有内容时也算一版，名字就是组名）紧随其后当 version 1；
-      // 剩下「默认」条目当第二，其余动作分支按库里原顺序（sort 稳定）。
+      // 剩下「默认版」条目当第二，其余动作分支按库里原顺序（sort 稳定）。
+      // 默认版历史库里叫「默认」，现已批量改名为组名 → 名字与父组头同名同样算默认版，
+      // 否则改名后它会被当成普通分支排到后面。
       Object.keys(map).forEach((k) => {
         map[k].sort((a, b) => {
           const rank = (c) => {
             if (vgIsShellCard(c)) return 0;
             if (vgGroupIds.value.has(String(c.id || ''))) return 1;
-            return vgShortName(c && c.name).trim() === '默认' ? 2 : 3;
+            const sn = vgShortName(c && c.name).trim();
+            const pn = String((((bankNodes.value || {})[String((c && c.parentId) || '')]) || {}).name || '').trim();
+            return (sn === '默认' || (pn && sn === pn)) ? 2 : 3;
           };
           return rank(a) - rank(b);
         });
@@ -3038,6 +3047,19 @@ export default {
     const withRemoved = (ph) => (ph.removed ? '（排除 ' + ph.removed + ' 段）' + (ph.text || '（空）') : (ph.text || '（空）'));
 
     const previewText = computed(() => {
+      // 填充模式 ⏩：目标张数就是词库里设的「次数」，逐条补到该数量为止
+      if (data.fillMode) {
+        const filledFill = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
+        if (filledFill.length) return '填充抽取：' + withRemoved(composePreview(filledFill));
+        const labF = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
+        if (!data.randomPools.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ∞';
+        const travF = data.randomPools.filter(it => it.traverse).map(labF);
+        const rndF = data.randomPools.filter(it => !it.traverse).map(labF);
+        const targetF = Math.max(1, Number(pref.genCount) || 0);
+        return '填充 ⏩：∞ 遍历池 ' + (travF.join(' | ') || '（无，填充需要至少一个）')
+          + (rndF.length ? ' → 🎲 随机池 ' + rndF.join(' | ') + '（每张图照常各抽 1 条）' : '')
+          + '；目标 = 遍历池内每条提示词参考图补到 ' + targetF + ' 张（次数），不足的逐条补跑，已有更多的不动';
+      }
       if (data.randomPools.length) {
         const filled = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
         if (filled.length) {
@@ -3362,7 +3384,13 @@ const submitAddTab = async () => {
     const catMenuEl = ref(null);
     const cardMenuEl = ref(null);
     const tagMenuEl = ref(null);
-    const placeMenu = (elRef, evt, menu) => {
+    // dir：'down' = 鼠标点当菜单左上角（往下铺）；'up' = 鼠标点当菜单左下角（整块往上翻）；
+    //      缺省 'auto' = 下方放得下就往下，否则往上（原来的自适应逻辑）。
+    // 为什么要能指定方向：底部「已选区」的标签，下方空间随「负面提示词预览」展开/收起而变——
+    // 展开时下方够宽裕，用左上角往下铺最自然；收起后标签行贴着窗口底部，往下铺必然顶穿底部，
+    // 所以直接拿鼠标点当左下角往上翻，不再依赖测出来的高度去赌。
+    // 但指定方向只是「首选」：真放不下时仍会翻到另一侧，量出的真实高度再做最后夹取兜底。
+    const placeMenu = (elRef, evt, menu, dir = 'auto') => {
       const cx = evt.clientX;
       const cy = evt.clientY;
       menu.ready = false;
@@ -3375,15 +3403,22 @@ const submitAddTab = async () => {
         const vw = window.innerWidth;
         const vh = window.innerHeight;
         const m = 8;
-        // 起点规则：鼠标点 = 菜单左上角，菜单有几个选项都一样从鼠标处往下铺
         let x = cx;
         let y = cy;
         // 右边放不下 → 整体左移，保证右边缘不出窗
         if (x + w + m > vw) x = Math.max(m, vw - w - m);
-        // 下方放不下 → 鼠标点改当菜单左下角：整块往上翻，底边正好贴住鼠标点，不留空隙
-        if (y + h + m > vh) y = cy - h;
+        const fitsDown = cy + h + m <= vh;
+        const fitsUp = cy - h >= m;
+        let down;                       // 是否「鼠标点 = 左上角，往下铺」
+        if (dir === 'down') down = fitsDown;      // 首选往下，只有当真空不下了才翻上去
+        else if (dir === 'up') down = !fitsUp;    // 首选往上翻，只有当上边也放不下才往下
+        else down = fitsDown;                     // auto：能往下就往下
+        // 鼠标点当左下角：整块往上翻，底边正好贴住鼠标点，不留空隙
+        if (!down) y = cy - h;
         // 顶到上边界兜底（菜单比可视区还高时只能贴上沿）
         if (y < m) y = m;
+        // 最终夹取：无论按哪种方向铺，都不允许底边越过窗口下沿（放不下就在菜单内部滚动）
+        if (y + h + m > vh) y = Math.max(m, vh - h - m);
         menu.x = x;
         menu.y = y;
         menu.ready = true;
@@ -3775,7 +3810,7 @@ const submitAddTab = async () => {
       const v = (g.real || [])[0];
       if (!v) return nm;
       const short = vgShortName(v.name, String(g.title || '')).trim();
-      return (!short || short === '默认') ? nm : (nm + ' · ' + short);
+      return (!short || short === '默认' || short === nm) ? nm : (nm + ' · ' + short);
     });
 
     const openVgRename = (file) => {
@@ -3840,7 +3875,7 @@ const submitAddTab = async () => {
       const first = vgJoin.items[0];
       if (!nm || !first) return '';
       const tail = vgJoinTail(first);
-      return (!tail || tail === '默认') ? nm : (nm + ' · ' + tail);
+      return (!tail || tail === '默认' || tail === nm) ? nm : (nm + ' · ' + tail);
     });
     const vgJoinNames = computed(() => vgJoin.items.map(it => vgJoinTail(it)).join('、'));
     const closeVgJoin = () => {
@@ -4217,7 +4252,10 @@ const submitAddTab = async () => {
       // 池读池的参与率，普通手选标签读自己身上的 chance（默认 100）
       tagMenu.chance = pool ? poolChanceOf(pool) : normalizeChance(s.chance);
       tagMenu.lock = pool ? !!pool.lock : !!s.lock;
-      placeMenu(tagMenuEl, evt, tagMenu);
+      // 方向跟着「提示词预览」走：负面提示词展开时底部预览区占位多，标签行离窗口底边还有余量，
+      // 鼠标点直接当左上角往下铺；预览收起后标签行贴近底边，往下铺必然把「解锁」那几项顶穿底部，
+      // 于是把鼠标点当左下角整块往上翻。真遇到极端窗口放不下时 placeMenu 会自己翻到另一侧。
+      placeMenu(tagMenuEl, evt, tagMenu, pref.showNegPreview ? 'down' : 'up');
     };
     const closeTagMenu = () => { tagMenu.open = false; };
     // 切池类型：与左侧三态循环写的是同一个 traverse 字段，两边状态永远一致；
@@ -4852,8 +4890,106 @@ const submitAddTab = async () => {
     let runBusy = false;
     let runTotal = 0;
 
+    // ============ 填充模式 ⏩：按「次数」把遍历池里每条提示词的参考图补到该数量 ============
+    // 判定口径：启动时给每个池条目拍一次「已有参考图数」快照（fillStartGot），此后只用
+    // 「快照 + 已累计提交次数」（fillExtra）判断，不在轮间去读图库 index——收录有延迟，
+    // 读了会因 got 恒为 0 而无限补跑。
+    // 目标张数 fillTarget 就是词库里设的「次数」，不再以「遍历池里图最多的那条」为基准：
+    // 老词条几百张图早就达标直接跳过，新加的一条图都没有，从 0 补到目标张数。
+    let fillTarget = 0;
+    let fillExtra = new Map();
+    let fillStartGot = new Map();
+    const fillKeyOf = (e) => (e.tab || '') + '||' + (e.relPath || '');
+    const resetFillTarget = () => { fillTarget = 0; fillExtra = new Map(); fillStartGot = new Map(); };
+    // 这条组合还要不要补跑：组合里任一池条目「快照 + 已提交」还不到目标张数就要跑
+    const fillNeedRun = (combo) => {
+      for (const e of combo) {
+        if (!e._pool) continue;
+        const k = fillKeyOf(e);
+        if ((fillStartGot.get(k) || 0) + (fillExtra.get(k) || 0) < fillTarget) return true;
+      }
+      return false;
+    };
+    // 集中填充：只取第一个未达标的组合补跑（倒满一桶再下一桶），并给它里面的池条目各记 +1
+    const nextFillPending = (combos) => {
+      for (const combo of combos) {
+        if (!fillNeedRun(combo)) continue;
+        for (const e of combo) {
+          if (!e._pool) continue;
+          const k = fillKeyOf(e);
+          fillExtra.set(k, (fillExtra.get(k) || 0) + 1);
+        }
+        return combo;
+      }
+      return null;
+    };
+
+    // 填充模式开关：开着时点「运行」先补齐参考图（补完自动进入结束提示）；
+    // 关掉时立即掐断正在跑的补图队列，避免「取消后又补上」
+    const toggleFillMode = () => {
+      data.fillMode = !data.fillMode;
+      if (data.fillMode) {
+        const trav = data.randomPools.filter(it => it.traverse).length;
+        if (data.randomPools.length && !trav) {
+          showToast('当前没有遍历池 ∞：填充是按遍历池逐条补图的，右键可把池子从 🎲 改成 ∞', 'warn', 4200);
+        }
+        return;
+      }
+      if (fillTarget > 0 || runBusy || runQueue.length) {
+        resetFillTarget();
+        runBusy = false;
+        runQueue = [];
+        showToast('已停止填充，本轮共提交 ' + runTotal + ' 条任务', 'warn', 3000);
+      }
+    };
+
     const runNextInQueue = async () => {
       if (runQueue.length === 0) {
+        // 填充模式：一条跑完就接着补下一条未达标的提示词，直到遍历池里每条都补够「次数」张。
+        // 关掉 ⏩ 即停；判定只看「启动快照 + 累计提交次数」，每条最多补到目标张数，不会死循环。
+        if (fillTarget > 0) {
+          if (!data.fillMode) {
+            resetFillTarget();
+            runBusy = false;
+            showToast('已停止填充，共提交 ' + runTotal + ' 条任务', 'warn', 3000);
+            return;
+          }
+          const built = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
+          if (built && !built.tooMany) {
+            // 逐个取未达标的组合：手选标签没摇中（参与率 < 100）就当作这条不出现，接着下一条，
+            // 不因一条摇空就整个停掉；池条目每次都会记 +1，所以循环必定收敛。
+            let arranged = null;
+            while (!arranged) {
+              const pending = nextFillPending(built);
+              if (!pending) break;
+              // 组合里只有遍历池条目，提交前补上随机池 🎲 的现抽结果
+              const full = withRandomPick(pending);
+              if (!full) {
+                resetFillTarget();
+                runBusy = false;
+                runQueue = [];
+                showToast('随机池 🎲 抽不出词条（该分类下暂无可用词条或已全部静音），已停止填充', 'warn', 4000);
+                return;
+              }
+              const one = arrangeBySelection(full).filter(e => rollItemChance(e));
+              if (one.length) arranged = one;
+            }
+            if (arranged) {
+              runQueue = [arranged];
+              runTotal += 1;
+              runBusy = true;
+              runNextInQueue();
+              return;
+            }
+          }
+          const t = fillTarget;
+          resetFillTarget();
+          runBusy = false;
+          // 全部达标：顺手刷一次当前分类，让卡片上的参考图数立刻更新
+          try { await load(false, data.activeTab); } catch (e) { /* 刷新失败不影响补图结果 */ }
+          showToast('填充完成：共提交 ' + runTotal + ' 条任务，遍历池内每条提示词的参考图都已补到 ' + t + ' 张', 'success', 4600);
+          return;
+        }
         runBusy = false;
         showToast('已全部完成 ' + runTotal + ' 条', 'success', 3000);
         return;
@@ -4874,6 +5010,7 @@ const submitAddTab = async () => {
         if (!done) {
           runBusy = false;
           runQueue = [];
+          resetFillTarget();
           showToast('未收到画布回执，已停止（请确认画布页已打开、工作流已加载且ID一致）', 'error', 4000);
         }
       }, 8000);
@@ -4887,6 +5024,7 @@ const submitAddTab = async () => {
         else {
           runBusy = false;
           runQueue = [];
+          resetFillTarget();
           showToast('运行失败：' + (m.error || '未知错误') + '，已停止', 'error', 4000);
         }
       };
@@ -4899,7 +5037,61 @@ const submitAddTab = async () => {
       // 默认跑法 = 遍历：有 ∞ 遍历池时，遍历池词条做笛卡尔积各跑一遍，随机池 🎲 每个组合现抽 1 条，
       // 「次数」= 整套组合重复几轮（0 按 1 轮）。没有 ∞ 遍历池时退回普通模式（手选词条 / 随机池各抽一条），
       // 填充模式已移除，也不再有模式开关。
-      if (traversePoolItems().length) {
+      // 只有随机池 🎲、没有 ∞ 遍历池时也要走「逐条现抽」：以前这种纯随机池会落到下面的普通模式，
+      // 只抽一次就把同一份词条一次性发给画布跑 N 次，表现为「次数设 20，20 张标签全一样」。
+      // 现在凡是有随机池且次数 > 1，一律排队逐条跑，每条现抽一次（无遍历池时组合退化为 [[]]）。
+      const randPoolN = randomPoolItems().length;
+      // 填充模式 ⏩：先按「次数」把遍历池 ∞ 里每条提示词的参考图补齐再跑。
+      // 目标张数 = 词库里设的「次数」——新加的词条一张图都没有就补到该数量，
+      // 几百张图的老词条早就达标、直接跳过；不再以「遍历池里图最多的那条」为基准。
+      if (data.fillMode) {
+        if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入池子（再右键可改成遍历池 ∞）', 'warn');
+        const readyFill = await ensurePoolData();
+        if (!readyFill) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
+        if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
+        if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
+        if (!traversePoolItems().length) {
+          return showToast('填充模式需要至少一个遍历池 ∞：右键池子把 🎲 改成 ∞ 才能按条补参考图', 'warn', 4600);
+        }
+        if (!(Number(pref.genCount) > 0)) showToast('「次数」为 0，本次按每条补 1 张处理', 'warn', 3000);
+        const target = Math.max(1, Number(pref.genCount) || 0);
+        const builtFill = buildTraverseCombos(TRAVERSE_ALL_MAX_COMBOS);
+        if (!builtFill) return showToast('遍历池含空分类或数据未加载，请检查池子', 'warn');
+        if (builtFill.tooMany) return showToast('遍历组合数过多（' + builtFill.tooMany + '），请精简遍历池（上限 ' + TRAVERSE_ALL_MAX_COMBOS + '）', 'warn', 4000);
+        // 启动快照：每个池条目当前已有几张参考图
+        fillExtra = new Map();
+        fillStartGot = new Map();
+        for (const combo of builtFill) {
+          for (const e of combo) {
+            if (!e._pool) continue;
+            const k = fillKeyOf(e);
+            if (!fillStartGot.has(k)) fillStartGot.set(k, wordImageCount(findWordFile(e.tab, e.relPath)) || 0);
+          }
+        }
+        fillTarget = target;
+        const pendingFill = nextFillPending(builtFill);
+        if (!pendingFill) {
+          resetFillTarget();
+          return showToast('遍历池内每条提示词的参考图都已有 ' + target + ' 张及以上，无需补跑（把「次数」调大即可再补一批）', 'success', 3600);
+        }
+        const fullFill = withRandomPick(pendingFill);
+        if (!fullFill) { resetFillTarget(); return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000); }
+        const arrangedFill = arrangeBySelection(fullFill).filter(e => rollItemChance(e));
+        if (!arrangedFill.length) { resetFillTarget(); return showToast('手选标签的参与率都没摇中，本次不出词，再点一次运行即可重摇', 'warn', 3600); }
+        const lackN = [...fillStartGot.entries()].filter(([, n]) => n < target).length;
+        runQueue = [arrangedFill];
+        runTotal = 1;
+        runBusy = true;
+        const poolNameF = (p) => p.display || p.tab;
+        zhuleLog('runGenerate: 填充模式', '遍历池=', traversePoolItems().map(poolNameF),
+          '目标张数(次数)=', target, '未达标的提示词数=', lackN, '池条目总数=', fillStartGot.size);
+        showToast('填充 ⏩｜∞ 遍历池：' + traversePoolItems().map(poolNameF).join('、')
+          + '｜目标：每条提示词参考图补到 ' + target + ' 张（次数）｜未达标 ' + lackN + '/' + fillStartGot.size
+          + ' 条，逐条补跑，已有更多的不动', 'success', 6000);
+        runNextInQueue();
+        return;
+      }
+      if (traversePoolItems().length || (randPoolN && Math.max(1, count || 0) > 1)) {
         if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
         const ready = await ensurePoolData();
         if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
@@ -4938,9 +5130,9 @@ const submitAddTab = async () => {
         const poolName = (p) => p.display || p.tab;
         const tNames = traversePoolItems().map(poolName);
         const rNames = randomPoolItems().map(poolName);
-        showToast('遍历｜穷举池 ∞：' + (tNames.join('、') || '（无）')
-          + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
-          + '｜单轮 ' + built.length + ' 组合（∞ 全走）× ' + rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
+        showToast((tNames.length ? '遍历｜穷举池 ∞：' + tNames.join('、') + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
+          + '｜单轮 ' + built.length + ' 组合（∞ 全走）× ' + rounds + ' 轮 = ' + runTotal + ' 条'
+          : '随机｜随机池 🎲：' + rNames.join('、') + '｜逐条现抽 ' + runTotal + ' 条（每条各抽一次）'), 'success', 6000);
         runNextInQueue();
         return;
       }
@@ -5497,7 +5689,7 @@ const submitAddTab = async () => {
       toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
-      removeSelected, clearAll, singleRandom, runGenerate,
+      removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,
