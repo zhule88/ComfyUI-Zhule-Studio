@@ -17,7 +17,6 @@ export default {
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
           <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-          <button class="btn icon-btn" @click="clearRandomPools" data-tip="清空所有池子">🗑</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
@@ -4132,7 +4131,6 @@ const submitAddTab = async () => {
       syncPlaceholders();
       showToast('「' + disp + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
-    const clearRandomPools = () => { data.randomPools.splice(0, data.randomPools.length); zhuleLog('clearRandomPools', 'selected=', selSummary()); syncPlaceholders(); };
 
     // ============ Ctrl/⌘ + 左键点分类：整类批量选中（不是入池）============
     // 与右键三态池（🎲 随机池 → ∞ 遍历池 → 移出池）完全解耦：Ctrl+左键只改「已选集合」，
@@ -4312,8 +4310,8 @@ const submitAddTab = async () => {
       if (!target.lock) return showToast('「' + nm + '」已解锁：恢复可改可删，随机池恢复随机', 'success', 2600);
       if (pool && !pool.traverse) {
         return showToast(pinnedName
-          ? '「' + nm + '」已锁定：固定为「' + pinnedName + '」，点顶部骰子也不会再随机（参与率仍然优先）'
-          : '「' + nm + '」已锁定：还没有抽定结果，第一次运行时抽到什么就固定什么（参与率仍然优先）', 'success', 3600);
+          ? '「' + nm + '」已锁定：固定为「' + pinnedName + '」，点骰子也不会再随机（运行中仍按参与率判定是否出词）'
+          : '「' + nm + '」已锁定：还没有抽定结果，第一次运行时抽到什么就固定什么（运行中仍按参与率判定是否出词）', 'success', 4000);
       }
       showToast('「' + nm + '」已锁定：不能修改也不能删除，右键可解锁', 'success', 2600);
     };
@@ -4647,10 +4645,10 @@ const submitAddTab = async () => {
     };
 
     // 骰子 🎲：把每个随机池 🎲 的当前答案抽定（遍历池 ∞ 本来就是全跑，不需要抽取）
-    const pickFromEachPool = () => {
+    const pickFromEachPool = (opts = {}) => {
       const rnd = data.randomPools.filter(it => !it.traverse);
       if (!rnd.length) { zhuleLog('pickFromEachPool: 没有随机池（可能全被改成遍历池）'); return null; }
-      return pickFromPools(rnd);
+      return pickFromPools(rnd, opts);
     };
 
     // 遍历组合数上限：超出时提示精简随机池，避免一次生成过多
@@ -4726,7 +4724,8 @@ const submitAddTab = async () => {
     const pickFromPools = (pools, opts = {}) => {
       const picks = [];
       for (const item of pools) {
-        // 参与率的优先级高于锁定：锁了的池照样先摇骰，0% 本轮就是不出词，中间档位没摇中也跳过。
+        // 参与率只在「运行中」判定（手动点骰子/重抽走 ignoreChance，一律摇得出词）：
+        // 运行时锁了的池照样先摇骰，0% 本轮就是不出词，中间档位没摇中也跳过。
         // 摇中之后才轮到「锁定」说话——改用钉定的那一条，不再随机。
         if (!opts.ignoreChance && !rollChance(item)) {
           zhuleLog('pickFromPools: 参与率未命中，本轮跳过该池', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || '', 'chance=', poolChanceOf(item));
@@ -4836,14 +4835,10 @@ const submitAddTab = async () => {
       if (!data.randomPools.filter(it => !it.traverse).length) {
         return showToast('没有随机池 🎲 可抽：遍历池 ∞ 本来就是全跑，右键池子可在 🎲/∞ 切换', 'warn', 3600);
       }
-      const picked = pickFromEachPool();
+      // 手动点骰子 = 主动要一个结果，不吃参与率：概率只是「运行中」的判定，点了就必须摇出词。
+      const picked = pickFromEachPool({ ignoreChance: true });
       if (!picked) return showToast('随机池含空分类（该 tab 下暂无词条，或已全部静音），请检查池子', 'warn');
-      // 全部随机池都因参与率没摇中：这是正常结果，不是错误，如实告知本轮不出词
-      if (!picked.length) {
-        const names = data.randomPools.filter(it => !it.traverse)
-          .map(it => (it.display || it.tab) + ' ' + poolChanceOf(it) + '%');
-        return showToast('本轮参与率未命中任何随机池（' + names.join('、') + '），这一次没有词可抽定；再点一次即可重摇', 'warn', 4200);
-      }
+      if (!picked.length) return showToast('随机池都没抽出词条，请检查池子', 'warn');
       updateRandomResults(picked);
       // 锁定的随机池不再随机：这一轮它们原样沿用钉定结果，只有没锁的池会换词
       const locked = data.randomPools.filter(it => !it.traverse && it.lock).map(it => it.display || it.tab);
@@ -4954,8 +4949,8 @@ const submitAddTab = async () => {
       // 因此这里先自动补抽一次（等价于点一下 🎲）；已抽定的占位符保持不动，
       // 想固定某个结果仍可先点骰子再运行。
       healSelectedIds();
-      // 随机池参与率：每轮运行前为每个随机池摇一次骰。锁定不豁免——参与率优先级高于锁定，
-      // 0% 的池锁定后照样不出词；没摇中的池本轮这个位置整个不出词。
+      // 随机池参与率：每轮运行前为每个随机池摇一次骰（只在这一步判定，手动抽不吃概率）。
+      // 锁定不豁免——0% 的池锁定后照样不出词；没摇中的池本轮这个位置整个不出词。
       const rndPools = data.randomPools.filter(it => !it.traverse);
       const poolHit = new Map();
       for (const it of rndPools) poolHit.set(poolKeyFor(it), rollChance(it));
@@ -5471,7 +5466,7 @@ const submitAddTab = async () => {
       catPickSel, isTabCatPicked, isChipCatPicked,
       defaultImageUrl,
       isTabInPool, isChipInPool, isTabTraversePool, isChipTraversePool, tabHasSelected,
-      switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip, clearRandomPools,
+      switchTab, toggleChip, clearChip, togglePoolForTab, togglePoolForChip,
       onTabClick, onChipClick,
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
