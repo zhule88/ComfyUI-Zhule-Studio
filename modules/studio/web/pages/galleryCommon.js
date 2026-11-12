@@ -292,7 +292,9 @@ const DEFAULT_PREF = {
     // timeFmt：按时间命名时的目录名格式（预设键，见 LINK_TIME_PRESETS）
     // sep 标签隔离符号 / custom 分层模板（{type:'tag'|'text', value, rel, cat}，cat=整类分类层）
     // hideGear：隐藏图库页「自定义分层」呼出齿轮（别人用图库时不必看到这个入口）
-    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
+    // scope：标签选择范围——active（默认，只列当前启用的标签）/ all（全库标签都能选，
+    //        选到未启用的会落成固定目录名，不再受「标签被停用」拦导出）
+    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false, scope: 'active' },
   },
   common: {
     noDeleteConfirm: false,
@@ -340,7 +342,7 @@ export function linkTimeName(key, d) {
 
 // 链接配置归一化：设置面板写盘的结构在旧存档里可能缺失，这里补齐默认值
 function normalizeLink(lk) {
-  const out = Object.assign({ dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
+  const out = Object.assign({ dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false, scope: 'active' },
     (lk && typeof lk === 'object') ? lk : {});
   if (typeof out.dir !== 'string') out.dir = '';
   if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
@@ -348,6 +350,8 @@ function normalizeLink(lk) {
   if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
   if (!Array.isArray(out.custom)) out.custom = [];
   out.hideGear = out.hideGear === true;
+  // 标签选择范围：只有显式选了全库才是 all，其它（含老存档没这个字段）一律回落「仅启用」
+  out.scope = out.scope === 'all' ? 'all' : 'active';
   return out;
 }
 
@@ -2152,6 +2156,21 @@ export function useGalleryCommon(opts = {}) {
   });
   // 图库页是否隐藏「自定义分层」呼出齿轮：别人借用图库时不希望工具栏多这个入口，可在设置里关掉
   const hideLinkGear = computed(() => !!((pref.gallery && pref.gallery.link) || {}).hideGear);
+  // 标签选择范围：active = 只列当前启用的过滤标签（默认）；all = 全库标签都能选。
+  // 弹框里改这一项会即时写盘并广播，设置页与图库页两侧显示的开关始终一致。
+  const linkScope = computed(() => (((pref.gallery && pref.gallery.link) || {}).scope === 'all' ? 'all' : 'active'));
+  function setLinkScope(v) {
+    const lk = pref.gallery.link;
+    lk.scope = v === 'all' ? 'all' : 'active';
+    try {
+      localStorage.setItem('zhule_ui_pref', JSON.stringify(pref));
+    } catch (e) {
+      showToast('保存标签选择范围失败：' + (e.message || ''), 'error');
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('zhule-pref-changed', { detail: JSON.parse(JSON.stringify(pref)) }));
+    showToast(lk.scope === 'all' ? '标签选择范围：全库标签' : '标签选择范围：仅启用标签', 'success');
+  }
   async function openLinkDialog(mode) {
     linkDlgMode.value = mode === 'export' ? 'export' : 'cfg';
     linkDlgOpen.value = true;
@@ -2301,7 +2320,7 @@ export function useGalleryCommon(opts = {}) {
     selected, selCount, isSel, onPointerDown, onCardClick,
     askBatchDelete, batchLink,
     linkDlgOpen, linkDlgMode, activeTags, knownTagNames, linkPending,
-    tagTreeRoots, hideLinkGear,
+    tagTreeRoots, hideLinkGear, linkScope, setLinkScope,
     openLinkDialog, closeLinkDialog, onLinkSaved,
   };
 }
@@ -2325,8 +2344,10 @@ export const LinkDialog = {
     // 标签树（整棵，从 tagtree 接口瘦身而来）：浮层选择器靠它钻取分类 / 选整类
     tree: { type: Array, default: () => [] },
     link: { type: Object, default: () => ({}) },
+    // 标签选择范围：active（默认，只列已启用的标签）/ all（全库标签都能选）
+    scope: { type: String, default: 'active' },
   },
-  emits: ['close', 'saved', 'export'],
+  emits: ['close', 'saved', 'export', 'scope'],
   setup(props, { emit }) {
     const draft = reactive({ custom: [] });
     const err = ref('');
@@ -2336,12 +2357,35 @@ export const LinkDialog = {
 
     // ── 浮层选择器状态 ──────────────────────────────────────────────────────
     const popRef = ref(null);
-    const pk = reactive({ open: false, idx: -1, q: '', hi: 0, top: 0, left: 0, crumbs: [] });
+    const pk = reactive({ open: false, idx: -1, q: '', hi: 0, top: 0, left: 0, crumbs: [], closedAt: 0 });
 
+    // 标签选择范围：all = 整棵树原样给；active = 只留自己启用的标签，
+    // 外加「自身没启用、但子树里有启用标签」的祖先分类壳（不然钻不到那些标签）。
+    const scopeAll = computed(() => props.scope === 'all');
+    const activeSet = computed(() => {
+      const s = new Set();
+      for (const n of props.activeTags || []) {
+        const v = String(n || '').trim();
+        if (v) s.add(v);
+      }
+      return s;
+    });
+    function pruneActive(ns) {
+      const set = activeSet.value;
+      const out = [];
+      for (const n of ns || []) {
+        const kids = pruneActive(n.children);
+        if (set.has(String(n.name || '').trim()) || kids.length) {
+          out.push({ name: n.name, rel: n.rel, count: n.count, children: kids });
+        }
+      }
+      return out;
+    }
     // 树叶兜底：万一树没拉到（首次进图库直接点齿轮），用当前启用标签铺一层，至少能选
     const roots = computed(() => {
       const t = Array.isArray(props.tree) ? props.tree : [];
-      if (t.length) return t;
+      const src = scopeAll.value ? t : pruneActive(t);
+      if (src.length) return src;
       if (!props.activeTags.length) return [];
       return [{
         name: '启用标签', rel: '', count: props.activeTags.length,
@@ -2452,6 +2496,9 @@ export const LinkDialog = {
       if (pop && pop.contains(e.target)) return;
       // 点别的层的 chip 交给它自己的 click 去切换，不在这里先关
       if (e.target && e.target.closest && e.target.closest('.zhg-lkd-chip')) return;
+      // 记一下「浮层是我这一次 mousedown 关掉的」：同一次点按还会冒到遮罩上，
+      // 那边别顺手把整个分层面板也关掉（用户只是想收起浮层）
+      pk.closedAt = (window.performance && performance.now) ? performance.now() : Date.now();
       closePicker();
     }
     function onDocKey(e) {
@@ -2493,6 +2540,8 @@ export const LinkDialog = {
     // 手输一个库里没有的名字也不算失效，保存时会被规范化成文字层，当固定目录名用。
     function isBad(it) {
       if (!it || it.type !== 'tag' || it.cat) return false;
+      // 全库范围：用户已经明确允许选库里任何标签，选到没启用的不算「失效」，保存时落成固定目录名
+      if (scopeAll.value) return false;
       const v = String(it.value || '').trim();
       if (!v) return false;
       return props.knownTags.includes(v) && !props.activeTags.includes(v);
@@ -2563,6 +2612,9 @@ export const LinkDialog = {
             if (it.cat) cat = true;
             // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
             else if (!props.activeTags.includes(value) && !props.knownTags.includes(value)) type = 'text';
+            // 全库范围下选到「库里存在、但当前没启用」的标签：同样落成固定目录名，
+            // 否则下次导出又会被「标签已停用」拦下，等于白选
+            else if (scopeAll.value && !props.activeTags.includes(value)) type = 'text';
           }
           return { type, value, rel: cat || type === 'tag' ? String(it.rel || '') : '', cat };
         })
@@ -2582,21 +2634,45 @@ export const LinkDialog = {
       emit('close');
     }
 
+    // 点遮罩空白：浮层开着就先只关浮层，别把整个分层面板一起关掉；
+    // 若浮层刚好被同一次点按关掉（onDocDown 先跑），这里也不关面板；
+    // 其余情况才按「点外部 = 关面板」处理。
+    function onMaskDown() {
+      if (pk.open) { closePicker(); return; }
+      const now = (window.performance && performance.now) ? performance.now() : Date.now();
+      if (pk.closedAt && now - pk.closedAt < 120) { pk.closedAt = 0; return; }
+      emit('close');
+    }
+    // 切换标签选择范围后，浮层里的候选列表整个变了，直接收起来让用户重新点开
+    watch(() => props.scope, () => { if (pk.open) closePicker(); });
+
     return {
       draft, err, dragFrom, dragTo, badCount, preview, pk, popRef, pkKids, pkCurName,
       isBad, addLayer, removeLayer, toggleType, openPicker, closePicker,
-      applyPick, applyWhole, enterNode, save,
+      applyPick, applyWhole, enterNode, save, scopeAll, roots, onMaskDown,
       onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
     };
   },
   template: `
-    <div v-if="open" class="zhg-lkd-mask" @mousedown.self="$emit('close')">
+    <div v-if="open" class="zhg-lkd-mask" @mousedown.self="onMaskDown">
       <div class="zhg-lkd">
         <div class="zhg-lkd-head">
           <span class="zhg-lkd-title">{{ mode === 'export' ? '标签失效，先修分层再导出' : '导出子文件夹 · 自定义分层' }}</span>
           <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')">✕</button>
         </div>
         <div class="zhg-lkd-body">
+          <div class="zhg-lkd-scope">
+            <span class="zhg-lkd-k">标签选择范围</span>
+            <div class="zhg-lkd-seg">
+              <button class="zhg-lkd-seg-btn" :class="{ on: !scopeAll }"
+                      data-tip="只列出当前已在筛选区启用的标签（默认）"
+                      @click="$emit('scope', 'active')">仅启用</button>
+              <button class="zhg-lkd-seg-btn" :class="{ on: scopeAll }"
+                      data-tip="全库标签都能选；选到没启用的标签会当成固定目录名用，不会被「标签已停用」拦下"
+                      @click="$emit('scope', 'all')">全库</button>
+            </div>
+            <span class="zhg-lkd-note">{{ scopeAll ? '全库可选：没启用的标签按固定目录名落盘' : '只列已启用的过滤标签' }}</span>
+          </div>
           <div class="zhg-lkd-lh">分层顺序（从上到下 = 由外到内，按住 ⠿ 拖动换顺序）</div>
           <div class="zhg-lkd-layers">
             <div v-for="(it, i) in draft.custom" :key="it.uid" class="zhg-lkd-layer"

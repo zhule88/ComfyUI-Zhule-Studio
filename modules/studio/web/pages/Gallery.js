@@ -334,8 +334,8 @@ export default {
     </transition>
 
     <LinkDialog :open="linkDlgOpen" :mode="linkDlgMode" :active-tags="activeTags" :known-tags="knownTagNames"
-                :tree="tagTreeRoots" :link="pref.gallery.link"
-                @close="closeLinkDialog" @saved="onLinkSaved" @export="batchLink" />
+                :tree="tagTreeRoots" :link="pref.gallery.link" :scope="linkScope"
+                @close="closeLinkDialog" @saved="onLinkSaved" @export="batchLink" @scope="setLinkScope" />
   </div>
   `,
   setup() {

@@ -37,7 +37,8 @@ const DEFAULT_PREF = {
     // custom：自定义分层模板，元素 { type: 'text' | 'tag', value: '凌乱发', rel, cat }，
     //         数组顺序即目录层级；cat=true 表示整类分类层（目录名就是分类名，不随启用标签变化）
     // hideGear：隐藏图库页「自定义分层」呼出齿轮，别人用图库时不会看到这个入口
-    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
+    // scope：标签选择范围 active（默认，只列已启用标签）/ all（全库标签都能选）
+    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false, scope: 'active' },
   },
   wordbank: { autoSelectParent: true },
   // 通用删除免确认：默认关闭；开启后图库/词库所有删除（图片、批量、标签、词条等）不再弹确认框
@@ -122,6 +123,8 @@ function normalizeLink(lk) {
   if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
   if (!Array.isArray(out.custom)) out.custom = [];
   out.hideGear = out.hideGear === true;
+  // 标签选择范围：只有显式存了 all 才是全库，其它（含老存档没这个字段）一律回落「仅启用」
+  out.scope = out.scope === 'all' ? 'all' : 'active';
   return out;
 }
 
@@ -259,6 +262,11 @@ const App = {
     // 图库页齿轮开关：关掉 = 图库工具栏不再出现自定义分层入口（存档里记 hideGear）
     function toggleHideLinkGear() {
       pref.value.gallery.link.hideGear = pref.value.gallery.link.hideGear !== true;
+      savePref();
+    }
+    // 标签选择范围：仅启用（默认，只列当前启用标签）/ 全库（库里所有标签都能选）
+    function setLinkScope(v) {
+      pref.value.gallery.link.scope = v === 'all' ? 'all' : 'active';
       savePref();
     }
     // 设置页里「自定义分层」的编辑入口：直接复用图库那套弹框组件，
@@ -577,7 +585,7 @@ const App = {
       panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       pickOpen, togglePick, closePick, linkTimePresetLabel, timeFmtSample,
       setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
-      LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, linkTimeSample,
+      LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, setLinkScope, linkTimeSample,
       linkDlgOpen, linkTree, linkActiveTags, linkKnownTags, linkLayerCount, openLinkDlg, closeLinkDlg, onLinkDlgSaved,
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
@@ -845,6 +853,14 @@ const App = {
                 <!-- 自定义分层：分层内容编辑入口 + 呼出图标开关（只有这模式才需要齿轮） -->
                 <template v-else>
                   <div class="settings-row">
+                    <span class="settings-label">标签选择范围</span>
+                    <div class="settings-seg settings-seg-fill">
+                      <button class="settings-seg-btn" :class="{ on: pref.gallery.link.scope !== 'all' }" @click="setLinkScope('active')">仅启用</button>
+                      <button class="settings-seg-btn" :class="{ on: pref.gallery.link.scope === 'all' }" @click="setLinkScope('all')">全库</button>
+                    </div>
+                  </div>
+                  <div class="settings-hint">仅启用（默认）= 选标签时只列出当前在过滤区启用的标签；全库 = 库里所有标签都能选。全库里选到没启用的标签，会按固定目录名落盘（不再当「标签已停用」拦导出），下次标签启停变化也不会改这层名字。</div>
+                  <div class="settings-row">
                     <span class="settings-label">分层内容</span>
                     <button class="settings-seg-btn on settings-link-edit" @click="openLinkDlg">
                       编辑分层<span v-if="linkLayerCount"> · 当前 {{ linkLayerCount }} 层</span>
@@ -1003,8 +1019,8 @@ const App = {
 
       <!-- 设置页调起的「自定义分层」弹框：与图库页共用同一组件，改完就地写盘 -->
       <ZhgLinkDialog :open="linkDlgOpen" mode="cfg" :active-tags="linkActiveTags" :known-tags="linkKnownTags"
-                     :tree="linkTree" :link="pref.gallery.link"
-                     @close="closeLinkDlg" @saved="onLinkDlgSaved" />
+                     :tree="linkTree" :link="pref.gallery.link" :scope="pref.gallery.link.scope || 'active'"
+                     @close="closeLinkDlg" @saved="onLinkDlgSaved" @scope="setLinkScope" />
     </div>
   `,
 };
