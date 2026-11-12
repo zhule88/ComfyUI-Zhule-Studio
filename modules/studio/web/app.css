@@ -507,8 +507,18 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tag.drag-over-replace { background: var(--red-dim); border-color: var(--red); color: #ffd4d4; }
 .tag.placeholder { background: rgba(255, 180, 60, 0.12); border-color: rgba(255, 180, 60, 0.55); border-style: dashed; color: #ffd9a8; }
 .tag.placeholder .ph-badge { color: #ffb43c; font-size: 11px; line-height: 1; padding: 0 1px; }
+/* 参与率角标：只在低于 100% 时出现，比 ph-badge 更轻，不抢标签名的视觉重量 */
+.tag .ph-chance {
+  font-size: 10px; line-height: 1; padding: 1px 4px; border-radius: 7px;
+  color: #ffd08a; background: rgba(255, 180, 60, 0.16);
+  border: 1px solid rgba(255, 180, 60, 0.38);
+  font-variant-numeric: tabular-nums;
+}
 .tag .close { cursor: pointer; color: #b3d4ff; font-size: 14px; line-height: 1; padding: 0 2px; }
 .tag .close:hover { color: #fff; }
+/* 锁徽标：锁上后顶替 × 的位置，一眼看出这个标签改不动也删不掉 */
+.tag .tag-lock { flex-shrink: 0; font-size: 11px; line-height: 1; padding: 0 2px; opacity: 0.9; cursor: default; }
+.tag.locked { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); }
 .empty-tip { color: var(--text-3); font-size: 12px; padding: 4px 0; }
 .preview { padding: 8px 12px; background: rgba(79, 143, 247, 0.13); border: 1px solid rgba(79, 143, 247, 0.38);
   border-radius: 6px; color: #cfe1ff; font-family: ui-monospace, Consolas, monospace;
@@ -1995,6 +2005,8 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .ctx-layer { position: fixed; inset: 0; z-index: 3000; }
 .ctx-menu {
   position: fixed; min-width: 186px; padding: 5px;
+  /* 项数多时菜单自己滚动，不硬顶出视口（上翻定位按真实高度算，滚动条不影响贴合鼠标） */
+  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
   background: #1b2433; border: 1px solid #3a4a63; border-radius: 10px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
 }
@@ -2029,6 +2041,31 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .ctx-item.disabled, .ctx-item:disabled { color: var(--text-3); opacity: 0.55; cursor: not-allowed; }
 .ctx-item.disabled:hover, .ctx-item:disabled:hover { background: transparent; color: var(--text-3); }
 .ctx-sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.07); }
+/* 参与率：分类右键与已选标签右键共用。「参与率」标题独占一行，六档按 3×2 网格铺开——
+   挤成一行时按钮又窄又挨得近，点起来容易打偏，网格化后每个档位都够宽够好点。 */
+.ctx-chance {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+  padding: 5px 9px 8px;
+}
+.ctx-chance-label {
+  grid-column: 1 / -1; font-size: 11px; color: var(--text-3);
+  white-space: nowrap; margin-bottom: 1px;
+}
+.ctx-chance-btn {
+  min-width: 0; padding: 6px 0; font-size: 11.5px; line-height: 1.2;
+  color: var(--text-2); background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 6px;
+  cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.ctx-chance-btn:hover { background: rgba(79, 143, 247, 0.18); color: #fff; }
+.ctx-chance-btn.on { color: #ffd08a; background: rgba(255, 180, 60, 0.16); border-color: rgba(255, 180, 60, 0.55); }
+/* 遍历池 ∞ 不设参与率：只留一行灰字说明，占住概率档位原来的位置，菜单高度不跳 */
+.ctx-chance-note { padding: 2px 9px 6px; font-size: 11px; color: var(--text-3); }
+/* 锁定态：整块变暗但保持原样排布（不换文案、不抽走选项），按钮置灰不可点 */
+.ctx-chance.is-off { opacity: 0.45; }
+.ctx-chance-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ctx-chance-btn:disabled:hover { background: rgba(255, 255, 255, 0.04); color: var(--text-2); }
+.ctx-chance-note.is-off { opacity: 0.45; }
 
 /* 空分类层占位：右键新建 */
 

@@ -237,11 +237,16 @@ export default {
                      'placeholder': item._ph,
                      'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
                      'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
-                     'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right'
+                     'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right',
+                     locked: itemLocked(item)
                    }"
-                   @pointerdown.stop="onTagPointerDown($event, idx)">
+                   @pointerdown.stop="onTagPointerDown($event, idx)"
+                   @contextmenu.prevent.stop="openTagMenu($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
                 <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
+                <!-- 参与率角标：池与普通手选词条都支持，100% 是默认值不显示，低于 100 才挂出来 -->
+                <span v-if="itemChance(item) < 100" class="ph-chance"
+                      :title="(item._ph ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
                 <!-- 分支组标签徽标：🔒 锁当前分支 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
                 <span v-if="vgStateOf(item)"
                       class="vg-tag"
@@ -249,7 +254,9 @@ export default {
                       :title="vgTagTip(item)"
                       @pointerdown.stop
                       @click.stop="vgCycleMode(item)">{{ vgTagLabel(item) }}</span>
-                <span class="close" @pointerdown.stop="removeSelected(idx)">×</span>
+                <!-- 锁定徽标：锁上之后 × 收起来，右键菜单也只剩「解锁」，改不动也删不掉 -->
+                <span v-if="itemLocked(item)" class="tag-lock" title="已锁定：不能修改也不能删除，右键可解锁">🔒</span>
+                <span v-else class="close" @pointerdown.stop="removeSelected(idx)">×</span>
               </div>
             </div>
             <div class="header-actions">
@@ -285,7 +292,7 @@ export default {
 
       <!-- 分类右键菜单：首项「编辑分类」，其余为池三态与新建 -->
       <div v-if="catMenu.open" class="ctx-layer" @pointerdown.self="closeCatMenu" @contextmenu.prevent.self="closeCatMenu">
-        <div class="ctx-menu" :style="{ left: catMenu.x + 'px', top: catMenu.y + 'px' }">
+        <div class="ctx-menu" ref="catMenuEl" :style="{ left: catMenu.x + 'px', top: catMenu.y + 'px', opacity: catMenu.ready ? 1 : 0 }">
           <!-- 标题行右侧挂数量角标：分类项数从菜单项里提出来，菜单项只留纯动词，避免每项尾巴都拖一串括号 -->
           <div class="ctx-title">
             <span class="ctx-title-text">{{ catMenu.title }}</span>
@@ -303,6 +310,15 @@ export default {
                   @pointerdown.stop @click="onCtxPool('random')">🎲 随机池</button>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
                   @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
+          <!-- 参与率：只给 🎲 随机池（不进池的分类谈概率没意义；∞ 遍历池穷举走遍，天然不吃概率）。
+               点一下就落地，菜单不关，方便连着试几档看标签角标变化。 -->
+          <div class="ctx-chance" v-if="catMenu.pool === 'random'">
+            <span class="ctx-chance-label">参与率</span>
+            <button type="button" class="ctx-chance-btn" v-for="c in CHANCE_STEPS" :key="c"
+                    :class="{ on: catMenu.chance === c }"
+                    :data-tip="'每轮出图按 ' + c + '% 概率决定该池是否参与：没摇中本轮这个位置就不出词'"
+                    @pointerdown.stop @click="onCtxChance(c)">{{ c }}%</button>
+          </div>
           <div class="ctx-sep"></div>
           <!-- 池四态：项数统一显示在标题右上角角标里，这里只留动词。
                「选中」等价于 Ctrl/⌘+左键点该分类（整类、含子分类），与卡片框选共用 pickSel 可叠加多选，
@@ -341,7 +357,7 @@ export default {
 
       <!-- 词库卡片右键菜单：卡片原图标功能的完整复制（左右切换与骰子仍留在卡片上） -->
       <div v-if="cardMenu.open" class="ctx-layer" @pointerdown.self="closeCardMenu" @contextmenu.prevent.self="closeCardMenu">
-        <div class="ctx-menu" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px' }">
+        <div class="ctx-menu" ref="cardMenuEl" :style="{ left: cardMenu.x + 'px', top: cardMenu.y + 'px', opacity: cardMenu.ready ? 1 : 0 }">
           <div class="ctx-title">
             <span class="ctx-title-text">{{ cardMenu.title }}</span>
             <!-- 多选态（框选/多张选中）右击时把选中张数挂到标题右侧，菜单项里就不再各自拖一串「N 项」 -->
@@ -403,7 +419,55 @@ export default {
         </div>
       </div>
 
-      <!-- 分支胶片条（方案 B）：从卡片右键菜单呼出，把该分支组全部分支横向摊开，
+      <!-- 已选标签右键菜单：池占位符就地切 🎲/∞、调参与率、重抽这一个池、移出池；
+           普通标签给参与率与锁定。删除统一走标签上的 ×（不再在菜单里重复一条），
+           锁定后就地禁掉所有变更入口，只有解锁这一项可用。 -->
+      <div v-if="tagMenu.open" class="ctx-layer" @pointerdown.self="closeTagMenu" @contextmenu.prevent.self="closeTagMenu">
+        <div class="ctx-menu" ref="tagMenuEl" :style="{ left: tagMenu.x + 'px', top: tagMenu.y + 'px', opacity: tagMenu.ready ? 1 : 0 }">
+          <div class="ctx-title">
+            <span class="ctx-title-text">{{ tagMenu.title }}</span>
+            <span class="ctx-count" v-if="tagMenu.isPool && tagMenu.poolType === 'random'">{{ tagMenu.chance }}%</span>
+            <span class="ctx-count" v-else-if="tagMenu.chance < 100">{{ tagMenu.chance }}%</span>
+          </div>
+          <!-- 池标签：类型 / 参与率 / 重抽；锁定后这些统统变暗不可点，只剩最后一行「解锁」 -->
+          <template v-if="tagMenu.isPool">
+            <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'random', 'is-off': tagMenu.lock }"
+                    :disabled="tagMenu.lock"
+                    @pointerdown.stop @click="onTagCtxType('random')">🎲 随机池（每轮现抽 1 条）</button>
+            <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'traverse', 'is-off': tagMenu.lock }"
+                    :disabled="tagMenu.lock"
+                    @pointerdown.stop @click="onTagCtxType('traverse')">∞ 遍历池（全词条穷举）</button>
+            <div class="ctx-sep"></div>
+            <div class="ctx-chance" v-if="tagMenu.poolType === 'random'" :class="{ 'is-off': tagMenu.lock }">
+              <span class="ctx-chance-label">参与率</span>
+              <button type="button" class="ctx-chance-btn" v-for="c in CHANCE_STEPS" :key="c"
+                      :class="{ on: tagMenu.chance === c }"
+                      :disabled="tagMenu.lock"
+                      :data-tip="'每轮出图按 ' + c + '% 概率决定该池是否参与：没摇中本轮这个位置就不出词'"
+                      @pointerdown.stop @click="onTagCtxChance(c)">{{ c }}%</button>
+            </div>
+            <div class="ctx-chance-note" v-else :class="{ 'is-off': tagMenu.lock }">∞ 遍历池穷举走遍，不设概率</div>
+            <div class="ctx-sep"></div>
+            <button type="button" class="ctx-item" v-if="tagMenu.poolType === 'random'"
+                    :class="{ 'is-off': tagMenu.lock }" :disabled="tagMenu.lock"
+                    @pointerdown.stop @click="onTagCtxReroll">🎲 重抽</button>
+          </template>
+          <template v-else>
+            <!-- 普通手选词条也能设参与率：同样六档，没摇中本轮这个词就不出现在提示词里 -->
+            <div class="ctx-chance" :class="{ 'is-off': tagMenu.lock }">
+              <span class="ctx-chance-label">参与率</span>
+              <button type="button" class="ctx-chance-btn" v-for="c in CHANCE_STEPS" :key="c"
+                      :class="{ on: tagMenu.chance === c }"
+                      :disabled="tagMenu.lock"
+                      :data-tip="'每轮出图按 ' + c + '% 概率决定该词是否参与：没摇中本轮这个词就不出词'"
+                      @pointerdown.stop @click="onTagCtxItemChance(c)">{{ c }}%</button>
+            </div>
+          </template>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" :class="{ on: tagMenu.lock }"
+                  @pointerdown.stop @click="onTagCtxLock">{{ tagMenu.lock ? '🔓 解锁' : '🔒 锁定' }}</button>
+        </div>
+      </div>     <!-- 分支胶片条（方案 B）：从卡片右键菜单呼出，把该分支组全部分支横向摊开，
            点一帧 = 把卡片切到该分支（与卡内 ‹ › 翻页改的是同一个游标，两处始终同步）。 -->
       <div v-if="vgStrip.open" class="vg-strip-layer" @pointerdown.self="closeVgStrip">
         <div class="vg-strip">
@@ -1003,6 +1067,39 @@ export default {
       return [];
     };
 
+    // ============ 池参与率（只作用于 🎲 随机池）============
+    // 语义：随机池单独一个 0~100 的参与率，默认 100 = 每轮必参与。
+    // 每轮出图前摇一次骰：摇中就现抽 1 条，没摇中则本轮这个位置不出词（占位符保持未填充）。
+    // ∞ 遍历池恒不摇骰——选遍历就是要穷举走遍每条词条，再加概率等于让穷举失效，
+    // 所以遍历池的 chance 恒按 100 处理，UI 也不给它概率入口。
+    const CHANCE_STEPS = [100, 80, 60, 40, 20, 0];
+    const normalizeChance = (v) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return 100;
+      return Math.max(0, Math.min(100, Math.round(n)));
+    };
+    const poolChanceOf = (it) => (it && it.traverse ? 100 : normalizeChance(it && it.chance));
+    // 摇一次：100% 恒中、0% 恒不中，中间按百分数均匀取随机；遍历池直接放行
+    const rollChance = (it) => {
+      if (it && it.traverse) return true;
+      const c = poolChanceOf(it);
+      if (c >= 100) return true;
+      if (c <= 0) return false;
+      return Math.random() * 100 < c;
+    };
+
+    // 手选标签的参与率：普通词条读自己身上的 chance（默认 100）；池占位符的概率归池管（phChance）。
+    const itemChanceOf = (s) => (s && s._ph ? phChance(s) : normalizeChance(s && s.chance));
+    // 手选标签摇骰：池占位符一律放行（池的参与率已经在 pickFromPools 里摇过，不能连摇两次），
+    // 普通词条按自己的 chance 摇——100% 恒中、0% 恒不中、中间按百分数取随机。
+    const rollItemChance = (s) => {
+      if (s && (s._ph || s._pool)) return true;
+      const c = normalizeChance(s && s.chance);
+      if (c >= 100) return true;
+      if (c <= 0) return false;
+      return Math.random() * 100 < c;
+    };
+
     const saveState = () => {
       // 恢复完成前禁止写入：初始化竞态期间的中间状态不得覆盖已保存存档
       if (!stateRestored) return;
@@ -1010,7 +1107,7 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined }),
+        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined, chance: normalizeChance(s.chance), lock: !!s.lock }),
         randomPools: data.randomPools,
         // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
         // 4 起移除填充模式与遍历开关，遍历恒为默认跑法（旧存档的 fillMode/traverseMode 读档时忽略）。
@@ -1144,6 +1241,9 @@ export default {
         }
         // 池类型：旧存档的池没有 traverse 字段 → 一律视为随机池 🎲（与旧行为一致）
         data.randomPools.forEach(it => { it.traverse = !!it.traverse; });
+        // 参与率：旧存档没有 chance 字段 → 一律 100%（每轮必参与，与旧行为完全一致，不改变既有出图结果）
+        // 遍历池 ∞ 不吃参与率，读档时把残留值一律拨回 100，避免存档里留着无意义的百分比
+        data.randomPools.forEach(it => { it.chance = it.traverse ? 100 : normalizeChance(it.chance); });
         // 旧存档迁移：modeVer < 3 时旧「随机模式 🔄」= 各池各抽一条逐条出图，等价于「所有池都是 🎲 随机池」。
         // 填充模式（fillMode）与遍历开关（traverseMode）已移除：遍历恒为默认跑法，旧字段读档时一律忽略。
         if (!(state.modeVer >= 3) && state.randomMode) {
@@ -1179,8 +1279,8 @@ export default {
             if (!s.tab || !s.relPath) return;
             const cards = bankData.value[s.tab] || [];
             const card = cards.find(c => c.relPath === s.relPath);
-            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '' });
-            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '' });
+            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
           });
           data.selected = rebuilt;
           // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
@@ -3256,10 +3356,45 @@ const submitAddTab = async () => {
     };
 
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
+    // ============ 右键菜单统一定位 ============
+    // 菜单是 position:fixed，按鼠标落点铺开；渲染后量出真实宽高再夹回视口内，
+    // 底部放不下就整块翻到鼠标上方（菜单底边贴鼠标点），不再用「猜一个菜单高度」硬钳——
+    // 猜的高度比菜单实际高度大时，会把菜单顶到鼠标上方老远的位置（本次修的偏上 bug）。
+    const catMenuEl = ref(null);
+    const cardMenuEl = ref(null);
+    const tagMenuEl = ref(null);
+    const placeMenu = (elRef, evt, menu) => {
+      const cx = evt.clientX;
+      const cy = evt.clientY;
+      menu.ready = false;
+      menu.x = cx;
+      menu.y = cy;
+      nextTick(() => {
+        const node = elRef && elRef.value;
+        const w = node ? node.offsetWidth : 200;
+        const h = node ? node.offsetHeight : 200;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const m = 8;
+        // 起点规则：鼠标点 = 菜单左上角，菜单有几个选项都一样从鼠标处往下铺
+        let x = cx;
+        let y = cy;
+        // 右边放不下 → 整体左移，保证右边缘不出窗
+        if (x + w + m > vw) x = Math.max(m, vw - w - m);
+        // 下方放不下 → 鼠标点改当菜单左下角：整块往上翻，底边正好贴住鼠标点，不留空隙
+        if (y + h + m > vh) y = cy - h;
+        // 顶到上边界兜底（菜单比可视区还高时只能贴上沿）
+        if (y < m) y = m;
+        menu.x = x;
+        menu.y = y;
+        menu.ready = true;
+      });
+    };
+
     // 大类 tab / 小类 chip / 空层占位右键都出同一个菜单：第一项固定「编辑分类」，
     // 之后才是原有池三态与新建入口，原有肌肉记忆不打乱。
     // fileCount：该分类（含子分类）下的词条数，-1 = 大类数据还没加载；catPicked：该分类是否正处在整类选中态。
-    const catMenu = reactive({ open: false, x: 0, y: 0, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, hasVgChild: false, toVgShown: false, canToVg: false, toVgWhy: '', fileCount: -1, catPicked: false });
+    const catMenu = reactive({ open: false, x: 0, y: 0, ready: false, kind: 'tab', key: '', id: '', name: '', depth: 0, title: '', pool: 'all', muted: false, hasChildCat: false, hasVgChild: false, toVgShown: false, canToVg: false, toVgWhy: '', fileCount: -1, catPicked: false, chance: 100 });
 
     // 分类节点定位：tab 用大类名换 Tab 根 id；chip 传进来的就是节点 id 本身，无需任何反查
     const nodeOfCat = (kind, keyOrId) => (kind === 'tab'
@@ -3333,6 +3468,12 @@ const submitAddTab = async () => {
       catMenu.depth = isChip ? depth : 0;
       catMenu.title = isChip ? (nodePathOf(id) || catMenu.name) : tabLabel(keyOrNode);
       catMenu.pool = poolKindOf(kind, isChip ? id : keyOrNode);
+      // 参与率：只在已经是池时才有意义，没进池按默认 100% 显示（菜单里那块本来也不显示）
+      const chanceItem = catMenu.pool === 'all' ? null
+        : (isChip
+          ? data.randomPools.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(id))
+          : data.randomPools.find(p => p.kind === 'tab' && p.tab === keyOrNode));
+      catMenu.chance = chanceItem ? poolChanceOf(chanceItem) : 100;
       catMenu.muted = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).mute);
 
       // 该分类下是否还挂着子分类：分支组的分类级形态只允许落在「末级分类」上
@@ -3364,9 +3505,8 @@ const submitAddTab = async () => {
         ? catFilesOf(pickTab, pickId).length
         : -1;
       catMenu.catPicked = catPickSel.has(catPickKey(pickTab, pickId));
-      // 贴边翻转，避免菜单跑出窗口
-      catMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 240));
-      catMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 430));
+      // 位置交给 placeMenu：按鼠标落点铺开，量完真实高度再夹回视口
+      placeMenu(catMenuEl, evt, catMenu);
     };
     const closeCatMenu = () => { catMenu.open = false; };
 
@@ -3441,7 +3581,7 @@ const submitAddTab = async () => {
     // ============ 词库卡片右键菜单 ============
     // 卡片上原有的图标操作（编辑/静音/上传参考图/删除词条/进入详情/放大/删除参考图）全部在此复制一遍，
     // 左右切换与 🎲 骰子属于高频操作，始终保留在卡片上；开启「隐藏卡片上的图标」后右键菜单成为唯一入口。
-    const cardMenu = reactive({ open: false, x: 0, y: 0, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0, isVg: false, vgTitle: '', canVg: false, canToCategory: false });
+    const cardMenu = reactive({ open: false, x: 0, y: 0, ready: false, file: null, title: '', muted: false, hasImages: false, picked: false, pickCount: 0, vgCount: 0, isVg: false, vgTitle: '', canVg: false, canToCategory: false });
     const openCardMenu = (evt, file) => {
       if (!file) return;
       closeCatMenu();
@@ -3464,9 +3604,8 @@ const submitAddTab = async () => {
       cardMenu.canToCategory = !!(cardMenu.isVg && anode && String(anode.type || '') === 'entry');
 
       cardMenu.canVg = !!cardCatIdOf(file);
-      cardMenu.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 230));
-      cardMenu.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 380));
       cardMenu.open = true;
+      placeMenu(cardMenuEl, evt, cardMenu);
     };
     const closeCardMenu = () => { cardMenu.open = false; };
     // 菜单项：先收起菜单再触发动作，避免遮罩层挡住后续弹窗与拖拽
@@ -3504,7 +3643,7 @@ const submitAddTab = async () => {
       } else {
         pool = {
           kind: 'list', poolId: 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          tab: '', path: [], display: '凝结' + items.length + '项', items, traverse: !!traverse,
+          tab: '', path: [], display: '凝结' + items.length + '项', items, traverse: !!traverse, chance: 100,
         };
         data.randomPools.push(pool);
         syncPlaceholders();
@@ -3947,10 +4086,11 @@ const submitAddTab = async () => {
         const cur = data.randomPools[idx];
         if (!cur.traverse) {
           cur.traverse = true;
+          cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
           zhuleLog('togglePoolForTab: 🎲→∞ 改为遍历池', { kind: 'tab', tab }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
           syncPlaceholders();
-          return showToast('「' + tabLabel(tab) + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
+          return showToast('「' + tabLabel(tab) + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
         }
         data.randomPools.splice(idx, 1);
         zhuleLog('togglePoolForTab: 移出池', cur, 'selected=', selSummary());
@@ -3959,7 +4099,7 @@ const submitAddTab = async () => {
       }
       const chk = hasPoolConflict(tab, '');
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'tab', tab, display: tab, traverse: false });
+      data.randomPools.push({ kind: 'tab', tab, display: tab, traverse: false, chance: 100 });
       zhuleLog('togglePoolForTab: 加入随机池', { kind: 'tab', tab }, 'selected=', selSummary());
       syncPlaceholders();
       showToast('「' + tabLabel(tab) + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
@@ -3974,10 +4114,11 @@ const submitAddTab = async () => {
         const cur = data.randomPools[idx];
         if (!cur.traverse) {
           cur.traverse = true;
+          cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
           zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
           syncPlaceholders();
-          return showToast('「' + disp + '」改为遍历池 ∞：所有词条参与全组合', 'success', 2400);
+          return showToast('「' + disp + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
         }
         data.randomPools.splice(idx, 1);
         zhuleLog('togglePoolForChip: 移出池', cur, 'selected=', selSummary());
@@ -3986,7 +4127,7 @@ const submitAddTab = async () => {
       }
       const chk = hasPoolConflict(tab, id);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'chip', tab, chipId: id, display: disp, traverse: false });
+      data.randomPools.push({ kind: 'chip', tab, chipId: id, display: disp, traverse: false, chance: 100 });
       zhuleLog('togglePoolForChip: 加入随机池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
       syncPlaceholders();
       showToast('「' + disp + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
@@ -4041,6 +4182,156 @@ const submitAddTab = async () => {
       const n = bankNodes.value[rest];
       return n && n.name ? n.name : '';    // 键里就是节点 id，直接读节点名
     };
+    // ============ 已选标签右键菜单：就地管池 ============
+    // 以前要改一个池的 🎲/∞ 得回左侧分类再右键走三态循环，隔着两层；
+    // 现在预览区里那个黄色占位标签右键就能切类型、调参与率、只重抽这一个池、直接移出池。
+    const tagMenu = reactive({ open: false, x: 0, y: 0, ready: false, idx: -1, key: '', title: '', isPool: false, poolType: 'random', chance: 100, lock: false });
+    const poolItemByKey = (k) => (k ? (data.randomPools.find(p => poolKeyFor(p) === k) || null) : null);
+    // 锁定态：池占位标签看所属池的 lock，普通手选词条看自己身上的 lock。
+    // 锁上以后所有变更入口一起拦住（改类型/改参与率/重抽/移出池/× 删除/拖拽排序），只留右键菜单里的解锁。
+    const itemLocked = (s) => {
+      if (!s) return false;
+      // 用 _poolKey 而不是 _ph 判池：占位符被填充后 _ph 会变 false 但钥匙还在，锁不能因此掉
+      if (s._poolKey) { const it = poolItemByKey(s._poolKey); return !!(it && it.lock); }
+      return !!s.lock;
+    };
+    // 占位标签上的参与率角标：没有对应池（旧存档残留占位符）按 100 处理，不显示角标
+    // 模板统一入口：池占位符读池概率、普通词条读自身概率
+    const itemChance = (s) => itemChanceOf(s);
+    const phChance = (s) => {
+      if (!s || !s._ph) return 100;
+      const it = poolItemByKey(s._poolKey);
+      return it ? poolChanceOf(it) : 100;
+    };
+    const openTagMenu = (evt, idx) => {
+      const s = data.selected[idx];
+      if (!s) return;
+      closeCatMenu();
+      const pool = s._poolKey ? poolItemByKey(s._poolKey) : null;
+      tagMenu.open = true;
+      tagMenu.idx = idx;
+      tagMenu.key = pool ? poolKeyFor(pool) : '';
+      tagMenu.isPool = !!pool;
+      tagMenu.title = pool
+        ? (pool.traverse ? '∞ 遍历池：' : '🎲 随机池：') + (pool.display || pool.tab || '凝结池')
+        : (selDisplayName(s) || '已选标签');
+      tagMenu.poolType = pool ? (pool.traverse ? 'traverse' : 'random') : 'random';
+      // 池读池的参与率，普通手选标签读自己身上的 chance（默认 100）
+      tagMenu.chance = pool ? poolChanceOf(pool) : normalizeChance(s.chance);
+      tagMenu.lock = pool ? !!pool.lock : !!s.lock;
+      placeMenu(tagMenuEl, evt, tagMenu);
+    };
+    const closeTagMenu = () => { tagMenu.open = false; };
+    // 切池类型：与左侧三态循环写的是同一个 traverse 字段，两边状态永远一致；
+    // 换了类型就把这个池之前的抽定结果作废（与左侧切换同一套处理），菜单不关，方便来回比。
+    const onTagCtxType = (want) => {
+      const it = poolItemByKey(tagMenu.key);
+      if (!it) return closeTagMenu();
+      if (it.lock) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
+      const traverse = want === 'traverse';
+      if (!!it.traverse === traverse) return closeTagMenu();
+      it.traverse = traverse;
+      // 切成 ∞ 就把残留的参与率清回 100：遍历池不参与概率，存档里留个 40% 只会误导人
+      if (traverse) it.chance = 100;
+      refreshPoolPlaceholder(it);
+      syncPlaceholders();
+      saveState();
+      tagMenu.poolType = want;
+      tagMenu.chance = poolChanceOf(it);
+      tagMenu.title = (traverse ? '∞ 遍历池：' : '🎲 随机池：') + (it.display || it.tab || '凝结池');
+      closeTagMenu();
+      showToast('「' + (it.display || it.tab) + '」已切为 '
+        + (traverse ? '∞ 遍历池：全词条穷举，每轮全走' : '🎲 随机池：每轮现抽 1 条'), 'success', 2600);
+    };
+    // 改参与率：只动这一个池，点完菜单收起，标签上的百分比角标立即跟着变
+    const onTagCtxChance = (c) => {
+      const it = poolItemByKey(tagMenu.key);
+      if (!it) return closeTagMenu();
+      if (it.lock) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
+      // 遍历池 ∞ 没有参与率这一说：穷举就是每条都走，入口在菜单里已被隐藏，这里再兜一道
+      if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
+      it.chance = normalizeChance(c);
+      tagMenu.chance = it.chance;
+      saveState();
+      closeTagMenu();
+      showToast('「' + (it.display || it.tab) + '」参与率 ' + it.chance + '%'
+        + (it.chance >= 100 ? '：每轮必参与' : it.chance <= 0 ? '：相当于停用，不再参与出词' : '：每轮按此概率决定出不出词'), 'success', 2600);
+    };
+    // 改普通手选词条的参与率：写回 data.selected 里那一条，点完菜单收起，标签角标即时变化
+    const onTagCtxItemChance = (c) => {
+      const s = data.selected[tagMenu.idx];
+      if (!s || s._ph) return closeTagMenu();
+      if (itemLocked(s)) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
+      s.chance = normalizeChance(c);
+      tagMenu.chance = s.chance;
+      saveState();
+      closeTagMenu();
+      showToast('「' + (selDisplayName(s) || '词条') + '」参与率 ' + s.chance + '%'
+        + (s.chance >= 100 ? '：每轮必出' : s.chance <= 0 ? '：相当于停用，不再出现' : '：每轮按此概率决定出不出现'), 'success', 2600);
+    };
+    // 只重抽这一个池：用户点名要抽，不再让参与率挡路（参与率只约束自动跑图时的随机性）
+    const onTagCtxReroll = async () => {
+      const it = poolItemByKey(tagMenu.key);
+      closeTagMenu();
+      if (!it) return;
+      if (it.traverse) return showToast('遍历池 ∞ 是穷举出词，没有「重抽」这一步', 'warn', 2600);
+      if (it.lock) return showToast('池已锁定，重抽不生效；先右键解锁再重抽', 'warn', 2600);
+      const ready = await ensurePoolData();
+      if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
+      const picked = pickFromPools([it], { ignoreChance: true });
+      if (!picked || !picked.length) return showToast('该池抽不出词条：分类下暂无词条或已全部静音', 'warn');
+      updateRandomResults(picked);
+      showToast('已重抽「' + (it.display || it.tab) + '」：' + picked.map(p => p.name).join(' / '), 'success', 2600);
+    };
+    // 锁定/解锁：锁住后这个标签改不了也删不掉（× 会收起来换成 🔒 徽标），
+    // 平时删标签仍走标签上的 ×，菜单里不再重复一条删除入口。
+    const onTagCtxLock = () => {
+      const s = data.selected[tagMenu.idx];
+      if (!s) return closeTagMenu();
+      const pool = s._poolKey ? poolItemByKey(s._poolKey) : null;
+      const target = pool || s;
+      target.lock = !target.lock;
+      tagMenu.lock = !!target.lock;
+      // 随机池锁定 = 结果也锁死：已经有抽定结果的，立刻把这套结果钉成快照（以后运行一直用它）；
+      // 还没有结果的（比如刚放个随机池就锁），就等第一次运行，抽到什么就钉住什么。
+      // 遍历池 ∞ 是穷举走遍，没有「抽定」这回事，锁的只是不能改不能删。
+      let pinnedName = '';
+      if (pool && !pool.traverse) {
+        if (pool.lock) {
+          const ph = data.selected.find(x => x._ph && x._poolKey === poolKeyFor(pool));
+          pool.pin = pinFromPlaceholder(ph);
+          pinnedName = pool.pin ? pool.pin.name : '';
+        }
+        else {
+          delete pool.pin;   // 解锁回归随机，下一次抽选重新摇
+        }
+      }
+      saveState();
+      closeTagMenu();
+      const nm = pool ? (pool.display || pool.tab || '凝结池') : (selDisplayName(s) || '词条');
+      if (!target.lock) return showToast('「' + nm + '」已解锁：恢复可改可删，随机池恢复随机', 'success', 2600);
+      if (pool && !pool.traverse) {
+        return showToast(pinnedName
+          ? '「' + nm + '」已锁定：固定为「' + pinnedName + '」，点顶部骰子也不会再随机（参与率仍然优先）'
+          : '「' + nm + '」已锁定：还没有抽定结果，第一次运行时抽到什么就固定什么（参与率仍然优先）', 'success', 3600);
+      }
+      showToast('「' + nm + '」已锁定：不能修改也不能删除，右键可解锁', 'success', 2600);
+    };
+    // 左侧分类右键菜单里的参与率：直接改该分类对应的池，菜单不关，方便连着试几档
+    const onCtxChance = (c) => {
+      const kind = catMenu.kind;
+      const key = kind === 'tab' ? catMenu.key : catMenu.id;
+      const it = kind === 'tab'
+        ? data.randomPools.find(p => p.kind === 'tab' && p.tab === key)
+        : data.randomPools.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(key));
+      if (!it) return;
+      if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
+      it.chance = normalizeChance(c);
+      catMenu.chance = it.chance;
+      saveState();
+      showToast('「' + (it.display || it.tab) + '」参与率 ' + it.chance + '%', 'success', 2200);
+    };
+
     // 以随机池为基准同步占位符与随机结果标签：
     // 池在 → 占位符（黄色分类标签）恒保留；池移除 → 该池的占位符与结果标签一并删除；
     // 旧版独立结果标签（带 _poolKey 的普通标签）不再保留，抽取结果统一绑定在占位符内部。
@@ -4254,6 +4545,11 @@ const submitAddTab = async () => {
 
     const removeSelected = (idx) => {
       const s = data.selected[idx];
+      // 锁定的标签不给删：× 在锁定时已换成 🔒 徽标，这里再兜一道（拖出、批量等其它路径也走这里）
+      if (itemLocked(s)) {
+        showToast('该标签已锁定：右键菜单里解锁后才能删除', 'warn', 2600);
+        return;
+      }
       if (s && (s._ph || s._poolKey)) {
         // 移除占位符或已填充的池槽位词条时，同步移出对应随机池，保持池与槽位一一对应
         const k = s._poolKey;
@@ -4271,10 +4567,14 @@ const submitAddTab = async () => {
     // 「清空」= 一键复位：已选提示词清空 + 随机池清空（否则上方 tab/chip 仍留着 in-pool 选中样式）
     // + 运行次数归零（次数输入框同步回 0，pref 走 watch 自动落 localStorage）
     const clearAll = () => {
-      data.selected = [];
-      data.randomPools.splice(0, data.randomPools.length);
+      // 锁定项跳过清空：锁住的标签和它的池留着，其余照常复位
+      const kept = data.selected.filter(s => itemLocked(s));
+      for (let i = data.randomPools.length - 1; i >= 0; i--) if (!data.randomPools[i].lock) data.randomPools.splice(i, 1);
+      data.selected = kept;
       pref.genCount = 0;
-      zhuleLog('clearAll', '已清空已选 + 随机池，次数归零');
+      syncPlaceholders();
+      zhuleLog('clearAll', '已清空已选 + 随机池（锁定项保留 ' + kept.length + ' 个），次数归零');
+      if (kept.length) showToast('已清空，' + kept.length + ' 个锁定标签被保留', 'warn', 2800);
     };
 
     // 随机池语义：每个右键选中的 tab / chip 各为一个独立子池。
@@ -4395,15 +4695,62 @@ const submitAddTab = async () => {
     const traversePoolItems = () => data.randomPools.filter(it => !!it.traverse);
     const randomPoolItems = () => data.randomPools.filter(it => !it.traverse);
 
-    // 从给定的一批池子里各抽 1 条（随机池专用）；任一池候选为空返回 null
-    const pickFromPools = (pools) => {
+    // 从给定的一批池子里各抽 1 条（随机池专用）；任一池候选为空返回 null。
+    // 参与率 <100% 的池先摇一次：没摇中就直接跳过该池（本轮这个位置不出词），不算失败。
+    // opts.ignoreChance：手动「只重抽这一个池」时用——用户已经点名要抽这个池，不再让参与率挡路。
+    // 把「某条词条」拍成一份结果快照：锁定池的钉定值就存在快照里，解锁/重抽前一直用这一条
+    const pickSnapshot = (item, file) => ({
+      tab: item.tab, relPath: file.relPath || '', id: file.id || '', name: file.name || '',
+      content: file.content || '', content_cn: file.content_cn || '',
+      neg: file.neg || '', override: file.override || '', anc: file.anc || [],
+      _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '',
+    });
+    // 锁定池的钉定值直接当本次抽选结果用：不再查候选、不再随机，
+    // 词条被删被静音也照跑——锁定的语义就是「以后都跑这一条」
+    const pinPickOf = (item) => (item && item.pin
+      ? { ...item.pin, tab: item.tab, _poolKey: poolKeyFor(item), _pool: true, _pinned: true }
+      : null);
+    // 从已填充的占位符反推一份快照：先抽定 → 再锁定 时用它把当前结果钉住
+    const pinFromPlaceholder = (ph) => {
+      if (!ph || !ph._filled || !ph.content) return null;
+      const f = ph.relPath ? findWordFile(ph.tab, ph.relPath) : null;
+      const rawName = f ? f.name
+        : String(ph.name || '').replace(/^[🎲∞]\s*/, '').replace(/^.*?[：:]\s*/, '');
+      return {
+        tab: ph.tab, relPath: ph.relPath || '', id: ph.id || (f && f.id) || '', name: rawName,
+        content: ph.content, content_cn: ph.content_cn || '',
+        neg: ph.neg || '', override: ph.override || '',
+        anc: (f && f.anc) || [], _vgKey: (f && f._vgKey) || '', _vgTitle: (f && f._vgTitle) || '',
+      };
+    };
+    const pickFromPools = (pools, opts = {}) => {
       const picks = [];
       for (const item of pools) {
+        // 参与率的优先级高于锁定：锁了的池照样先摇骰，0% 本轮就是不出词，中间档位没摇中也跳过。
+        // 摇中之后才轮到「锁定」说话——改用钉定的那一条，不再随机。
+        if (!opts.ignoreChance && !rollChance(item)) {
+          zhuleLog('pickFromPools: 参与率未命中，本轮跳过该池', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || '', 'chance=', poolChanceOf(item));
+          continue;
+        }
+        const pinned = (item.lock && !item.traverse) ? pinPickOf(item) : null;
+        if (pinned) {
+          zhuleLog('pickFromPools: 池已锁定，沿用钉定结果', item.kind, 'tab=', item.tab, 'name=', pinned.name);
+          picks.push(pinned);
+          continue;
+        }
         const c = poolCandidates(item);
         if (!c || !c.length) { zhuleLog('pickFromPools: 候选为空', item.kind, 'tab=', item.tab, 'chipId=', item.chipId || ''); return null; }
         const file = c[Math.floor(Math.random() * c.length)];
         zhuleLog('pickFromPools: 抽中', item.kind, 'tab=', item.tab, 'name=', file.name, '候选数=', c.length);
-        picks.push({ tab: item.tab, relPath: file.relPath, id: file.id || '', name: file.name, content: file.content, content_cn: file.content_cn, neg: file.neg || '', override: file.override || '', anc: file.anc || [], _poolKey: poolKeyFor(item), _pool: true, _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '' });
+        // 空池锁定（锁定前还没有结果）：第一次抽到什么就钉住什么，之后一直跑这一条
+        if (item.lock && !item.traverse && !item.pin) {
+          item.pin = pickSnapshot(item, file);
+          zhuleLog('pickFromPools: 锁定池首次抽定并钉住', item.tab, item.pin.name);
+          // 钉住的同时把占位标签刷成这条，用户一眼看到「锁的是哪一条」
+          updateRandomResults([{ ...item.pin, _poolKey: poolKeyFor(item) }]);
+          saveState();
+        }
+        picks.push({ ...pickSnapshot(item, file), _poolKey: poolKeyFor(item), _pool: true });
       }
       return picks;
     };
@@ -4415,6 +4762,9 @@ const submitAddTab = async () => {
       if (!picks) return null;
       return combo.concat(picks);
     };
+    // 遍历池不吃参与率：∞ 的语义就是穷举走遍，任何概率都会让它退化成随机池。
+    // 所以这里没有「给组合摇骰」这一步——组合进队列前只补随机池的现抽（withRandomPick）。
+
 
     // 遍历组合列表：只对遍历池 ∞ 做笛卡尔积，
     // 组合按「第一个池变化最慢、最后一个最快」排列——即 randomPools 里靠前的遍历池做外层大 for；
@@ -4471,7 +4821,9 @@ const submitAddTab = async () => {
       // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
       normalizePoolIds();
       // 补拉完仍为空 = 该 tab 真的没有词条；有词条但全被静音同样视为不可用（自动选词取不到）
-      const alive = (it) => it.kind === 'list' ? (poolCandidates(it) || []) : (bankData.value[it.tab] || []).filter(f => !f.mute);
+      // 锁定且已钉定结果的池不依赖候选：分类里词条全删了/全静音了，也照样按钉住的那条跑
+      const alive = (it) => (it.lock && it.pin && !it.traverse) ? [it.pin]
+        : it.kind === 'list' ? (poolCandidates(it) || []) : (bankData.value[it.tab] || []).filter(f => !f.mute);
       const ready = data.randomPools.every(it => alive(it).length > 0);
       zhuleLog('ensurePoolData: ready=', ready,
         '各池可用词条数=', data.randomPools.map(p => (p.kind === 'list' ? p.display : p.tab) + ':' + alive(p).length));
@@ -4486,8 +4838,18 @@ const submitAddTab = async () => {
       }
       const picked = pickFromEachPool();
       if (!picked) return showToast('随机池含空分类（该 tab 下暂无词条，或已全部静音），请检查池子', 'warn');
+      // 全部随机池都因参与率没摇中：这是正常结果，不是错误，如实告知本轮不出词
+      if (!picked.length) {
+        const names = data.randomPools.filter(it => !it.traverse)
+          .map(it => (it.display || it.tab) + ' ' + poolChanceOf(it) + '%');
+        return showToast('本轮参与率未命中任何随机池（' + names.join('、') + '），这一次没有词可抽定；再点一次即可重摇', 'warn', 4200);
+      }
       updateRandomResults(picked);
-      showToast('已抽定：' + picked.map(s => s.name || s.content).join(' / ') + '，已填入黄色分类标签（再点重抽）', 'success', 3200);
+      // 锁定的随机池不再随机：这一轮它们原样沿用钉定结果，只有没锁的池会换词
+      const locked = data.randomPools.filter(it => !it.traverse && it.lock).map(it => it.display || it.tab);
+      showToast('已抽定：' + picked.map(s => s.name || s.content).join(' / ')
+        + (locked.length ? '（' + locked.join('、') + ' 已锁定，沿用钉定结果不随机）' : '')
+        + '，已填入黄色分类标签（再点重抽）', 'success', locked.length ? 4200 : 3200);
     };
 
     // ============ 池子模式逐条出图：驱动画布逐条运行，等 ack 再下一条 ============
@@ -4555,10 +4917,19 @@ const submitAddTab = async () => {
         const combos = [];
         for (let r = 0; r < rounds; r++) {
           for (const combo of built) {
+            // 遍历池不参与摇骰：既然选了遍历，就是要穷举着把每条都走到，任何概率都会让穷举不再穷举。
+            // 只有随机池 🎲 在这一步现抽（它自带参与率）。
             const full = withRandomPick(combo);
             if (!full) return showToast('随机池 🎲 抽不出词条：该分类下暂无可用词条（或已全部静音），请检查池子', 'warn', 4000);
-            combos.push(arrangeBySelection(full));
+            // 手选词条同样吃自己的参与率：每条组合单独摇一次，没摇中这条组合里就不出现该词
+            const arranged = arrangeBySelection(full).filter(e => rollItemChance(e));
+            // 只剩手选标签都为空时，这条组合是空的——直接跳过，不占运行队列
+            if (!arranged.length) continue;
+            combos.push(arranged);
           }
+        }
+        if (!combos.length) {
+          return showToast('没有任务可跑：池子与手选标签都是空的，请检查池子', 'warn', 4600);
         }
         zhuleLog('runGenerate: 遍历全组合', '遍历池=', traversePoolItems().map(p => p.tab),
           '随机池=', randomPoolItems().map(p => p.tab),
@@ -4574,7 +4945,7 @@ const submitAddTab = async () => {
         const rNames = randomPoolItems().map(poolName);
         showToast('遍历｜穷举池 ∞：' + (tNames.join('、') || '（无）')
           + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
-          + '｜单轮 ' + built.length + ' 组合 × ' + rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
+          + '｜单轮 ' + built.length + ' 组合（∞ 全走）× ' + rounds + ' 轮 = ' + runTotal + ' 条', 'success', 6000);
         runNextInQueue();
         return;
       }
@@ -4583,19 +4954,50 @@ const submitAddTab = async () => {
       // 因此这里先自动补抽一次（等价于点一下 🎲）；已抽定的占位符保持不动，
       // 想固定某个结果仍可先点骰子再运行。
       healSelectedIds();
-      if (data.randomPools.filter(it => !it.traverse).length
-          && data.selected.some(s => s._ph && !s._filled)) {
+      // 随机池参与率：每轮运行前为每个随机池摇一次骰。锁定不豁免——参与率优先级高于锁定，
+      // 0% 的池锁定后照样不出词；没摇中的池本轮这个位置整个不出词。
+      const rndPools = data.randomPools.filter(it => !it.traverse);
+      const poolHit = new Map();
+      for (const it of rndPools) poolHit.set(poolKeyFor(it), rollChance(it));
+      const missPools = rndPools.filter(it => poolHit.get(poolKeyFor(it)) === false);
+      // 只抽「摇中了但还没抽定」的池：已抽定的保持原样（锁定池钉住的结果也就此沿用，不再随机）
+      const needFill = data.selected.filter(s => s._ph && !s._filled && poolHit.get(s._poolKey) !== false);
+      if (needFill.length) {
         const ok = await ensurePoolData();
-        const autoPicked = ok ? pickFromEachPool() : null;
-        if (autoPicked) updateRandomResults(autoPicked);
+        const hitPools = rndPools.filter(it => poolHit.get(poolKeyFor(it)) !== false);
+        const autoPicked = ok ? pickFromPools(hitPools, { ignoreChance: true }) : null;
+        // 只回填本来是空的占位符，别把已经抽定的结果改掉
+        const needKeys = new Set(needFill.map(s => s._poolKey));
+        const fillPicked = (autoPicked || []).filter(e => needKeys.has(e._poolKey));
+        if (fillPicked.length) updateRandomResults(fillPicked);
+        else if (autoPicked) {
+          // 摇中的池都抽不出词条：不是错误，这几段本轮保持空、运行时自然不带它们
+          showToast('随机池 🎲 抽不出词条（该分类下暂无词条或已全部静音），这几段本轮不出词', 'warn', 3600);
+        }
         else {
-          const dead = data.randomPools.filter(it => !it.traverse && !(poolCandidates(it) || []).length);
+          const dead = rndPools.filter(it => !(poolCandidates(it) || []).length);
           showToast('随机池 🎲 有 ' + dead.length + ' 个池抽不出词条（该分类下暂无词条或已全部静音），已跳过：'
             + dead.map(it => it.display || it.tab).join('、'), 'warn', 4600);
         }
       }
-      const readyItems = data.selected.filter(s => !s._ph || s._filled);
-      if (!readyItems.length) return showToast('还没选任何提示词', 'warn');
+      // 参与率没摇中的池：占位符即使有历史抽定值，本轮也不参与
+      const readyAll = data.selected.filter(s => {
+        if (!s._ph) return true;
+        if (!s._filled) return false;
+        return poolHit.get(s._poolKey) !== false;
+      });
+      if (!readyAll.length) {
+        if (missPools.length) {
+          return showToast('参与率未命中：' + missPools.map(it => (it.display || it.tab) + ' ' + poolChanceOf(it) + '%').join('、')
+            + ' 本轮都没摇中，本次不出词，再点一次运行即可重摇', 'warn', 4200);
+        }
+        return showToast('还没选任何提示词', 'warn');
+      }
+      // 手选词条按各自参与率摇一次：没摇中本轮就不进提示词（池占位符的概率已在抽词时摇过，这里直接放行）
+      const readyItems = readyAll.filter(s => rollItemChance(s));
+      if (!readyItems.length) {
+        return showToast('手选标签的参与率都没摇中：本次不出词，再点一次运行即可重摇', 'warn', 3600);
+      }
       if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
       if (!linkParams.bind) {
         return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
@@ -4796,6 +5198,8 @@ const submitAddTab = async () => {
       e.preventDefault();
       const item = data.selected[idx];
       if (!item) return;
+      // 锁定的标签不参与拖拽排序（位置也算「更改」），右键解锁后恢复
+      if (itemLocked(item)) return;
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'tag',
@@ -5072,6 +5476,9 @@ const submitAddTab = async () => {
       addTabOpen, addTabName, addingTab, openAddTab, closeAddTab, submitAddTab,
       // 分类右键菜单 / 编辑分类
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxCatPick, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToVg,
+      onCtxChance, onTagCtxItemChance, itemChance, CHANCE_STEPS,
+      // 已选标签右键菜单（就地切 🎲/∞、调参与率、重抽单池、移出池）
+      tagMenu, openTagMenu, closeTagMenu, onTagCtxType, onTagCtxChance, onTagCtxReroll, onTagCtxLock, itemLocked, phChance,
 
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
     isCatMuted, toggleCatMute,
