@@ -225,16 +225,16 @@ export default {
 
         <div class="bottom">
           <div class="selected-header">
-            <span class="sel-title">已选 <span class="selected-count">{{ data.selected.length }}</span> 项</span>
+            <span class="sel-title">已选 <span class="selected-count">{{ data.slots.length }}</span> 项</span>
             <!-- 已选标签直接排在这一行：右侧的收起/清空/次数/运行永远固定可见，不被标签挤走 -->
             <div class="selected-list"
                  :class="{'drag-active': drag.hoverSide === 'selList', 'is-collapsed': selectedCollapsed}"
                  @pointerdown="onSelListPointerDown">
-              <span v-if="!data.selected.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
-              <div v-for="(item, idx) in data.selected" :key="idx"
+              <span v-if="!data.slots.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
+              <div v-for="(item, idx) in data.slots" :key="idx"
                    class="tag"
                    :class="{
-                     'placeholder': item._ph,
+                     'is-pool': item.t === 'pool',
                      'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
                      'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
                      'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right',
@@ -243,10 +243,10 @@ export default {
                    @pointerdown.stop="onTagPointerDown($event, idx)"
                    @contextmenu.prevent.stop="openTagMenu($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
-                <span v-if="item._ph" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
+                <span v-if="item.t === 'pool'" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
                 <!-- 参与率角标：池与普通手选词条都支持，100% 是默认值不显示，低于 100 才挂出来 -->
                 <span v-if="itemChance(item) < 100" class="ph-chance"
-                      :title="(item._ph ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
+                      :title="(item.t === 'pool' ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
                 <!-- 分支组标签徽标：🔒 锁当前分支 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
                 <span v-if="vgStateOf(item)"
                       class="vg-tag"
@@ -278,13 +278,13 @@ export default {
             </div>
           </div>
           <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
-          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': data.randomPools.length > 0}">
+          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': allPools.length > 0}">
             <span class="pv-text">{{ previewText }}</span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
                     :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
           </div>
           <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
-               :class="{'random-mode': data.randomPools.length > 0}">
+               :class="{'random-mode': allPools.length > 0}">
             <span class="pv-text">{{ previewNegText || '（无）' }}</span>
           </div>
         </div>
@@ -874,9 +874,15 @@ export default {
     const data = reactive({
       activeTab: '',
       selections: {},
-      selected: [],
+      // 唯一真源：一个对象数组按提示词顺序装全部槽位，两类槽：
+      //   item 槽 { t:'item', tab, relPath, id, name, content, content_cn, neg, override, vm, chance, lock }
+      //            —— 手选词条，chance 是它自己的被抽中概率（普通词条 100 即必出）
+      //   pool 槽 { t:'pool', kind:'tab'|'chip'|'list', tab, chipId, poolId, display, items, traverse, chance, lock, picked }
+      //            —— 池子自己占一格，picked 挂当前抽中/遍历到的那条（null 表示本轮没摇中或还没抽）
+      //            —— 池的 chance 是整池被抽中的概率，与 item 槽的 chance 语义一致
+      // 单数组顺序即身份：不再有 _ph 占位符，也不再有 _poolKey/poolKeyFor 配对，位置就是对应关系。
+      slots: [],
       imgIndices: {},
-      randomPools: [],
       // 池子只有两种类型（由每个池自己的 traverse 字段标记，不再是全局模式）：
       // 🎲 随机池：traverse=false，每次现抽 1 条；∞ 遍历池：traverse=true，所有词条参与全组合。
       // 跑法不再有全局开关：遍历是默认跑法（∞ 遍历池做全组合各跑一次，🎲 随机池每组现抽 1 条）。
@@ -885,11 +891,18 @@ export default {
       fillMode: false,
     });
 
+    // data.slots 的两个只读视图：只用于 filter/some/find/map/length 这类查询。
+    // 结构变更（增删改序）一律直接操作 data.slots，绝不往视图里 push/splice。
+    const allPools = computed(() => data.slots.filter((s) => s && s.t === 'pool'));
+    const allItems = computed(() => data.slots.filter((s) => s && s.t === 'item'));
+    // 本轮真正能出词的槽：item 槽本身，或已抽中（picked 有值）的 pool 槽
+    const filledSlots = computed(() => data.slots.filter((s) => s && (s.t === 'item' || !!s.picked)));
+
     // ============ 卡片框选（多选 → 凝结成池）============
     // 选中语义与图库一致：框选 = 一次性覆盖写入命中集合；Ctrl/⌘ + 左键点卡片 = 单项增删。
     // 词库的特殊性：左键长按卡片是「把卡片拖成标签」的起手动作，不能占用，
     // 所以这里的长按框选改成**右键**起手（图库仍是左键）。
-    // 框选结果只是"待凝结的候选"，不进入 data.selected，不影响已选区与预览。
+    // 框选结果只是"待凝结的候选"，不进入 data.slots，不影响已选区与预览。
     const pickSel = reactive(new Set());
     const gridEl = ref(null);
     // key 与卡片 DOM 上的 data-tab + data-rel 严格同构，composable 拿到的 key 可直接回喂本集合
@@ -1090,16 +1103,187 @@ export default {
       return Math.random() * 100 < c;
     };
 
-    // 手选标签的参与率：普通词条读自己身上的 chance（默认 100）；池占位符的概率归池管（phChance）。
-    const itemChanceOf = (s) => (s && s._ph ? phChance(s) : normalizeChance(s && s.chance));
-    // 手选标签摇骰：池占位符一律放行（池的参与率已经在 pickFromPools 里摇过，不能连摇两次），
-    // 普通词条按自己的 chance 摇——100% 恒中、0% 恒不中、中间按百分数取随机。
+    // 标签上的参与率：item 槽读自己身上的 chance（默认 100）；pool 槽的概率归池自己管
+    const itemChanceOf = (s) => (!s ? 100 : s.t === 'pool' ? poolChanceOf(s) : normalizeChance(s.chance));
+    // 手选标签摇骰：池槽一律放行（池的参与率已经在 pickFromPools 里摇过，不能连摇两次），
+    // item 槽按自己的 chance 摇——100% 恒中、0% 恒不中、中间按百分数取随机。
     const rollItemChance = (s) => {
-      if (s && (s._ph || s._pool)) return true;
+      if (s && (s.t === 'pool' || s._pool)) return true;
       const c = normalizeChance(s && s.chance);
       if (c >= 100) return true;
       if (c <= 0) return false;
       return Math.random() * 100 < c;
+    };
+
+    // slots 序列化：池槽存「池配置 + picked 抽中结果」，item 槽存定位与参与率/锁。
+    // 不存任何拼接 key —— 数组顺序就是唯一身份，读回来直接就是运行时结构。
+    const serializeSlots = () => data.slots.map(s => {
+      if (s.t === 'pool') {
+        const o = { t: 'pool', kind: s.kind };
+        if (s.kind === 'list') {
+          o.poolId = s.poolId;
+          o.items = (s.items || []).map(e => ({ tab: e.tab, relPath: e.relPath }));
+          o.display = s.display || '';
+        } else {
+          o.tab = s.tab;
+          if (s.kind === 'chip') o.chipId = s.chipId;
+          o.display = s.display || '';
+        }
+        o.traverse = !!s.traverse;
+        o.chance = s.traverse ? 100 : normalizeChance(s.chance);
+        if (s.lock) o.lock = true;
+        if (s.pin) o.pin = s.pin;
+        if (s.picked) o.picked = s.picked;
+        return o;
+      }
+      return {
+        t: 'item', tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name,
+        content: s.content || undefined, content_cn: s.content_cn || undefined,
+        neg: s.neg || undefined, override: s.override || undefined,
+        _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined,
+        chance: normalizeChance(s.chance), lock: !!s.lock,
+      };
+    });
+
+    // 存档 slots 还原：池槽按 kind 校验（chip 以节点 id 为身份，凝结池条目按 tab+relPath 实时回查），
+    // item 槽优先用词库当前数据刷一遍名字/正文，查不到才退回存档里的副本。
+    const rebuildSlots = (raw) => {
+      const out = [];
+      for (const s of (Array.isArray(raw) ? raw : [])) {
+        if (!s) continue;
+        if (s.t === 'pool') {
+          const kind = s.kind === 'list' ? 'list' : (s.kind === 'chip' ? 'chip' : 'tab');
+          const o = { t: 'pool', kind };
+          if (kind === 'list') {
+            o.poolId = s.poolId || ('L' + Math.random().toString(36).slice(2, 10));
+            o.items = (Array.isArray(s.items) ? s.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
+            if (!o.items.length) continue;   // 凝结池条目全没了就整个丢掉，不留空壳
+            o.display = s.display || ('凝结' + o.items.length + '项');
+          } else {
+            o.tab = String(s.tab || '');
+            if (!o.tab) continue;
+            if (kind === 'chip') {
+              if (!s.chipId) continue;       // chip 身份即节点 id，缺了就没法定位，作废
+              o.chipId = s.chipId;
+              o.display = nodeNameOf(s.chipId) || s.display || String(s.chipId);
+            } else {
+              o.display = s.display || '';
+            }
+          }
+          o.traverse = !!s.traverse;
+          // 遍历池 ∞ 不吃参与率，读档一律拨回 100，免得存档里留个无意义的百分比误导人
+          o.chance = o.traverse ? 100 : normalizeChance(s.chance);
+          if (s.lock) o.lock = true;
+          if (s.pin) o.pin = s.pin;
+          if (s.picked) o.picked = s.picked;
+          out.push(o);
+          continue;
+        }
+        if (!s.tab || !s.relPath) continue;
+        const card = (bankData.value[s.tab] || []).find(c => c.relPath === s.relPath);
+        if (card) {
+          out.push({ t: 'item', tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+        } else {
+          out.push({ t: 'item', tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+        }
+      }
+      return out;
+    };
+
+    // 旧存档池清洗：兼容数组形态与更早的「按 tab 分桶」对象形态
+    const cleanLegacyPools = (raw) => {
+      if (!raw) return [];
+      const clean = [];
+      if (Array.isArray(raw)) {
+        clean.push(...raw.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string'
+          && (it.kind !== 'chip' || it.chipId)));
+      } else if (typeof raw === 'object') {
+        Object.keys(raw).forEach(t => {
+          const arr = raw[t];
+          if (!Array.isArray(arr)) return;
+          arr.forEach(it => {
+            if (it && (it.kind === 'tab' || it.kind === 'chip') && Array.isArray(it.path)) {
+              clean.push({ kind: it.kind, tab: t, path: it.path, display: it.display || '' });
+            }
+          });
+        });
+      }
+      clean.forEach(it => {
+        // 池的 chip 身份即节点 id（后端已不再下发 path，路径存档早于本版即作废）
+        delete it.path;
+        if (it.kind !== 'chip') return;
+        if (!it.chipId) it.dead = true;
+        else it.display = nodeNameOf(it.chipId) || it.display || String(it.chipId);
+      });
+      const kept = clean.filter(it => {
+        if (it.kind === 'chip' && it.dead) return false;
+        if (it.kind !== 'list') return true;
+        it.items = (Array.isArray(it.items) ? it.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
+        if (!it.poolId) it.poolId = 'L' + Math.random().toString(36).slice(2, 10);
+        if (!it.display) it.display = '凝结' + it.items.length + '项';
+        return it.items.length > 0;
+      });
+      // 池类型 / 参与率：旧存档没有字段 → 一律随机池 🎲 + 100%（与旧行为完全一致，不改变既有出图结果）
+      kept.forEach(it => {
+        it.traverse = !!it.traverse;
+        it.chance = it.traverse ? 100 : normalizeChance(it.chance);
+      });
+      return kept;
+    };
+
+    // 旧存档迁移（selected + randomPools 双数组靠 _poolKey 缝合）→ 单数组 slots。
+    // 旧 _poolKey 是拼接串，格式已随旧版淘汰，这里按「串里含 tab / chipId / poolId」宽松认领，
+    // 认不出来就按顺序取下一个没用掉的池——占位符本来就是按池顺序铺出来的，顺序兜底足够准。
+    const migrateLegacy = (legacySelected, pools) => {
+      const left = pools.slice();
+      const take = (ph) => {
+        if (!left.length) return null;
+        const k = String(ph._poolKey || '');
+        const hit = k ? left.findIndex(p => (p.kind === 'tab'
+          ? k === 'T:' + p.tab || k.indexOf(String(p.tab)) >= 0
+          : p.kind === 'chip'
+            ? k === 'C:' + p.tab + ':' + p.chipId || k.indexOf(String(p.chipId)) >= 0
+            : !!p.poolId && k.indexOf(String(p.poolId)) >= 0)) : -1;
+        return left.splice(hit >= 0 ? hit : 0, 1)[0];
+      };
+      const out = [];
+      for (const sel of legacySelected) {
+        if (!sel) continue;
+        if (sel._poolKey !== undefined || sel._ph) {
+          const p = take(sel);
+          if (!p) continue;   // 找不到池的旧占位符直接丢弃，不留没有归属的空位
+          const slot = { t: 'pool', kind: p.kind };
+          if (p.kind === 'list') { slot.poolId = p.poolId; slot.items = p.items; slot.display = p.display; }
+          else { slot.tab = p.tab; if (p.kind === 'chip') slot.chipId = p.chipId; slot.display = p.display || ''; }
+          slot.traverse = !!p.traverse;
+          slot.chance = slot.traverse ? 100 : normalizeChance(p.chance);
+          if (p.lock) slot.lock = true;
+          if (p.pin) slot.pin = p.pin;
+          // 旧存档「已抽定」的占位符把绑定词条原样搬成 picked，运行时立刻能用
+          if ((sel._filled || sel._ph) && sel.content) {
+            slot.picked = {
+              tab: sel.tab || '', relPath: sel.relPath || '', id: sel.id || '', name: sel.name || '',
+              content: sel.content || '', content_cn: sel.content_cn || '',
+              neg: sel.neg || '', override: sel.override || '',
+            };
+          }
+          out.push(slot);
+          continue;
+        }
+        out.push(sel);
+      }
+      // 剩下没被任何占位符认领的池（旧存档一般不会出现）追加到末尾，别把用户配好的池弄丢
+      for (const p of left) {
+        const slot = { t: 'pool', kind: p.kind };
+        if (p.kind === 'list') { slot.poolId = p.poolId; slot.items = p.items; slot.display = p.display; }
+        else { slot.tab = p.tab; if (p.kind === 'chip') slot.chipId = p.chipId; slot.display = p.display || ''; }
+        slot.traverse = !!p.traverse;
+        slot.chance = slot.traverse ? 100 : normalizeChance(p.chance);
+        if (p.lock) slot.lock = true;
+        if (p.pin) slot.pin = p.pin;
+        out.push(slot);
+      }
+      return out;
     };
 
     const saveState = () => {
@@ -1109,8 +1293,8 @@ export default {
         pref: { ...pref },
         activeTab: data.activeTab,
         selections: data.selections,
-        selected: data.selected.map(s => s._ph ? { _ph: true, _poolKey: s._poolKey, tab: s.tab, name: s.name, _filled: !!s._filled, relPath: s.relPath || undefined, id: s.id || undefined, content: s.content || undefined, content_cn: s.content_cn || undefined, neg: s.neg || undefined, override: s.override || undefined } : { tab: s.tab, relPath: s.relPath, id: s.id || undefined, name: s.name, _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined, chance: normalizeChance(s.chance), lock: !!s.lock }),
-        randomPools: data.randomPools,
+        // 单一 slots：池与提示词位置同在一个数组里，顺序即身份
+        slots: serializeSlots(),
         // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
         // 4 起移除遍历开关（遍历恒为默认跑法）；填充模式 ⏩ 重新加入，但目标数量改为「词库里设的次数」。
         modeVer: 4,
@@ -1208,87 +1392,24 @@ export default {
         if (typeof state.chipsCollapsed === 'boolean') chipsCollapsed.value = state.chipsCollapsed;
         if (typeof state.chipsHeight === 'number') chipsHeight.value = Math.min(420, Math.max(40, state.chipsHeight));
         if (typeof state.selectedCollapsed === 'boolean') selectedCollapsed.value = state.selectedCollapsed;
-        if (state.randomPools) {
-          const clean = [];
-          if (Array.isArray(state.randomPools)) {
-            clean.push(...state.randomPools.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string'
-              && (it.kind !== 'chip' || it.chipId)));
-          } else if (typeof state.randomPools === 'object') {
-            // 兼容旧版按 tab 分桶的存档
-            Object.keys(state.randomPools).forEach(t => {
-              const arr = state.randomPools[t];
-              if (!Array.isArray(arr)) return;
-              arr.forEach(it => {
-                if (it && (it.kind === 'tab' || it.kind === 'chip') && Array.isArray(it.path)) {
-                  clean.push({ kind: it.kind, tab: t, path: it.path, display: it.display || '' });
-                }
-              });
-            });
-          }
-          clean.forEach(it => {
-            // 池的 chip 身份即节点 id（后端已不再下发 path，路径存档早于本版即作废）
-            delete it.path;
-            if (it.kind !== 'chip') return;
-            if (!it.chipId) it.dead = true;
-            else it.display = nodeNameOf(it.chipId) || it.display || String(it.chipId);
-          });
-          // 凝结池（kind:'list'）校验：items 必须是有 tab + relPath 的数组，池子空了就丢弃
-          data.randomPools = clean.filter(it => {
-            if (it.kind === 'chip' && it.dead) return false;
-            if (it.kind !== 'list') return true;
-            it.items = (Array.isArray(it.items) ? it.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
-            if (!it.poolId) it.poolId = 'L' + Math.random().toString(36).slice(2, 10);
-            if (!it.display) it.display = '凝结' + it.items.length + '项';
-            return it.items.length > 0;
-          });
-        }
-        // 池类型：旧存档的池没有 traverse 字段 → 一律视为随机池 🎲（与旧行为一致）
-        data.randomPools.forEach(it => { it.traverse = !!it.traverse; });
-        // 参与率：旧存档没有 chance 字段 → 一律 100%（每轮必参与，与旧行为完全一致，不改变既有出图结果）
-        // 遍历池 ∞ 不吃参与率，读档时把残留值一律拨回 100，避免存档里留着无意义的百分比
-        data.randomPools.forEach(it => { it.chance = it.traverse ? 100 : normalizeChance(it.chance); });
+        // 池清洗只给旧存档迁移用：新存档的池槽已经在 slots 里，不需要单独一份池数组
+        let legacyPools = [];
         // 旧存档迁移：modeVer < 3 时旧「随机模式 🔄」= 各池各抽一条逐条出图，等价于「所有池都是 🎲 随机池」。
         // 遍历开关已移除（遍历恒为默认跑法）；填充模式 ⏩ 已回归，存档里的 fillMode 照原样恢复。
         if (typeof state.fillMode === 'boolean') data.fillMode = state.fillMode;
-        if (!(state.modeVer >= 3) && state.randomMode) {
-          data.randomPools.forEach(it => { it.traverse = false; });
-        }
         if (state.imgIndices && typeof state.imgIndices === 'object') data.imgIndices = state.imgIndices;
-        if (state.selections && typeof state.selections === 'object') {
-          Object.keys(state.selections).forEach(t => {
-            const arr = state.selections[t] || [];
-            data.selections[t] = new Array(maxDepth.value).fill(null).map(() => []);
-            for (let i = 0; i < Math.min(arr.length, maxDepth.value); i++) {
-              const v = arr[i];
-              const one = Array.isArray(v) ? v.filter(x => x)[0] : v;   // 互斥单选：旧多选只保留首个
-              if (!one) continue;
-              // 选区身份即节点 id，非 id 值（旧路径 key）直接丢弃
-              const id = String(one);
-              if ((bankNodes.value || {})[id]) data.selections[t][i] = [id];
-            }
-          });
-        }
         if (state.activeTab && tabs.value.includes(state.activeTab)) data.activeTab = state.activeTab;
         // 忽略历史存档中的 tabSortSettings：排序已固定为「深度（目录序）」，不做手动选择
-        if (Array.isArray(state.selected)) {
-          const rebuilt = [];
-          state.selected.forEach(s => {
-            if (!s) return;
-            if (s._ph) {
-              // 占位符：直接还原（类名即占位名，随机池恢复后 sync 兜底补齐）；
-              // 已抽取（_filled）的占位符带绑定词条信息，普通模式运行直接可用
-              rebuilt.push({ _ph: true, _poolKey: s._poolKey || '', tab: s.tab || '', name: s.name || '', _filled: !!s._filled, relPath: s.relPath || '', id: s.id || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '' });
-              return;
-            }
-            if (!s.tab || !s.relPath) return;
-            const cards = bankData.value[s.tab] || [];
-            const card = cards.find(c => c.relPath === s.relPath);
-            if (card) rebuilt.push({ tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
-            else rebuilt.push({ tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _poolKey: s._poolKey || undefined, _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
-          });
-          data.selected = rebuilt;
-          // 恢复完成后以池为准校准占位符（旧存档占位符缺 poolKey 等场景兜底）
-          syncPlaceholders();
+        // 读档：新存档直接读 slots；旧存档（selected + randomPools 双数组）就地迁移成单数组
+        if (Array.isArray(state.slots)) {
+          data.slots = rebuildSlots(state.slots);
+        } else if (Array.isArray(state.selected)) {
+          legacyPools = cleanLegacyPools(state.randomPools);
+          data.slots = rebuildSlots(migrateLegacy(state.selected, legacyPools));
+        }
+        // 旧「随机模式」存档整份降级为随机池（放在 slots 建好之后跑，否则遍历的是个空数组）
+        if (!(state.modeVer >= 3) && state.randomMode) {
+          for (const it of allPools.value) it.traverse = false;
         }
         // 恢复流程正常完成：标记守卫放行，此后状态变更才允许写盘
         stateRestored = true;
@@ -1779,7 +1900,7 @@ export default {
         editTarget.value = null;
         editing.value = false;
         // 已选列表里若有该词条，同步刷新快照（运行/预览取的是快照，不刷新会用到旧的排除词）
-        data.selected.forEach(sl => {
+        data.slots.forEach(sl => {
           const sameId = saved.id && sl.id && String(sl.id) === String(saved.id);
           if (sameId || sl.relPath === saved.relPath) {
             sl.name = saved.name;
@@ -2065,7 +2186,7 @@ export default {
       const cards = bankData.value[tabName] || [];
       if (!cards.length) return;
       let dirty = false;
-      data.selected.forEach(s => {
+      data.slots.forEach(s => {
         if (s.tab !== tabName || s.content) return;
         const c = cards.find(x => x.relPath === s.relPath);
         if (c) { s.id = c.id || s.id; s.name = c.name; s.content = c.content; s.content_cn = c.content_cn; s.neg = c.neg || ''; s.override = c.override || ''; dirty = true; }
@@ -2156,7 +2277,7 @@ export default {
         loaded.value = true;
         // 已选列表中若含尚未加载的 tab，补拉数据以恢复完整内容（fire-and-forget）
         const need = new Set();
-        data.selected.forEach(s => { if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) need.add(s.tab); });
+        data.slots.forEach(s => { if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) need.add(s.tab); });
         need.forEach(t => load(false, t));
       } catch (e) {
         error.value = '加载词库失败：' + e.message;
@@ -2617,7 +2738,8 @@ export default {
     // 已选标签显示名：与卡片标题同一口径（默认版显示组名，其余显示自身完整名）
     const selDisplayName = (item) => {
       if (!item) return '';
-      if (item._ph) return item.name || '';
+      // 池槽的显示名要现算：前缀跟 traverse 走、抽中后拼上词条名
+      if (item.t === 'pool') return poolLabel(item);
       return cardDisplayName(item);
     };
     // 分支组节点集合：自己 type=entry，且其下有 type=entry 的子节点
@@ -3006,7 +3128,7 @@ export default {
     // 表现为「这张图的 tag 里没有我选的角色」。这里按 tab + relPath 回查卡片把 id 补回来。
     const healSelectedIds = () => {
       let fixed = 0;
-      for (const s of data.selected) {
+      for (const s of data.slots) {
         if (s.id) continue;
         const cards = bankData.value[s.tab] || [];
         const f = cards.find(x => x.relPath === s.relPath);
@@ -3049,25 +3171,25 @@ export default {
     const previewText = computed(() => {
       // 填充模式 ⏩：目标张数就是词库里设的「次数」，逐条补到该数量为止
       if (data.fillMode) {
-        const filledFill = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
+        const filledFill = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
         if (filledFill.length) return '填充抽取：' + withRemoved(composePreview(filledFill));
         const labF = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-        if (!data.randomPools.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ∞';
-        const travF = data.randomPools.filter(it => it.traverse).map(labF);
-        const rndF = data.randomPools.filter(it => !it.traverse).map(labF);
+        if (!allPools.value.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ∞';
+        const travF = allPools.value.filter(it => it.traverse).map(labF);
+        const rndF = allPools.value.filter(it => !it.traverse).map(labF);
         const targetF = Math.max(1, Number(pref.genCount) || 0);
         return '填充 ⏩：∞ 遍历池 ' + (travF.join(' | ') || '（无，填充需要至少一个）')
           + (rndF.length ? ' → 🎲 随机池 ' + rndF.join(' | ') + '（每张图照常各抽 1 条）' : '')
           + '；目标 = 遍历池内每条提示词参考图补到 ' + targetF + ' 张（次数），不足的逐条补跑，已有更多的不动';
       }
-      if (data.randomPools.length) {
-        const filled = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
+      if (allPools.value.length) {
+        const filled = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
         if (filled.length) {
           return '遍历抽取：' + withRemoved(composePreview(filled));
         }
         const lab = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-        const trav = data.randomPools.filter(it => it.traverse).map(lab);
-        const rnd = data.randomPools.filter(it => !it.traverse).map(lab);
+        const trav = allPools.value.filter(it => it.traverse).map(lab);
+        const rnd = allPools.value.filter(it => !it.traverse).map(lab);
         const parts = [];
         if (trav.length) parts.push('∞ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
         if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
@@ -3077,17 +3199,17 @@ export default {
           : '；无遍历池 ∞，按普通模式逐条运行（每轮各抽 1 条）';
         return parts.join(' → ') + extra;
       }
-      const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
+      const picked = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
       if (!picked.length) return '（空）';
       return withRemoved(composePreview(picked));
     });
 
     // 负面预览：同样是「自身 + 父级分类」拼完的最终结果，与正向一一对应
     const previewNegText = computed(() => {
-      if (data.randomPools.length) {
+      if (allPools.value.length) {
         return '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）';
       }
-      const picked = data.selected.filter(s => !s._ph || s._filled).map(resolveVgForPreview);
+      const picked = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
       if (!picked.length) return '';
       return joinInherit(expandItems(picked).map(s => s.neg));
     });
@@ -3127,7 +3249,7 @@ export default {
       if (!ta || !tb) return true;
       return ta === tb;
     };
-    const isFileSelected = (file) => data.selected.some(s => sameCard(s, file));
+    const isFileSelected = (file) => data.slots.some(s => sameCard(s, file));
 
     // ============ 随机池（多项独立子池：每个右键选中的 tab / chip 各为一池，随机/遍历时各抽一组合；父子互不包含） ============
     // ============ 分类节点即身份：左栏 chip 自带 { id, parentId, name }，路径 key 已废弃 ============
@@ -3209,7 +3331,7 @@ export default {
     const chipDisplayFor = (tab, id) => nodeNameOf(id) || String(id || '');
     // 随机池父子冲突按 DB id 链判断：同链上谁浅谁包含谁，提示一律用无编号显示名
     const hasPoolConflict = (tab, chipId) => {
-      const items = data.randomPools.filter(it => it.tab === tab);
+      const items = allPools.value.filter(it => it.tab === tab);
       const myChain = chipIdChain(tab, chipId);
       for (const it of items) {
         if (it.kind === 'tab') {
@@ -3246,31 +3368,33 @@ export default {
       fetch('/zhule_studio/api/debug_log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) }).catch(() => {});
     };
     window.addEventListener('beforeunload', flushZhuleLog);
-    const selSummary = () => data.selected.map(s => (s._ph ? 'PH[' + s._poolKey + ']' : (s._poolKey ? 'R[' + s._poolKey + ']' + s.name : s.name)));
+    const selSummary = () => data.slots.map(s => (s.t === 'pool'
+      ? 'POOL[' + s.kind + ':' + (s.kind === 'list' ? s.poolId : (s.chipId || s.tab)) + (s.picked ? '→' + s.picked.name : '') + ']'
+      : s.name));
 
-    const isTabInPool = (tab) => data.randomPools.some(it => it.kind === 'tab' && it.tab === tab);
+    const isTabInPool = (tab) => allPools.value.some(it => it.kind === 'tab' && it.tab === tab);
     // 池类型（池级标记）：traverse=true 为遍历池 ∞（参与笛卡尔积全量穷举），
     // traverse=false 为随机池 🎲（每个组合现抽 1 条）。右键在「无 → 随机 → 遍历 → 无」三态间循环
-    const isTabTraversePool = (tab) => data.randomPools.some(it => it.kind === 'tab' && it.tab === tab && !!it.traverse);
+    const isTabTraversePool = (tab) => allPools.value.some(it => it.kind === 'tab' && it.tab === tab && !!it.traverse);
     // 大类下有任意提示词被选中时高亮该 tab
     const tabHasSelected = (name) => {
       const cards = bankData.value[name] || [];
       if (!cards.length) return false;
       const rels = new Set(cards.map(c => c.relPath));
-      return data.selected.some(s => rels.has(s.relPath));
+      return data.slots.some(s => rels.has(s.relPath));
     };
     // 左栏 chip 是 { id, parentId, name } 对象：入池判断、高亮全部按节点 id 比对
     const isChipInPool = (chip) => {
       const tab = data.activeTab;
       const id = String((chip && chip.id) || '');
       if (!id) return false;
-      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
+      return allPools.value.some(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
     };
     const isChipTraversePool = (chip) => {
       const tab = data.activeTab;
       const id = String((chip && chip.id) || '');
       if (!id) return false;
-      return data.randomPools.some(it => it.kind === 'chip' && it.tab === tab && !!it.traverse && String(it.chipId || '') === id);
+      return allPools.value.some(it => it.kind === 'chip' && it.tab === tab && !!it.traverse && String(it.chipId || '') === id);
     };
 
     // ============ 交互 ============
@@ -3361,19 +3485,10 @@ const submitAddTab = async () => {
       sel[depth] = [];
       for (let i = depth + 1; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
     };
-    // 池类型变了（🎲↔∞）之后：该池占位符的名字前缀要跟着换，
-    // 之前的「已抽定」结果同步作废（池语义已变，旧抽定不再代表这个池），回到未填充占位符
+    // 池类型变了（🎲↔∞）之后：标签前缀由 poolLabel 现算，这里只需把旧的抽定结果作废
+    // （池语义已变，旧的 picked 不再代表这个池），回到「还没抽」的空槽状态
     const refreshPoolPlaceholder = (item) => {
-      const k = poolKeyFor(item);
-      const want = placeholderFor(item).name;
-      for (const s of data.selected) {
-        if (!s._ph || s._poolKey !== k) continue;
-        if (s.name === want && !s._filled) continue;
-        s.name = want;
-        s._filled = false;
-        delete s.relPath; delete s.id; delete s.content; delete s.content_cn;
-        delete s.neg; delete s.override;
-      }
+      if (item && item.t === 'pool') item.picked = null;
     };
 
     // ============ 分类右键菜单 + 编辑分类（统一入口） ============
@@ -3481,12 +3596,12 @@ const submitAddTab = async () => {
     const poolKindOf = (kind, keyOrId) => {
       const tab = data.activeTab;
       if (kind === 'tab') {
-        const it = data.randomPools.find(p => p.kind === 'tab' && p.tab === keyOrId);
+        const it = allPools.value.find(p => p.kind === 'tab' && p.tab === keyOrId);
         return it ? (it.traverse ? 'traverse' : 'random') : 'all';
       }
       const id = String(keyOrId || '');
       if (!id) return 'all';
-      const it = data.randomPools.find(p => p.kind === 'chip' && p.tab === tab && String(p.chipId || '') === id);
+      const it = allPools.value.find(p => p.kind === 'chip' && p.tab === tab && String(p.chipId || '') === id);
       return it ? (it.traverse ? 'traverse' : 'random') : 'all';
     };
     const openCatMenu = (evt, kind, keyOrNode, depth) => {
@@ -3505,8 +3620,8 @@ const submitAddTab = async () => {
       // 参与率：只在已经是池时才有意义，没进池按默认 100% 显示（菜单里那块本来也不显示）
       const chanceItem = catMenu.pool === 'all' ? null
         : (isChip
-          ? data.randomPools.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(id))
-          : data.randomPools.find(p => p.kind === 'tab' && p.tab === keyOrNode));
+          ? allPools.value.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(id))
+          : allPools.value.find(p => p.kind === 'tab' && p.tab === keyOrNode));
       catMenu.chance = chanceItem ? poolChanceOf(chanceItem) : 100;
       catMenu.muted = !!((nodeOfCat(kind, isChip ? id : keyOrNode) || {}).mute);
 
@@ -3666,21 +3781,19 @@ const submitAddTab = async () => {
       const items = files.map(f => ({ tab: f.tab || data.activeTab, relPath: f.relPath, id: f.id || '', name: f.name }));
       const sig = condenseSig(items);
       const label = traverse ? '遍历池 ∞' : '随机池 🎲';
-      let pool = data.randomPools.find(it => it.kind === 'list' && condenseSig(it.items) === sig);
+      let pool = allPools.value.find(it => it.kind === 'list' && condenseSig(it.items) === sig);
       if (pool) {
         const same = !!pool.traverse === !!traverse;
         pool.traverse = !!traverse;
-        syncPlaceholders();
         showToast(same
           ? `这 ${items.length} 项已经是「${label}」了`
           : `「${pool.display}」已改为${label}`, same ? 'success' : 'success', 2400);
       } else {
         pool = {
-          kind: 'list', poolId: 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          tab: '', path: [], display: '凝结' + items.length + '项', items, traverse: !!traverse, chance: 100,
+          t: 'pool', kind: 'list', poolId: 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          tab: '', display: '凝结' + items.length + '项', items, traverse: !!traverse, chance: 100,
         };
-        data.randomPools.push(pool);
-        syncPlaceholders();
+        data.slots.push(pool);
         showToast(`${items.length} 项已凝结为${label}，已加入下方池子`, 'success', 2600);
       }
       zhuleLog('onCardCondense', { kind: 'list', poolId: pool.poolId, count: items.length, traverse: !!traverse }, 'selected=', selSummary());
@@ -4115,55 +4228,52 @@ const submitAddTab = async () => {
 
     // 右键 = 池类型三态循环：不在池 → 🎲 随机池 → ∞ 遍历池 → 移出池
     const togglePoolForTab = (tab) => {
-      const idx = data.randomPools.findIndex(it => it.kind === 'tab' && it.tab === tab);
+      const idx = allPools.value.findIndex(it => it.kind === 'tab' && it.tab === tab);
       if (idx >= 0) {
-        const cur = data.randomPools[idx];
+        const cur = allPools.value[idx];
         if (!cur.traverse) {
           cur.traverse = true;
           cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
           zhuleLog('togglePoolForTab: 🎲→∞ 改为遍历池', { kind: 'tab', tab }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
-          syncPlaceholders();
           return showToast('「' + tabLabel(tab) + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
         }
-        data.randomPools.splice(idx, 1);
+        // 池本身就是 slots 里的一格，移出池 = 删掉那一格（提示词位置一起消失，本来就是同一处）
+        const si = data.slots.indexOf(cur);
+        if (si >= 0) data.slots.splice(si, 1);
         zhuleLog('togglePoolForTab: 移出池', cur, 'selected=', selSummary());
-        syncPlaceholders();
         return showToast('「' + tabLabel(tab) + '」已移出池', 'warn', 2000);
       }
       const chk = hasPoolConflict(tab, '');
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'tab', tab, display: tab, traverse: false, chance: 100 });
+      data.slots.push({ t: 'pool', kind: 'tab', tab, display: tab, traverse: false, chance: 100 });
       zhuleLog('togglePoolForTab: 加入随机池', { kind: 'tab', tab }, 'selected=', selSummary());
-      syncPlaceholders();
       showToast('「' + tabLabel(tab) + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
     const togglePoolForChip = (chipId, label) => {
       const tab = data.activeTab;
       const id = String(chipId || '');
       if (!id) return;
-      const idx = data.randomPools.findIndex(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
+      const idx = allPools.value.findIndex(it => it.kind === 'chip' && it.tab === tab && String(it.chipId || '') === id);
       const disp = label || nodeNameOf(id) || id;
       if (idx >= 0) {
-        const cur = data.randomPools[idx];
+        const cur = allPools.value[idx];
         if (!cur.traverse) {
           cur.traverse = true;
           cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
           zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
-          syncPlaceholders();
           return showToast('「' + disp + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
         }
-        data.randomPools.splice(idx, 1);
+        const si = data.slots.indexOf(cur);
+        if (si >= 0) data.slots.splice(si, 1);
         zhuleLog('togglePoolForChip: 移出池', cur, 'selected=', selSummary());
-        syncPlaceholders();
         return showToast('「' + disp + '」已移出池', 'warn', 2000);
       }
       const chk = hasPoolConflict(tab, id);
       if (chk.conflict) return showToast('无法加入：' + chk.msg, 'warn');
-      data.randomPools.push({ kind: 'chip', tab, chipId: id, display: disp, traverse: false, chance: 100 });
+      data.slots.push({ t: 'pool', kind: 'chip', tab, chipId: id, display: disp, traverse: false, chance: 100 });
       zhuleLog('togglePoolForChip: 加入随机池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
-      syncPlaceholders();
       showToast('「' + disp + '」加入随机池 🎲：每次现抽 1 条（再右键改遍历池）', 'success', 2600);
     };
 
@@ -4187,71 +4297,44 @@ const submitAddTab = async () => {
       toggleChip(depth, chip);
     };
 
-    // ============ 占位符（右键 tab / chip 进池时同步出现在已选列表，类名即占位名；遍历/随机出词后填充该位置） ============
-    // 池的唯一键：tab:大类名 / list:池id / chip:大类名|分类节点id（分类身份即节点 id，已无路径概念）
-    const poolKeyFor = (item) => item.kind === 'tab' ? 'tab:' + item.tab
-      : item.kind === 'list' ? 'list:' + (item.poolId || '')
-      : 'chip:' + item.tab + '|' + String(item.chipId || '');
-    const placeholderFor = (item) => ({
-      _ph: true,
-      _poolKey: poolKeyFor(item),
-      tab: item.tab,
-      name: (item.traverse ? '∞ ' : '🎲 ') + (item.kind === 'tab' ? tabLabel(item.tab)
-        : item.kind === 'list' ? (item.display || ('凝结' + (item.items || []).length + '项'))
-        : (nodeNameOf(item.chipId) || item.display || String(item.chipId || ''))),
-    });
-    // 从占位符 _poolKey 解析分类显示名（tab:xxx / chip:大类名|节点id），用于「分类：抽中词条名」拼接
-    const placeholderBaseName = (s) => {
-      if (!s || !s._poolKey) return '';
-      const k = s._poolKey;
-      if (k.startsWith('tab:')) return tabLabel(k.slice(4));
-      if (k.startsWith('list:')) {
-        const it = data.randomPools.find(p => p.kind === 'list' && ('list:' + (p.poolId || '')) === k);
-        return it ? (it.display || '凝结池') : '';
-      }
-      const bar = k.indexOf('|');
-      if (bar < 0) return '';
-      const rest = k.slice(bar + 1);
-      const n = bankNodes.value[rest];
-      return n && n.name ? n.name : '';    // 键里就是节点 id，直接读节点名
+    // ============ 池槽（右键 tab / chip 进池时直接在 data.slots 里加一格，抽中结果挂在槽自己的 picked 上） ============
+    // 池槽标签的显示名：🎲 表情 / ∞ 发型，抽中后拼成「🎲 表情：微笑」；没抽中只显示池名
+    const poolLabel = (s) => {
+      if (!s || s.t !== 'pool') return '';
+      const base = (s.traverse ? '∞ ' : '🎲 ') + (s.kind === 'tab' ? (tabLabel(s.tab) || s.tab)
+        : s.kind === 'list' ? (s.display || ('凝结' + (s.items || []).length + '项'))
+          : (nodeNameOf(s.chipId) || s.display || String(s.chipId || '')));
+      return (s.picked && s.picked.name) ? base + '：' + s.picked.name : base;
     };
+    // 取槽上真正要出词的数据：item 槽即自身，pool 槽即 picked（没抽中返回 null）
+    const slotData = (s) => (!s ? null : s.t === 'pool' ? (s.picked || null) : s);
+
     // ============ 已选标签右键菜单：就地管池 ============
     // 以前要改一个池的 🎲/∞ 得回左侧分类再右键走三态循环，隔着两层；
-    // 现在预览区里那个黄色占位标签右键就能切类型、调参与率、只重抽这一个池、直接移出池。
-    const tagMenu = reactive({ open: false, x: 0, y: 0, ready: false, idx: -1, key: '', title: '', isPool: false, poolType: 'random', chance: 100, lock: false });
-    const poolItemByKey = (k) => (k ? (data.randomPools.find(p => poolKeyFor(p) === k) || null) : null);
-    // 锁定态：池占位标签看所属池的 lock，普通手选词条看自己身上的 lock。
+    // 现在预览区里那个黄色池标签右键就能切类型、调参与率、只重抽这一个池、直接移出池。
+    // 定位一律用槽下标 idx：单数组里位置即身份，不存 key。
+    const tagMenu = reactive({ open: false, x: 0, y: 0, ready: false, idx: -1, title: '', isPool: false, poolType: 'random', chance: 100, lock: false });
+    const slotAt = (i) => (data.slots[i] || null);
+    // 锁定态：池锁在池槽自己身上，词条锁在词条槽自己身上，都读同一个 lock 字段
     // 锁上以后所有变更入口一起拦住（改类型/改参与率/重抽/移出池/× 删除/拖拽排序），只留右键菜单里的解锁。
-    const itemLocked = (s) => {
-      if (!s) return false;
-      // 用 _poolKey 而不是 _ph 判池：占位符被填充后 _ph 会变 false 但钥匙还在，锁不能因此掉
-      if (s._poolKey) { const it = poolItemByKey(s._poolKey); return !!(it && it.lock); }
-      return !!s.lock;
-    };
-    // 占位标签上的参与率角标：没有对应池（旧存档残留占位符）按 100 处理，不显示角标
-    // 模板统一入口：池占位符读池概率、普通词条读自身概率
+    const itemLocked = (s) => !!(s && s.lock);
+    // 模板统一入口：池槽读池概率、item 槽读自身概率
     const itemChance = (s) => itemChanceOf(s);
-    const phChance = (s) => {
-      if (!s || !s._ph) return 100;
-      const it = poolItemByKey(s._poolKey);
-      return it ? poolChanceOf(it) : 100;
-    };
     const openTagMenu = (evt, idx) => {
-      const s = data.selected[idx];
+      const s = data.slots[idx];
       if (!s) return;
       closeCatMenu();
-      const pool = s._poolKey ? poolItemByKey(s._poolKey) : null;
+      const isPool = s.t === 'pool';
       tagMenu.open = true;
       tagMenu.idx = idx;
-      tagMenu.key = pool ? poolKeyFor(pool) : '';
-      tagMenu.isPool = !!pool;
-      tagMenu.title = pool
-        ? (pool.traverse ? '∞ 遍历池：' : '🎲 随机池：') + (pool.display || pool.tab || '凝结池')
+      tagMenu.isPool = isPool;
+      tagMenu.title = isPool
+        ? (s.traverse ? '∞ 遍历池：' : '🎲 随机池：') + (s.display || s.tab || '凝结池')
         : (selDisplayName(s) || '已选标签');
-      tagMenu.poolType = pool ? (pool.traverse ? 'traverse' : 'random') : 'random';
-      // 池读池的参与率，普通手选标签读自己身上的 chance（默认 100）
-      tagMenu.chance = pool ? poolChanceOf(pool) : normalizeChance(s.chance);
-      tagMenu.lock = pool ? !!pool.lock : !!s.lock;
+      tagMenu.poolType = isPool ? (s.traverse ? 'traverse' : 'random') : 'random';
+      // 池读池的参与率，item 槽读自己身上的 chance（默认 100）
+      tagMenu.chance = isPool ? poolChanceOf(s) : normalizeChance(s.chance);
+      tagMenu.lock = !!s.lock;
       // 方向跟着「提示词预览」走：负面提示词展开时底部预览区占位多，标签行离窗口底边还有余量，
       // 鼠标点直接当左上角往下铺；预览收起后标签行贴近底边，往下铺必然把「解锁」那几项顶穿底部，
       // 于是把鼠标点当左下角整块往上翻。真遇到极端窗口放不下时 placeMenu 会自己翻到另一侧。
@@ -4261,8 +4344,8 @@ const submitAddTab = async () => {
     // 切池类型：与左侧三态循环写的是同一个 traverse 字段，两边状态永远一致；
     // 换了类型就把这个池之前的抽定结果作废（与左侧切换同一套处理），菜单不关，方便来回比。
     const onTagCtxType = (want) => {
-      const it = poolItemByKey(tagMenu.key);
-      if (!it) return closeTagMenu();
+      const it = slotAt(tagMenu.idx);
+      if (!it || it.t !== 'pool') return closeTagMenu();
       if (it.lock) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
       const traverse = want === 'traverse';
       if (!!it.traverse === traverse) return closeTagMenu();
@@ -4270,7 +4353,6 @@ const submitAddTab = async () => {
       // 切成 ∞ 就把残留的参与率清回 100：遍历池不参与概率，存档里留个 40% 只会误导人
       if (traverse) it.chance = 100;
       refreshPoolPlaceholder(it);
-      syncPlaceholders();
       saveState();
       tagMenu.poolType = want;
       tagMenu.chance = poolChanceOf(it);
@@ -4281,8 +4363,8 @@ const submitAddTab = async () => {
     };
     // 改参与率：只动这一个池，点完菜单收起，标签上的百分比角标立即跟着变
     const onTagCtxChance = (c) => {
-      const it = poolItemByKey(tagMenu.key);
-      if (!it) return closeTagMenu();
+      const it = slotAt(tagMenu.idx);
+      if (!it || it.t !== 'pool') return closeTagMenu();
       if (it.lock) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
       // 遍历池 ∞ 没有参与率这一说：穷举就是每条都走，入口在菜单里已被隐藏，这里再兜一道
       if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
@@ -4293,10 +4375,10 @@ const submitAddTab = async () => {
       showToast('「' + (it.display || it.tab) + '」参与率 ' + it.chance + '%'
         + (it.chance >= 100 ? '：每轮必参与' : it.chance <= 0 ? '：相当于停用，不再参与出词' : '：每轮按此概率决定出不出词'), 'success', 2600);
     };
-    // 改普通手选词条的参与率：写回 data.selected 里那一条，点完菜单收起，标签角标即时变化
+    // 改普通手选词条的参与率：写回 data.slots 里那一条，点完菜单收起，标签角标即时变化
     const onTagCtxItemChance = (c) => {
-      const s = data.selected[tagMenu.idx];
-      if (!s || s._ph) return closeTagMenu();
+      const s = slotAt(tagMenu.idx);
+      if (!s || s.t !== 'item') return closeTagMenu();
       if (itemLocked(s)) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
       s.chance = normalizeChance(c);
       tagMenu.chance = s.chance;
@@ -4307,9 +4389,9 @@ const submitAddTab = async () => {
     };
     // 只重抽这一个池：用户点名要抽，不再让参与率挡路（参与率只约束自动跑图时的随机性）
     const onTagCtxReroll = async () => {
-      const it = poolItemByKey(tagMenu.key);
+      const it = slotAt(tagMenu.idx);
       closeTagMenu();
-      if (!it) return;
+      if (!it || it.t !== 'pool') return;
       if (it.traverse) return showToast('遍历池 ∞ 是穷举出词，没有「重抽」这一步', 'warn', 2600);
       if (it.lock) return showToast('池已锁定，重抽不生效；先右键解锁再重抽', 'warn', 2600);
       const ready = await ensurePoolData();
@@ -4322,31 +4404,28 @@ const submitAddTab = async () => {
     // 锁定/解锁：锁住后这个标签改不了也删不掉（× 会收起来换成 🔒 徽标），
     // 平时删标签仍走标签上的 ×，菜单里不再重复一条删除入口。
     const onTagCtxLock = () => {
-      const s = data.selected[tagMenu.idx];
+      const s = slotAt(tagMenu.idx);
       if (!s) return closeTagMenu();
-      const pool = s._poolKey ? poolItemByKey(s._poolKey) : null;
-      const target = pool || s;
-      target.lock = !target.lock;
-      tagMenu.lock = !!target.lock;
+      s.lock = !s.lock;
+      tagMenu.lock = !!s.lock;
       // 随机池锁定 = 结果也锁死：已经有抽定结果的，立刻把这套结果钉成快照（以后运行一直用它）；
       // 还没有结果的（比如刚放个随机池就锁），就等第一次运行，抽到什么就钉住什么。
       // 遍历池 ∞ 是穷举走遍，没有「抽定」这回事，锁的只是不能改不能删。
       let pinnedName = '';
-      if (pool && !pool.traverse) {
-        if (pool.lock) {
-          const ph = data.selected.find(x => x._ph && x._poolKey === poolKeyFor(pool));
-          pool.pin = pinFromPlaceholder(ph);
-          pinnedName = pool.pin ? pool.pin.name : '';
+      if (s.t === 'pool' && !s.traverse) {
+        if (s.lock) {
+          s.pin = s.picked ? pinFromSlot(s) : null;
+          pinnedName = s.pin ? s.pin.name : '';
         }
         else {
-          delete pool.pin;   // 解锁回归随机，下一次抽选重新摇
+          delete s.pin;   // 解锁回归随机，下一次抽选重新摇
         }
       }
       saveState();
       closeTagMenu();
-      const nm = pool ? (pool.display || pool.tab || '凝结池') : (selDisplayName(s) || '词条');
-      if (!target.lock) return showToast('「' + nm + '」已解锁：恢复可改可删，随机池恢复随机', 'success', 2600);
-      if (pool && !pool.traverse) {
+      const nm = s.t === 'pool' ? (s.display || s.tab || '凝结池') : (selDisplayName(s) || '词条');
+      if (!s.lock) return showToast('「' + nm + '」已解锁：恢复可改可删，随机池恢复随机', 'success', 2600);
+      if (s.t === 'pool' && !s.traverse) {
         return showToast(pinnedName
           ? '「' + nm + '」已锁定：固定为「' + pinnedName + '」，点骰子也不会再随机（运行中仍按参与率判定是否出词）'
           : '「' + nm + '」已锁定：还没有抽定结果，第一次运行时抽到什么就固定什么（运行中仍按参与率判定是否出词）', 'success', 4000);
@@ -4358,8 +4437,8 @@ const submitAddTab = async () => {
       const kind = catMenu.kind;
       const key = kind === 'tab' ? catMenu.key : catMenu.id;
       const it = kind === 'tab'
-        ? data.randomPools.find(p => p.kind === 'tab' && p.tab === key)
-        : data.randomPools.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(key));
+        ? allPools.value.find(p => p.kind === 'tab' && p.tab === key)
+        : allPools.value.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(key));
       if (!it) return;
       if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
       it.chance = normalizeChance(c);
@@ -4367,56 +4446,21 @@ const submitAddTab = async () => {
       saveState();
       showToast('「' + (it.display || it.tab) + '」参与率 ' + it.chance + '%', 'success', 2200);
     };
-
-    // 以随机池为基准同步占位符与随机结果标签：
-    // 池在 → 占位符（黄色分类标签）恒保留；池移除 → 该池的占位符与结果标签一并删除；
-    // 旧版独立结果标签（带 _poolKey 的普通标签）不再保留，抽取结果统一绑定在占位符内部。
-    const syncPlaceholders = () => {
-      const keys = data.randomPools.map(poolKeyFor);
-      data.selected = data.selected.filter(s => {
-        if (s._ph) return keys.includes(s._poolKey);
-        if (s._poolKey !== undefined && s._poolKey !== null) return false;
-        return true;
-      });
-      for (const item of data.randomPools) {
-        const k = poolKeyFor(item);
-        const want = placeholderFor(item).name;
-        const existed = data.selected.find(s => s._ph && s._poolKey === k);
-        if (!existed) data.selected.push(placeholderFor(item));
-        // 未填充的占位符名字始终跟着池类型走（旧存档里的 ♻ / 无前缀名在这里被纠正）
-        else if (!existed._filled && existed.name !== want) existed.name = want;
-      }
-      zhuleLog('syncPlaceholders', 'poolKeys=', keys, 'selected=', selSummary());
-    };
-    // 点🎲后：把抽中词条写入对应的黄色占位符内部（绑定关系，标签显示「分类：抽中词条名」）。
-    // 占位符恒保留；再点🎲原位更新；不新增独立结果标签。
+    // 点🎲后：把抽中词条写进对应池槽的 picked 里，标签由 poolLabel 拼成「🎲 表情：微笑」。
+    // 池槽恒保留在原位；再点🎲 原位更新；绝不新增独立的结果标签。
     const updateRandomResults = (picked) => {
-      const map = {};
+      if (!picked || !picked.length) return;
       for (const e of picked) {
-        if (!e || e._poolKey === undefined || e._poolKey === null) continue;
-        if (!map[e._poolKey]) map[e._poolKey] = e;
+        const slot = e && e._slot;
+        if (!slot || slot.t !== 'pool') continue;
+        slot.picked = {
+          tab: e.tab, relPath: e.relPath || '', id: e.id || '', name: e.name || '',
+          content: e.content || '', content_cn: e.content_cn || '',
+          neg: e.neg || '', override: e.override || '',
+          _vgKey: e._vgKey || '', _vgTitle: e._vgTitle || '',
+        };
       }
-      const fillPh = (ph, e) => {
-        ph._filled = true;
-        ph.tab = e.tab; ph.relPath = e.relPath; ph.id = e.id || '';
-        ph.name = placeholderBaseName(ph) + '：' + e.name;
-        ph.content = e.content; ph.content_cn = e.content_cn; ph.neg = e.neg || ''; ph.override = e.override || '';
-      };
-      // 1) 已存在的占位符原位填充/更新
-      for (const s of data.selected) {
-        if (!s._ph || !map[s._poolKey]) continue;
-        fillPh(s, map[s._poolKey]);
-      }
-      // 2) 异常兜底：池在但占位符缺失时补建并填充（正常流程 syncPlaceholders 已保证占位符存在）
-      for (const k of Object.keys(map)) {
-        if (data.selected.some(s => s._ph && s._poolKey === k)) continue;
-        const item = data.randomPools.find(it => poolKeyFor(it) === k);
-        if (!item) continue;
-        const ph = placeholderFor(item);
-        data.selected.push(ph);
-        fillPh(ph, map[k]);
-      }
-      zhuleLog('updateRandomResults', 'picked=', picked.map(p => p.name + '@' + p._poolKey), 'selected=', selSummary());
+      zhuleLog('updateRandomResults', 'picked=', picked.map(p => p.name), 'slots=', selSummary());
     };
 
     const toggleTranslate = () => { pref.translate = !pref.translate; };
@@ -4580,35 +4624,25 @@ const submitAddTab = async () => {
     };
 
     const removeSelected = (idx) => {
-      const s = data.selected[idx];
+      const s = data.slots[idx];
       // 锁定的标签不给删：× 在锁定时已换成 🔒 徽标，这里再兜一道（拖出、批量等其它路径也走这里）
       if (itemLocked(s)) {
         showToast('该标签已锁定：右键菜单里解锁后才能删除', 'warn', 2600);
         return;
       }
-      if (s && (s._ph || s._poolKey)) {
-        // 移除占位符或已填充的池槽位词条时，同步移出对应随机池，保持池与槽位一一对应
-        const k = s._poolKey;
-        const pi = data.randomPools.findIndex(it => poolKeyFor(it) === k);
-        if (pi >= 0) {
-          const rm = data.randomPools[pi];
-          data.randomPools.splice(pi, 1);
-          zhuleLog('removeSelected: 移出池', rm, 'idx=', idx, 'selected=', selSummary());
-        }
-      }
-      data.selected.splice(idx, 1);
-      // 同步占位符，确保剩余池与占位符一一对应（补缺失/删多余）
-      syncPlaceholders();
+      // 池槽和词条槽都在同一个数组里，删掉这一格 = 同时移出池与提示词位置，天生一一对应，不用再去找池
+      if (!s) return;
+      data.slots.splice(idx, 1);
+      zhuleLog('removeSelected: 删除槽', s.t, s.t === 'pool' ? (s.display || s.tab) : s.name, 'idx=', idx, 'slots=', selSummary());
     };
     // 「清空」= 一键复位：已选提示词清空 + 随机池清空（否则上方 tab/chip 仍留着 in-pool 选中样式）
     // + 运行次数归零（次数输入框同步回 0，pref 走 watch 自动落 localStorage）
     const clearAll = () => {
       // 锁定项跳过清空：锁住的标签和它的池留着，其余照常复位
-      const kept = data.selected.filter(s => itemLocked(s));
-      for (let i = data.randomPools.length - 1; i >= 0; i--) if (!data.randomPools[i].lock) data.randomPools.splice(i, 1);
-      data.selected = kept;
+      // 锁住的标签和它的池就是同一格，留着即可，不用再单独清池数组
+      const kept = data.slots.filter(s => itemLocked(s));
+      data.slots = kept;
       pref.genCount = 0;
-      syncPlaceholders();
       zhuleLog('clearAll', '已清空已选 + 随机池（锁定项保留 ' + kept.length + ' 个），次数归零');
       if (kept.length) showToast('已清空，' + kept.length + ' 个锁定标签被保留', 'warn', 2800);
     };
@@ -4616,7 +4650,7 @@ const submitAddTab = async () => {
     // 随机池语义：每个右键选中的 tab / chip 各为一个独立子池。
     // 随机/遍历时从每个子池各取 1 条再组合（如角色/神态/身材/姿势各抽一）。
     // 静音（mute=1）：被标记的词条不进入任何自动选词流程——单次随机、随机模式、
-    // 遍历模式全部跳过；用户手动点选卡片时走 data.selected，不经过本函数，故不受影响。
+    // 遍历模式全部跳过；用户手动点选卡片时走 data.slots，不经过本函数，故不受影响。
     const poolCandidatesRaw = (item) => {
       // 凝结池（框选生成）：候选就是框选时点名的这批卡片，按 tab + relPath 实时回查，
       // 词条改名/移动不影响，被删或被静音则自动跳过（与 tab 池的静音语义一致）
@@ -4684,7 +4718,7 @@ const submitAddTab = async () => {
 
     // 骰子 🎲：把每个随机池 🎲 的当前答案抽定（遍历池 ∞ 本来就是全跑，不需要抽取）
     const pickFromEachPool = (opts = {}) => {
-      const rnd = data.randomPools.filter(it => !it.traverse);
+      const rnd = allPools.value.filter(it => !it.traverse);
       if (!rnd.length) { zhuleLog('pickFromEachPool: 没有随机池（可能全被改成遍历池）'); return null; }
       return pickFromPools(rnd, opts);
     };
@@ -4702,34 +4736,34 @@ const submitAddTab = async () => {
     };
     const wordImageCount = (file) => (file && Array.isArray(file.images) ? file.images.length : 0);
 
-    // 按「标签栏 data.selected 的原顺序」组装一条完整提示词：
-    // 占位符（_ph）是随机池的槽位，用本次该池抽中的词条原位替换；手选条目（如角色「宵宫」）原位保留。
+    // 按「标签栏 data.slots 的原顺序」组装一条完整提示词：
+    // 池槽在 slots 里占一格，用本次该池抽中的词条原位替换；手选条目（如角色「宵宫」）原位保留。
     // 顺序完全由用户在标签栏拖好的次序决定，随机项可夹在任意位置，不再一律拼成前缀/后缀。
     // 池条目统一补 _pool:true，供遍历组合的随机池现抽与顺序整理复用。
     const arrangeBySelection = (picked) => {
-      const byKey = new Map();
-      for (const e of picked) {
-        if (!e || e._poolKey === undefined || e._poolKey === null) continue;
-        if (!byKey.has(e._poolKey)) byKey.set(e._poolKey, e);
+      // picked：本轮已确定的池词条（遍历组合成员 + 随机池现抽），各带 _slot 指回自己的池槽。
+      // 按槽对象归位，走一遍 slots 就还原了用户拖好的顺序——不用再拼任何字符串 key。
+      const bySlot = new Map();
+      for (const e of (picked || [])) {
+        if (!e || !e._slot) continue;
+        if (!bySlot.has(e._slot)) bySlot.set(e._slot, e);
       }
       const out = [];
-      const used = new Set();
-      for (const s of data.selected) {
-        if (s._ph) {
-          const e = byKey.get(s._poolKey);
-          if (e) { out.push({ ...e, _pool: true }); used.add(s._poolKey); }
+      for (const s of data.slots) {
+        if (s.t === 'pool') {
+          // 本轮这个池没抽出词（参与率没命中 / 遍历组合里没它）→ 这个位置整段不出词
+          const e = bySlot.get(s);
+          if (e) out.push({ ...e, _pool: true });
           continue;
         }
         out.push(s);
       }
-      // 兜底：抽中了但标签栏没有对应占位符（旧存档 / 池刚加入尚未同步）的条目追加到末尾，避免丢失
-      for (const [k, e] of byKey) if (!used.has(k)) out.push({ ...e, _pool: true });
       return out;
     };
 
     // 池子按类型拆分：遍历池 ∞ 参与笛卡尔积穷举，随机池 🎲 每个组合现抽 1 条（不放大组合数）。
-    const traversePoolItems = () => data.randomPools.filter(it => !!it.traverse);
-    const randomPoolItems = () => data.randomPools.filter(it => !it.traverse);
+    const traversePoolItems = () => allPools.value.filter(it => !!it.traverse);
+    const randomPoolItems = () => allPools.value.filter(it => !it.traverse);
 
     // 从给定的一批池子里各抽 1 条（随机池专用）；任一池候选为空返回 null。
     // 参与率 <100% 的池先摇一次：没摇中就直接跳过该池（本轮这个位置不出词），不算失败。
@@ -4744,16 +4778,16 @@ const submitAddTab = async () => {
     // 锁定池的钉定值直接当本次抽选结果用：不再查候选、不再随机，
     // 词条被删被静音也照跑——锁定的语义就是「以后都跑这一条」
     const pinPickOf = (item) => (item && item.pin
-      ? { ...item.pin, tab: item.tab, _poolKey: poolKeyFor(item), _pool: true, _pinned: true }
+      ? { ...item.pin, tab: item.tab, _slot: item, _pool: true, _pinned: true }
       : null);
-    // 从已填充的占位符反推一份快照：先抽定 → 再锁定 时用它把当前结果钉住
-    const pinFromPlaceholder = (ph) => {
-      if (!ph || !ph._filled || !ph.content) return null;
+    // 从池槽当前的 picked 反推一份快照：先抽定 → 再锁定 时用它把当前结果钉住
+    const pinFromSlot = (slot) => {
+      const ph = slot && slot.picked;
+      if (!ph || !ph.content) return null;
       const f = ph.relPath ? findWordFile(ph.tab, ph.relPath) : null;
-      const rawName = f ? f.name
-        : String(ph.name || '').replace(/^[🎲∞]\s*/, '').replace(/^.*?[：:]\s*/, '');
       return {
-        tab: ph.tab, relPath: ph.relPath || '', id: ph.id || (f && f.id) || '', name: rawName,
+        tab: ph.tab, relPath: ph.relPath || '', id: ph.id || (f && f.id) || '',
+        name: ph.name || (f && f.name) || '',
         content: ph.content, content_cn: ph.content_cn || '',
         neg: ph.neg || '', override: ph.override || '',
         anc: (f && f.anc) || [], _vgKey: (f && f._vgKey) || '', _vgTitle: (f && f._vgTitle) || '',
@@ -4784,10 +4818,10 @@ const submitAddTab = async () => {
           item.pin = pickSnapshot(item, file);
           zhuleLog('pickFromPools: 锁定池首次抽定并钉住', item.tab, item.pin.name);
           // 钉住的同时把占位标签刷成这条，用户一眼看到「锁的是哪一条」
-          updateRandomResults([{ ...item.pin, _poolKey: poolKeyFor(item) }]);
+          updateRandomResults([{ ...item.pin, _slot: item }]);
           saveState();
         }
-        picks.push({ ...pickSnapshot(item, file), _poolKey: poolKeyFor(item), _pool: true });
+        picks.push({ ...pickSnapshot(item, file), _slot: item, _pool: true });
       }
       return picks;
     };
@@ -4804,11 +4838,11 @@ const submitAddTab = async () => {
 
 
     // 遍历组合列表：只对遍历池 ∞ 做笛卡尔积，
-    // 组合按「第一个池变化最慢、最后一个最快」排列——即 randomPools 里靠前的遍历池做外层大 for；
+    // 组合按「第一个池变化最慢、最后一个最快」排列——即 slots 里靠前的遍历池做外层大 for；
     // 随机池 🎲 不参与乘积，由 withRandomPick 在提交前现抽。
     // 没有任何遍历池时返回 [[]]（单个空组合），整套跑法退化为「每轮各抽一条」。
     const buildTraverseCombos = (limit = TRAVERSE_MAX_COMBOS) => {
-      if (!data.randomPools.length) return null;
+      if (!allPools.value.length) return null;
       const pools = traversePoolItems();
       if (!pools.length) return [[]];
       const lists = [];
@@ -4818,7 +4852,7 @@ const submitAddTab = async () => {
         // 顺序一律沿用池内原始顺序（后端 ORDER BY sort_order, name, id，与词库卡片顺序、
         // 用户拖拽排序一致）。绝不能在这里按 name 拼音重排，否则遍历会以「拼音顺序」
         // 而非池子可见顺序推进，表现为「不按分类顺序、跳来跳去」。
-        lists.push(c.map(file => ({ tab: item.tab, file, _poolKey: poolKeyFor(item) })));
+        lists.push(c.map(file => ({ tab: item.tab, file, _slot: item })));
       }
       const total = lists.reduce((n, l) => n * l.length, 1);
       if (total > limit) return { tooMany: total };
@@ -4830,47 +4864,44 @@ const submitAddTab = async () => {
         }
         combos = next;
       }
-      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _poolKey: e._poolKey, _vgKey: e.file._vgKey || '', _vgTitle: e.file._vgTitle || '' })));
+      return combos.map(combo => combo.map(e => ({ tab: e.tab, relPath: e.file.relPath, id: e.file.id || '', name: e.file.name, content: e.file.content, content_cn: e.file.content_cn, neg: e.file.neg || '', override: e.file.override || '', _pool: true, _slot: e._slot, _vgKey: e.file._vgKey || '', _vgTitle: e.file._vgTitle || '' })));
     };
 
     // 池身份已统一为分类节点 id（旧存档的路径在 restoreState 里就迁完了），
     // 这里只保留一个「占位符对齐」出口，供抽词前统一调用。
-    const normalizePoolIds = () => {
-      syncPlaceholders();
-    };
+
 
     // 随机池里所有 tab 的数据是否都已加载；没加载的先补齐（懒加载下未打开过的分类会被误判为空）
     const ensurePoolData = async () => {
       // 凝结池一个池可能横跨多个分类，需把它名下所有 tab 一并纳入补拉范围
       const needTabs = new Set();
-      for (const it of data.randomPools) {
+      for (const it of allPools.value) {
         const tabsOf = it.kind === 'list' ? (it.items || []).map(e => e.tab) : [it.tab];
         for (const tb of tabsOf) {
           if (!(bankData.value[tb] || []).length && tabs.value.includes(tb)) needTabs.add(tb);
         }
       }
       const missing = [...needTabs];
-      zhuleLog('ensurePoolData: 池=', data.randomPools.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : ''))), 'missing=', missing);
+      zhuleLog('ensurePoolData: 池=', allPools.value.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : ''))), 'missing=', missing);
       if (missing.length) {
         // 并行补拉缺失的 tab，补齐后再抽
         await Promise.all(missing.map(tb => load(false, tb)));
       }
       // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
-      normalizePoolIds();
       // 补拉完仍为空 = 该 tab 真的没有词条；有词条但全被静音同样视为不可用（自动选词取不到）
       // 锁定且已钉定结果的池不依赖候选：分类里词条全删了/全静音了，也照样按钉住的那条跑
       const alive = (it) => (it.lock && it.pin && !it.traverse) ? [it.pin]
         : it.kind === 'list' ? (poolCandidates(it) || []) : (bankData.value[it.tab] || []).filter(f => !f.mute);
-      const ready = data.randomPools.every(it => alive(it).length > 0);
+      const ready = allPools.value.every(it => alive(it).length > 0);
       zhuleLog('ensurePoolData: ready=', ready,
-        '各池可用词条数=', data.randomPools.map(p => (p.kind === 'list' ? p.display : p.tab) + ':' + alive(p).length));
+        '各池可用词条数=', allPools.value.map(p => (p.kind === 'list' ? p.display : p.tab) + ':' + alive(p).length));
       return ready;
     };
 
     const singleRandom = async () => {
       const ready = await ensurePoolData();
       if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
-      if (!data.randomPools.filter(it => !it.traverse).length) {
+      if (!allPools.value.filter(it => !it.traverse).length) {
         return showToast('没有随机池 🎲 可抽：遍历池 ∞ 本来就是全跑，右键池子可在 🎲/∞ 切换', 'warn', 3600);
       }
       // 手动点骰子 = 主动要一个结果，不吃参与率：概率只是「运行中」的判定，点了就必须摇出词。
@@ -4879,7 +4910,7 @@ const submitAddTab = async () => {
       if (!picked.length) return showToast('随机池都没抽出词条，请检查池子', 'warn');
       updateRandomResults(picked);
       // 锁定的随机池不再随机：这一轮它们原样沿用钉定结果，只有没锁的池会换词
-      const locked = data.randomPools.filter(it => !it.traverse && it.lock).map(it => it.display || it.tab);
+      const locked = allPools.value.filter(it => !it.traverse && it.lock).map(it => it.display || it.tab);
       showToast('已抽定：' + picked.map(s => s.name || s.content).join(' / ')
         + (locked.length ? '（' + locked.join('、') + ' 已锁定，沿用钉定结果不随机）' : '')
         + '，已填入黄色分类标签（再点重抽）', 'success', locked.length ? 4200 : 3200);
@@ -4929,8 +4960,8 @@ const submitAddTab = async () => {
     const toggleFillMode = () => {
       data.fillMode = !data.fillMode;
       if (data.fillMode) {
-        const trav = data.randomPools.filter(it => it.traverse).length;
-        if (data.randomPools.length && !trav) {
+        const trav = allPools.value.filter(it => it.traverse).length;
+        if (allPools.value.length && !trav) {
           showToast('当前没有遍历池 ∞：填充是按遍历池逐条补图的，右键可把池子从 🎲 改成 ∞', 'warn', 4200);
         }
         return;
@@ -5045,7 +5076,7 @@ const submitAddTab = async () => {
       // 目标张数 = 词库里设的「次数」——新加的词条一张图都没有就补到该数量，
       // 几百张图的老词条早就达标、直接跳过；不再以「遍历池里图最多的那条」为基准。
       if (data.fillMode) {
-        if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入池子（再右键可改成遍历池 ∞）', 'warn');
+        if (!allPools.value.length) return showToast('池子为空，右键 tab / chip 加入池子（再右键可改成遍历池 ∞）', 'warn');
         const readyFill = await ensurePoolData();
         if (!readyFill) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
@@ -5092,7 +5123,7 @@ const submitAddTab = async () => {
         return;
       }
       if (traversePoolItems().length || (randPoolN && Math.max(1, count || 0) > 1)) {
-        if (!data.randomPools.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
+        if (!allPools.value.length) return showToast('池子为空，右键 tab / chip 加入随机池（再右键可改成遍历池）', 'warn');
         const ready = await ensurePoolData();
         if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
@@ -5143,19 +5174,20 @@ const submitAddTab = async () => {
       healSelectedIds();
       // 随机池参与率：每轮运行前为每个随机池摇一次骰（只在这一步判定，手动抽不吃概率）。
       // 锁定不豁免——0% 的池锁定后照样不出词；没摇中的池本轮这个位置整个不出词。
-      const rndPools = data.randomPools.filter(it => !it.traverse);
+      const rndPools = allPools.value.filter(it => !it.traverse);
       const poolHit = new Map();
-      for (const it of rndPools) poolHit.set(poolKeyFor(it), rollChance(it));
-      const missPools = rndPools.filter(it => poolHit.get(poolKeyFor(it)) === false);
+      // 池本身就是槽，直接拿槽对象当 Map 的键，不再需要拼字符串 key
+      for (const it of rndPools) poolHit.set(it, rollChance(it));
+      const missPools = rndPools.filter(it => poolHit.get(it) === false);
       // 只抽「摇中了但还没抽定」的池：已抽定的保持原样（锁定池钉住的结果也就此沿用，不再随机）
-      const needFill = data.selected.filter(s => s._ph && !s._filled && poolHit.get(s._poolKey) !== false);
+      const needFill = rndPools.filter(it => poolHit.get(it) !== false && !it.picked);
       if (needFill.length) {
         const ok = await ensurePoolData();
-        const hitPools = rndPools.filter(it => poolHit.get(poolKeyFor(it)) !== false);
+        const hitPools = rndPools.filter(it => poolHit.get(it) !== false);
         const autoPicked = ok ? pickFromPools(hitPools, { ignoreChance: true }) : null;
-        // 只回填本来是空的占位符，别把已经抽定的结果改掉
-        const needKeys = new Set(needFill.map(s => s._poolKey));
-        const fillPicked = (autoPicked || []).filter(e => needKeys.has(e._poolKey));
+        // 只回填本来是空的池，别把已经抽定的结果改掉
+        const needSet = new Set(needFill);
+        const fillPicked = (autoPicked || []).filter(e => needSet.has(e._slot));
         if (fillPicked.length) updateRandomResults(fillPicked);
         else if (autoPicked) {
           // 摇中的池都抽不出词条：不是错误，这几段本轮保持空、运行时自然不带它们
@@ -5168,10 +5200,10 @@ const submitAddTab = async () => {
         }
       }
       // 参与率没摇中的池：占位符即使有历史抽定值，本轮也不参与
-      const readyAll = data.selected.filter(s => {
-        if (!s._ph) return true;
-        if (!s._filled) return false;
-        return poolHit.get(s._poolKey) !== false;
+      const readyAll = data.slots.filter(s => {
+        if (s.t !== 'pool') return true;
+        if (!s.picked) return false;
+        return poolHit.get(s) !== false;
       });
       if (!readyAll.length) {
         if (missPools.length) {
@@ -5181,7 +5213,8 @@ const submitAddTab = async () => {
         return showToast('还没选任何提示词', 'warn');
       }
       // 手选词条按各自参与率摇一次：没摇中本轮就不进提示词（池占位符的概率已在抽词时摇过，这里直接放行）
-      const readyItems = readyAll.filter(s => rollItemChance(s));
+      // 池槽本身没有正文，取它自己的 picked 再往下走（顺序仍是 slots 顺序）
+      const readyItems = readyAll.filter(s => rollItemChance(s)).map(s => slotData(s)).filter(Boolean);
       if (!readyItems.length) {
         return showToast('手选标签的参与率都没摇中：本次不出词，再点一次运行即可重摇', 'warn', 3600);
       }
@@ -5361,7 +5394,7 @@ const submitAddTab = async () => {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
       e.preventDefault();
-      const existIdx = data.selected.findIndex(s => sameCard(s, file));
+      const existIdx = data.slots.findIndex(s => sameCard(s, file));
       pDrag.pending = {
         x: e.clientX, y: e.clientY,
         sourceType: 'card',
@@ -5383,7 +5416,7 @@ const submitAddTab = async () => {
         if (performance.now() - pDrag.pendingTime > 3000) cleanupDrag(); else return;
       }
       e.preventDefault();
-      const item = data.selected[idx];
+      const item = data.slots[idx];
       if (!item) return;
       // 锁定的标签不参与拖拽排序（位置也算「更改」），右键解锁后恢复
       if (itemLocked(item)) return;
@@ -5517,33 +5550,33 @@ const submitAddTab = async () => {
         if (p.sourceType === 'tag') {
           const fromIdx = p.sourceIdx;
           if (fromIdx === idx) return;
-          const [moved] = data.selected.splice(fromIdx, 1);
+          const [moved] = data.slots.splice(fromIdx, 1);
           let t;
           if (isLeft) t = fromIdx < idx ? idx - 1 : idx;
           else t = fromIdx < idx ? idx : idx + 1;
-          data.selected.splice(t, 0, moved);
+          data.slots.splice(t, 0, moved);
         } else {
           const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
-          const existIdx = data.selected.findIndex(s => sameCard(s, item));
+          const existIdx = data.slots.findIndex(s => sameCard(s, item));
           let targetIdx = idx;
           if (existIdx >= 0) {
-            data.selected.splice(existIdx, 1);
+            data.slots.splice(existIdx, 1);
             if (existIdx < targetIdx) targetIdx--;
           }
-          if (isLeft) data.selected.splice(targetIdx, 0, item);
-          else data.selected.splice(targetIdx + 1, 0, item);
+          if (isLeft) data.slots.splice(targetIdx, 0, item);
+          else data.slots.splice(targetIdx + 1, 0, item);
         }
         return;
       }
 
       if (selList) {
         if (p.sourceType === 'tag') {
-          const [moved] = data.selected.splice(p.sourceIdx, 1);
-          data.selected.push(moved);
+          const [moved] = data.slots.splice(p.sourceIdx, 1);
+          data.slots.push(moved);
         } else {
           const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
-          if (data.selected.some(s => sameCard(s, item))) return;
-          data.selected.push(item);
+          if (data.slots.some(s => sameCard(s, item))) return;
+          data.slots.push(item);
         }
         return;
       }
@@ -5555,21 +5588,21 @@ const submitAddTab = async () => {
         const tabAttr = card.getAttribute('data-tab') || '';
         const target = rel ? listFiles.value.find(x => x.relPath === rel && (!tabAttr || String(x.tab || '') === tabAttr)) : null;
         if (!target) return;
-        const targetIdx = data.selected.findIndex(s => sameCard(s, target));
+        const targetIdx = data.slots.findIndex(s => sameCard(s, target));
         const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
         if (targetIdx >= 0) {
-          data.selected.splice(targetIdx, 1, item);
+          data.slots.splice(targetIdx, 1, item);
         } else {
-          if (data.selected.some(s => sameCard(s, item))) return;
-          data.selected.push(item);
+          if (data.slots.some(s => sameCard(s, item))) return;
+          data.slots.push(item);
         }
       }
     };
 
     const toggleFile = (file) => {
-      const idx = data.selected.findIndex(s => sameCard(s, file));
-      if (idx >= 0) data.selected.splice(idx, 1);
-      else data.selected.push({
+      const idx = data.slots.findIndex(s => sameCard(s, file));
+      if (idx >= 0) data.slots.splice(idx, 1);
+      else data.slots.push({
         tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
         content: file.content, content_cn: file.content_cn,
         neg: file.neg || '', override: file.override || '',
@@ -5649,6 +5682,8 @@ const submitAddTab = async () => {
       viewCards, vgStep, vgState, vgStateOf, vgTagLabel, vgTagTip, vgCycleMode,
       vgStrip, openVgStrip, closeVgStrip, pickVgStrip, onCardVgStrip, onCardVgRename,
       getSelections,
+      // 模板里做「有没有池子」的判定用（random-mode 样式开关），只读视图
+      allPools,
       chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
       selectedCollapsed, toggleSelectedCollapsed,
       imageUrl, getImgIdx, displayContent, isFileSelected,
@@ -5665,7 +5700,7 @@ const submitAddTab = async () => {
       catMenu, openCatMenu, closeCatMenu, onCtxEditCategory, onCtxPool, onCtxCatPick, onCtxAddChild, onCtxAddCard, onCtxAddTab, onCtxToVg,
       onCtxChance, onTagCtxItemChance, itemChance, CHANCE_STEPS,
       // 已选标签右键菜单（就地切 🎲/∞、调参与率、重抽单池、移出池）
-      tagMenu, openTagMenu, closeTagMenu, onTagCtxType, onTagCtxChance, onTagCtxReroll, onTagCtxLock, itemLocked, phChance,
+      tagMenu, openTagMenu, closeTagMenu, onTagCtxType, onTagCtxChance, onTagCtxReroll, onTagCtxLock, itemLocked,
 
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
     isCatMuted, toggleCatMute,
