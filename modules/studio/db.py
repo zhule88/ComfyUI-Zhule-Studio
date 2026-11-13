@@ -50,6 +50,10 @@ def _ensure_schema(conn):
     try:
         _ensure_prompt_schema(conn)
         _ensure_gallery_schema(conn)
+        _ensure_preset_schema(conn)
+        # DDL 在 sqlite3 的隐式事务内：此处不提交，首个纯读连接 close() 会把刚建的表
+        # 一并回滚，而 _schema_checked 已置 True 不会重建，之后所有读写都报 no such table。
+        conn.commit()
     except sqlite3.Error as e:
         print(f"[ZhuleDB] 表结构初始化失败: {e}")
         return
@@ -703,6 +707,9 @@ CUSTOM_TAG_TABLE = "custom_tag"  # 自定义标签字典表（仿 prompt 表：�
 MODEL_TABLE = "model"
 MODEL_TYPE_MODEL = "model"  # 底模型（checkpoints / diffusion_models / unet 归一）
 MODEL_TYPE_LORA = "lora"
+
+# 方案保存表：一套参数（payload）存一行，gallery_id 指回 gallery_image.id
+PRESET_TABLE = "preset"
 
 
 def _add_column_if_missing(conn, table, column, ddl):
@@ -2156,5 +2163,201 @@ def gallery_delete_records(keys):
                 pass
             print(f"[ZhuleDB] 图库行级删除失败: {e}")
             return 0
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------- 方案保存（preset）
+
+
+def _ensure_preset_schema(conn):
+    """确保方案保存表存在（幂等，随 connect() 自动建）。
+
+    gallery_id 存 gallery_image.id，不存相对路径：图可改名，id 才是行身份，
+    改名后方案不用跟着重写。图被删或全量重建换了号时，JOIN 取不到名字，
+    列表按"无配图"降级，绝不指到别人家的图上。
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS {0} ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "kind TEXT NOT NULL,"
+        "name TEXT NOT NULL COLLATE NOCASE,"
+        "payload TEXT NOT NULL,"
+        "gallery_id INTEGER"
+        ")".format(PRESET_TABLE)
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_{0}_kind ON {0}(kind, name)".format(PRESET_TABLE)
+    )
+
+
+def _preset_payload_out(raw):
+    """payload 出库还原为对象；历史脏数据解析失败时退回空对象，不抛给调用方。"""
+    try:
+        return json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _preset_gallery_name(conn, gallery_id):
+    gid = _as_int_or_none(gallery_id)
+    if gid is None:
+        return None
+    row = conn.execute(
+        "SELECT name FROM {0} WHERE id = ?".format(GAL_IMG_TABLE), (gid,)
+    ).fetchone()
+    return row["name"] if row else None
+
+
+def preset_rows(kind=None):
+    """列出方案（不带 payload 大字段，列表只给名字与配图），按 id 倒序。
+
+    kind 为空则列全部；gallery_name 为配图当前相对路径，None 表示该图已不存在。
+    """
+    sql = (
+        "SELECT p.id, p.kind, p.name, p.gallery_id, g.name AS gallery_name "
+        "FROM {0} p LEFT JOIN {1} g ON g.id = p.gallery_id".format(
+            PRESET_TABLE, GAL_IMG_TABLE
+        )
+    )
+    args = ()
+    if kind:
+        sql += " WHERE p.kind = ?"
+        args = (kind,)
+    sql += " ORDER BY p.id DESC"
+    with _lock:
+        conn = connect()
+        try:
+            return [dict(r) for r in conn.execute(sql, args).fetchall()]
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 方案列表读取失败: {e}")
+            return []
+        finally:
+            conn.close()
+
+
+def preset_get(pid):
+    """取单个方案完整内容：payload 还原为对象，gallery_id 仍为 id 并附当前图名。"""
+    pid = _as_int_or_none(pid)
+    if pid is None:
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT id, kind, name, payload, gallery_id FROM {0} WHERE id = ?".format(
+                    PRESET_TABLE
+                ),
+                (pid,),
+            ).fetchone()
+            if not row:
+                return None
+            rec = dict(row)
+            rec["payload"] = _preset_payload_out(row["payload"])
+            rec["gallery_id"] = _as_int_or_none(row["gallery_id"])
+            rec["gallery_name"] = _preset_gallery_name(conn, row["gallery_id"])
+            return rec
+        except sqlite3.Error as e:
+            print(f"[ZhuleDB] 方案读取失败: {e}")
+            return None
+        finally:
+            conn.close()
+
+
+def preset_save(kind, name, payload, gallery_id=None, pid=None):
+    """保存方案，返回行 id；失败返回 None。
+
+    pid 有值按 id 覆盖；无 pid 时按 (kind, name) 命中同一行做更新（name 大小写不敏感），
+    避免同名方案点两次存出两行。gallery_id 传 gallery_image.id，传 None 即清空配图。
+    """
+    kind = (kind or "").strip()
+    name = (name or "").strip()
+    if not kind or not name:
+        return None
+    raw = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    gid = _as_int_or_none(gallery_id)
+    with _lock:
+        conn = connect()
+        try:
+            target = _as_int_or_none(pid)
+            if target is None:
+                row = conn.execute(
+                    "SELECT id FROM {0} WHERE kind = ? AND name = ?".format(PRESET_TABLE),
+                    (kind, name),
+                ).fetchone()
+                target = int(row["id"]) if row else None
+            if target is None:
+                cur = conn.execute(
+                    "INSERT INTO {0} (kind, name, payload, gallery_id) VALUES (?, ?, ?, ?)".format(
+                        PRESET_TABLE
+                    ),
+                    (kind, name, raw, gid),
+                )
+                target = cur.lastrowid
+            else:
+                conn.execute(
+                    "UPDATE {0} SET kind = ?, name = ?, payload = ?, gallery_id = ? WHERE id = ?".format(
+                        PRESET_TABLE
+                    ),
+                    (kind, name, raw, gid, target),
+                )
+            conn.commit()
+            return int(target)
+        except sqlite3.Error as e:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            print(f"[ZhuleDB] 方案保存失败: {e}")
+            return None
+        finally:
+            conn.close()
+
+
+def preset_rename(pid, name):
+    """只改方案名（payload / gallery_id 不动），成功返回 True。"""
+    pid = _as_int_or_none(pid)
+    name = (name or "").strip()
+    if pid is None or not name:
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE {0} SET name = ? WHERE id = ?".format(PRESET_TABLE), (name, pid)
+            )
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+        except sqlite3.Error as e:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            print(f"[ZhuleDB] 方案改名失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+
+def preset_delete(pid):
+    """删除单个方案，成功返回 True。"""
+    pid = _as_int_or_none(pid)
+    if pid is None:
+        return False
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "DELETE FROM {0} WHERE id = ?".format(PRESET_TABLE), (pid,)
+            )
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+        except sqlite3.Error as e:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            print(f"[ZhuleDB] 方案删除失败: {e}")
+            return False
         finally:
             conn.close()
