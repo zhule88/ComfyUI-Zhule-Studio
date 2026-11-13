@@ -100,7 +100,7 @@ export default {
           <div class="pick-bar" v-if="pickSel.size">
             <span class="pick-count">已选 <b>{{ pickSel.size }}</b> 项<span v-if="catPickSel.size" class="pick-cat">（含 {{ catPickSel.size }} 个整类分类）</span></span>
             <span class="pick-tip">Ctrl+左键点分类＝整类全选，点卡片＝单条增删；选完凝结成池</span>
-            <button class="btn pick-condense" @click="onCardCondense(true)">∞ 凝结为遍历池</button>
+            <button class="btn pick-condense" @click="onCardCondense(true)">♾️ 凝结为遍历池</button>
             <button class="btn pick-condense" @click="onCardCondense(false)">🎲 凝结为随机池</button>
             <button class="btn pick-clear" @click="clearPick">取消选择</button>
           </div>
@@ -229,7 +229,7 @@ export default {
                       :data-tip="selectedCollapsed ? '展开提示词预览' : '收起提示词预览'"
                       @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开预览' : '⏶ 收起预览' }}</button>
               <button class="btn btn-ico" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-              <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ∞ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
+              <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ♾️ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
               <button class="btn danger" style="padding:4px 10px;font-size:12px;"
                       @click="clearAll">清空</button>
               <div class="count-ctrl">
@@ -269,7 +269,7 @@ export default {
                 <!-- 参与率角标：池与普通手选词条都支持，100% 是默认值不显示，低于 100 才挂出来 -->
                 <span v-if="itemChance(item) < 100" class="ph-chance"
                       :title="(item.t === 'pool' ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
-                <!-- 分支组标签徽标：🔒 锁当前分支 / 🎲 每次随机 / ∞ 轮着遍历；点一下循环切换 -->
+                <!-- 分支组标签徽标：🔒 锁当前分支 / 🎲 每次随机 / ♾️ 轮着遍历；点一下循环切换 -->
                 <span v-if="vgStateOf(item)"
                       class="vg-tag"
                       :class="'mode-' + vgStateOf(item).mode"
@@ -314,8 +314,8 @@ export default {
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'random' }"
                   @pointerdown.stop @click="onCtxPool('random')">🎲 随机池</button>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
-                  @pointerdown.stop @click="onCtxPool('traverse')">∞ 遍历池</button>
-          <!-- 参与率：只给 🎲 随机池（不进池的分类谈概率没意义；∞ 遍历池穷举走遍，天然不吃概率）。
+                  @pointerdown.stop @click="onCtxPool('traverse')">♾️ 遍历池</button>
+          <!-- 参与率：只给 🎲 随机池（不进池的分类谈概率没意义；♾️ 遍历池穷举走遍，天然不吃概率）。
                点一下就落地，菜单不关，方便连着试几档看标签角标变化。 -->
           <div class="ctx-chance" v-if="catMenu.pool === 'random'">
             <span class="ctx-chance-label">参与率</span>
@@ -327,7 +327,7 @@ export default {
           <div class="ctx-sep"></div>
           <!-- 池四态：项数统一显示在标题右上角角标里，这里只留动词。
                「选中」等价于 Ctrl/⌘+左键点该分类（整类、含子分类），与卡片框选共用 pickSel 可叠加多选，
-               想成池再走状态条的 🎲/∞ 凝结按钮——与下面的「遍历池/随机池」不重复：
+               想成池再走状态条的 🎲/♾️ 凝结按钮——与下面的「遍历池/随机池」不重复：
                那三项是「这个分类整体作为一个池」的常驻设定，「选中」是一次性取词条进已选集合。 -->
           <button type="button" class="ctx-item" :class="{ on: catMenu.catPicked }"
                   :data-tip="catMenu.catPicked
@@ -394,7 +394,7 @@ export default {
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
           <template v-if="cardMenu.picked">
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
-              ∞ 凝结为遍历池
+              ♾️ 凝结为遍历池
             </button>
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
               🎲 凝结为随机池
@@ -424,7 +424,7 @@ export default {
         </div>
       </div>
 
-      <!-- 已选标签右键菜单：池占位符就地切 🎲/∞、调参与率、重抽这一个池、移出池；
+      <!-- 已选标签右键菜单：池占位符就地切 🎲/♾️、调参与率、重抽这一个池、移出池；
            普通标签给参与率与锁定。删除统一走标签上的 ×（不再在菜单里重复一条），
            锁定后就地禁掉所有变更入口，只有解锁这一项可用。 -->
       <div v-if="tagMenu.open" class="ctx-layer" @pointerdown.self="closeTagMenu" @contextmenu.prevent.self="closeTagMenu">
@@ -441,7 +441,7 @@ export default {
                     @pointerdown.stop @click="onTagCtxType('random')">🎲 随机池（每轮现抽 1 条）</button>
             <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'traverse', 'is-off': tagMenu.lock }"
                     :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxType('traverse')">∞ 遍历池（全词条穷举）</button>
+                    @pointerdown.stop @click="onTagCtxType('traverse')">♾️ 遍历池（全词条穷举）</button>
             <div class="ctx-sep"></div>
             <div class="ctx-chance" v-if="tagMenu.poolType === 'random'" :class="{ 'is-off': tagMenu.lock }">
               <span class="ctx-chance-label">参与率</span>
@@ -451,7 +451,7 @@ export default {
                       :data-tip="'每轮出图按 ' + c + '% 概率决定该池是否参与：没摇中本轮这个位置就不出词'"
                       @pointerdown.stop @click="onTagCtxChance(c)">{{ c }}%</button>
             </div>
-            <div class="ctx-chance-note" v-else :class="{ 'is-off': tagMenu.lock }">∞ 遍历池穷举走遍，不设概率</div>
+            <div class="ctx-chance-note" v-else :class="{ 'is-off': tagMenu.lock }">♾️ 遍历池穷举走遍，不设概率</div>
             <div class="ctx-sep"></div>
             <button type="button" class="ctx-item" v-if="tagMenu.poolType === 'random'"
                     :class="{ 'is-off': tagMenu.lock }" :disabled="tagMenu.lock"
@@ -2851,7 +2851,7 @@ export default {
       if (!st) return '';
       const vs = vgVersionsOf(item) || [];
       if (st.mode === 'random') return '🎲';
-      if (st.mode === 'traverse') return '∞';
+      if (st.mode === 'traverse') return '♾️';
       return '🔒' + (vgCurIdxOf(item) + 1) + '/' + vs.length;
     };
     const vgTagTip = (item) => {
@@ -3070,11 +3070,11 @@ export default {
         const filledFill = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
         if (filledFill.length) return '填充抽取：' + withRemoved(composePreview(filledFill));
         const labF = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-        if (!allPools.value.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ∞';
+        if (!allPools.value.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ♾️';
         const travF = allPools.value.filter(it => it.traverse).map(labF);
         const rndF = allPools.value.filter(it => !it.traverse).map(labF);
         const targetF = Math.max(1, Number(pref.genCount) || 0);
-        return '填充 ⏩：∞ 遍历池 ' + (travF.join(' | ') || '（无，填充需要至少一个）')
+        return '填充 ⏩：♾️ 遍历池 ' + (travF.join(' | ') || '（无，填充需要至少一个）')
           + (rndF.length ? ' → 🎲 随机池 ' + rndF.join(' | ') + '（每张图照常各抽 1 条）' : '')
           + '；目标 = 遍历池内每条提示词参考图补到 ' + targetF + ' 张（次数），不足的逐条补跑，已有更多的不动';
       }
@@ -3087,12 +3087,12 @@ export default {
         const trav = allPools.value.filter(it => it.traverse).map(lab);
         const rnd = allPools.value.filter(it => !it.traverse).map(lab);
         const parts = [];
-        if (trav.length) parts.push('∞ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
+        if (trav.length) parts.push('♾️ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
         if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
         const rounds = Math.max(1, Number(pref.genCount) || 0);
         const extra = trav.length
           ? '；遍历池做全组合，次数 ' + rounds + ' = 整套组合重复 ' + rounds + ' 轮'
-          : '；无遍历池 ∞，按普通模式逐条运行（每轮各抽 1 条）';
+          : '；无遍历池 ♾️，按普通模式逐条运行（每轮各抽 1 条）';
         return parts.join(' → ') + extra;
       }
       const picked = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
@@ -3676,7 +3676,7 @@ const submitAddTab = async () => {
       if (!files.length) { showToast('已选项已失效，请重新选择', 'warn'); return; }
       const items = files.map(f => ({ tab: f.tab || data.activeTab, relPath: f.relPath, id: f.id || '', name: f.name }));
       const sig = condenseSig(items);
-      const label = traverse ? '遍历池 ∞' : '随机池 🎲';
+      const label = traverse ? '遍历池 ♾️' : '随机池 🎲';
       let pool = allPools.value.find(it => it.kind === 'list' && condenseSig(it.items) === sig);
       if (pool) {
         const same = !!pool.traverse === !!traverse;
@@ -4129,10 +4129,10 @@ const submitAddTab = async () => {
         const cur = allPools.value[idx];
         if (!cur.traverse) {
           cur.traverse = true;
-          cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
-          zhuleLog('togglePoolForTab: 🎲→∞ 改为遍历池', { kind: 'tab', tab }, 'selected=', selSummary());
+          cur.chance = 100; // ♾️ 不参与概率，顺手清掉旧档里残留的参与率
+          zhuleLog('togglePoolForTab: 🎲→♾️ 改为遍历池', { kind: 'tab', tab }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
-          return showToast('「' + tabLabel(tab) + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
+          return showToast('「' + tabLabel(tab) + '」改为遍历池 ♾️：所有词条参与全组合，每轮全走', 'success', 2400);
         }
         // 池本身就是 slots 里的一格，移出池 = 删掉那一格（提示词位置一起消失，本来就是同一处）
         const si = data.slots.indexOf(cur);
@@ -4156,10 +4156,10 @@ const submitAddTab = async () => {
         const cur = allPools.value[idx];
         if (!cur.traverse) {
           cur.traverse = true;
-          cur.chance = 100; // ∞ 不参与概率，顺手清掉旧档里残留的参与率
-          zhuleLog('togglePoolForChip: 🎲→∞ 改为遍历池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
+          cur.chance = 100; // ♾️ 不参与概率，顺手清掉旧档里残留的参与率
+          zhuleLog('togglePoolForChip: 🎲→♾️ 改为遍历池', { kind: 'chip', tab, chipId: id, display: disp }, 'selected=', selSummary());
           refreshPoolPlaceholder(cur);
-          return showToast('「' + disp + '」改为遍历池 ∞：所有词条参与全组合，每轮全走', 'success', 2400);
+          return showToast('「' + disp + '」改为遍历池 ♾️：所有词条参与全组合，每轮全走', 'success', 2400);
         }
         const si = data.slots.indexOf(cur);
         if (si >= 0) data.slots.splice(si, 1);
@@ -4197,7 +4197,7 @@ const submitAddTab = async () => {
     // 池槽标签的显示名：🎲 表情 / ∞ 发型，抽中后拼成「🎲 表情：微笑」；没抽中只显示池名
     const poolLabel = (s) => {
       if (!s || s.t !== 'pool') return '';
-      const base = (s.traverse ? '∞ ' : '🎲 ') + (s.kind === 'tab' ? (tabLabel(s.tab) || s.tab)
+      const base = (s.traverse ? '♾️ ' : '🎲 ') + (s.kind === 'tab' ? (tabLabel(s.tab) || s.tab)
         : s.kind === 'list' ? (s.display || ('凝结' + (s.items || []).length + '项'))
           : (nodeNameOf(s.chipId) || s.display || String(s.chipId || '')));
       return (s.picked && s.picked.name) ? base + '：' + s.picked.name : base;
@@ -4225,7 +4225,7 @@ const submitAddTab = async () => {
       tagMenu.idx = idx;
       tagMenu.isPool = isPool;
       tagMenu.title = isPool
-        ? (s.traverse ? '∞ 遍历池：' : '🎲 随机池：') + (s.display || s.tab || '凝结池')
+        ? (s.traverse ? '♾️ 遍历池：' : '🎲 随机池：') + (s.display || s.tab || '凝结池')
         : (selDisplayName(s) || '已选标签');
       tagMenu.poolType = isPool ? (s.traverse ? 'traverse' : 'random') : 'random';
       // 池读池的参与率，item 槽读自己身上的 chance（默认 100）
@@ -4252,10 +4252,10 @@ const submitAddTab = async () => {
       saveState();
       tagMenu.poolType = want;
       tagMenu.chance = poolChanceOf(it);
-      tagMenu.title = (traverse ? '∞ 遍历池：' : '🎲 随机池：') + (it.display || it.tab || '凝结池');
+      tagMenu.title = (traverse ? '♾️ 遍历池：' : '🎲 随机池：') + (it.display || it.tab || '凝结池');
       closeTagMenu();
       showToast('「' + (it.display || it.tab) + '」已切为 '
-        + (traverse ? '∞ 遍历池：全词条穷举，每轮全走' : '🎲 随机池：每轮现抽 1 条'), 'success', 2600);
+        + (traverse ? '♾️ 遍历池：全词条穷举，每轮全走' : '🎲 随机池：每轮现抽 1 条'), 'success', 2600);
     };
     // 改参与率：只动这一个池，点完菜单收起，标签上的百分比角标立即跟着变
     const onTagCtxChance = (c) => {
@@ -4263,7 +4263,7 @@ const submitAddTab = async () => {
       if (!it || it.t !== 'pool') return closeTagMenu();
       if (it.lock) return closeTagMenu();   // 锁定后按钮本身已 disabled，这里只兜底关菜单
       // 遍历池 ∞ 没有参与率这一说：穷举就是每条都走，入口在菜单里已被隐藏，这里再兜一道
-      if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
+      if (it.traverse) return showToast('♾️ 遍历池穷举走遍，不设参与率', 'warn', 2400);
       it.chance = normalizeChance(c);
       tagMenu.chance = it.chance;
       saveState();
@@ -4288,7 +4288,7 @@ const submitAddTab = async () => {
       const it = slotAt(tagMenu.idx);
       closeTagMenu();
       if (!it || it.t !== 'pool') return;
-      if (it.traverse) return showToast('遍历池 ∞ 是穷举出词，没有「重抽」这一步', 'warn', 2600);
+      if (it.traverse) return showToast('遍历池 ♾️ 是穷举出词，没有「重抽」这一步', 'warn', 2600);
       if (it.lock) return showToast('池已锁定，重抽不生效；先右键解锁再重抽', 'warn', 2600);
       const ready = await ensurePoolData();
       if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
@@ -4336,7 +4336,7 @@ const submitAddTab = async () => {
         ? allPools.value.find(p => p.kind === 'tab' && p.tab === key)
         : allPools.value.find(p => p.kind === 'chip' && p.tab === data.activeTab && String(p.chipId || '') === String(key));
       if (!it) return;
-      if (it.traverse) return showToast('∞ 遍历池穷举走遍，不设参与率', 'warn', 2400);
+      if (it.traverse) return showToast('♾️ 遍历池穷举走遍，不设参与率', 'warn', 2400);
       it.chance = normalizeChance(c);
       catMenu.chance = it.chance;
       saveState();
@@ -4798,7 +4798,7 @@ const submitAddTab = async () => {
       const ready = await ensurePoolData();
       if (!ready) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
       if (!allPools.value.filter(it => !it.traverse).length) {
-        return showToast('没有随机池 🎲 可抽：遍历池 ∞ 本来就是全跑，右键池子可在 🎲/∞ 切换', 'warn', 3600);
+        return showToast('没有随机池 🎲 可抽：遍历池 ♾️ 本来就是全跑，右键池子可在 🎲/♾️ 切换', 'warn', 3600);
       }
       // 手动点骰子 = 主动要一个结果，不吃参与率：概率只是「运行中」的判定，点了就必须摇出词。
       const picked = pickFromEachPool({ ignoreChance: true });
@@ -4858,7 +4858,7 @@ const submitAddTab = async () => {
       if (data.fillMode) {
         const trav = allPools.value.filter(it => it.traverse).length;
         if (allPools.value.length && !trav) {
-          showToast('当前没有遍历池 ∞：填充是按遍历池逐条补图的，右键可把池子从 🎲 改成 ∞', 'warn', 4200);
+          showToast('当前没有遍历池 ♾️：填充是按遍历池逐条补图的，右键可把池子从 🎲 改成 ♾️', 'warn', 4200);
         }
         return;
       }
@@ -4972,13 +4972,13 @@ const submitAddTab = async () => {
       // 目标张数 = 词库里设的「次数」——新加的词条一张图都没有就补到该数量，
       // 几百张图的老词条早就达标、直接跳过；不再以「遍历池里图最多的那条」为基准。
       if (data.fillMode) {
-        if (!allPools.value.length) return showToast('池子为空，右键 tab / chip 加入池子（再右键可改成遍历池 ∞）', 'warn');
+        if (!allPools.value.length) return showToast('池子为空，右键 tab / chip 加入池子（再右键可改成遍历池 ♾️）', 'warn');
         const readyFill = await ensurePoolData();
         if (!readyFill) return showToast('池子含空分类（该 tab 下暂无词条，或词条已全部静音），请检查池子', 'warn');
         if (runBusy) return showToast('正在逐条运行中，请稍候', 'warn');
         if (!linkParams.bind) return showToast('当前网页未绑定节点，请从画布节点「词库」按钮打开本页', 'warn', 4000);
         if (!traversePoolItems().length) {
-          return showToast('填充模式需要至少一个遍历池 ∞：右键池子把 🎲 改成 ∞ 才能按条补参考图', 'warn', 4600);
+          return showToast('填充模式需要至少一个遍历池 ♾️：右键池子把 🎲 改成 ♾️ 才能按条补参考图', 'warn', 4600);
         }
         if (!(Number(pref.genCount) > 0)) showToast('「次数」为 0，本次按每条补 1 张处理', 'warn', 3000);
         const target = Math.max(1, Number(pref.genCount) || 0);
@@ -5012,7 +5012,7 @@ const submitAddTab = async () => {
         const poolNameF = (p) => p.display || p.tab;
         zhuleLog('runGenerate: 填充模式', '遍历池=', traversePoolItems().map(poolNameF),
           '目标张数(次数)=', target, '未达标的提示词数=', lackN, '池条目总数=', fillStartGot.size);
-        showToast('填充 ⏩｜∞ 遍历池：' + traversePoolItems().map(poolNameF).join('、')
+        showToast('填充 ⏩｜♾️ 遍历池：' + traversePoolItems().map(poolNameF).join('、')
           + '｜目标：每条提示词参考图补到 ' + target + ' 张（次数）｜未达标 ' + lackN + '/' + fillStartGot.size
           + ' 条，逐条补跑，已有更多的不动', 'success', 6000);
         runNextInQueue();
@@ -5057,8 +5057,8 @@ const submitAddTab = async () => {
         const poolName = (p) => p.display || p.tab;
         const tNames = traversePoolItems().map(poolName);
         const rNames = randomPoolItems().map(poolName);
-        showToast((tNames.length ? '遍历｜穷举池 ∞：' + tNames.join('、') + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
-          + '｜单轮 ' + built.length + ' 组合（∞ 全走）× ' + rounds + ' 轮 = ' + runTotal + ' 条'
+        showToast((tNames.length ? '遍历｜穷举池 ♾️：' + tNames.join('、') + '｜随机池 🎲：' + (rNames.join('、') || '（无）')
+          + '｜单轮 ' + built.length + ' 组合（♾️ 全走）× ' + rounds + ' 轮 = ' + runTotal + ' 条'
           : '随机｜随机池 🎲：' + rNames.join('、') + '｜逐条现抽 ' + runTotal + ' 条（每条各抽一次）'), 'success', 6000);
         runNextInQueue();
         return;

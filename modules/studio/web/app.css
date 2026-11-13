@@ -119,9 +119,10 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tab.active.has-selected { border-bottom-color: var(--accent); }
 .tab.in-pool.has-selected { color: var(--purple); }
 .tab.in-pool.has-selected::before { color: var(--purple); }
-/* 池子类型徽章：∞ 遍历池 = 紫色实线 + ∞（所有词条参与全组合）；🎲 随机池 = 淡蓝虚线 + 🎲（每次现抽 1 条） */
+/* 池子类型徽章：♾️ 遍历池 = 紫色实线 + ♾️（所有词条参与全组合）；🎲 随机池 = 淡蓝虚线 + 🎲（每次现抽 1 条）
+   两个徽章都用 emoji 字形（不用数学符号 ∞），字号一致、视觉重量才一样 */
 .tab.in-pool::after {
-  content: "∞"; position: absolute; top: 4px; right: 4px; font-size: 9px;
+  content: "♾️"; position: absolute; top: 3px; right: 3px; font-size: 9px; line-height: 1;
   color: var(--purple); background: var(--bg-2); border-radius: 50%;
   width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
 }
@@ -210,7 +211,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   box-shadow: inset 3px 0 0 0 var(--purple); padding-left: 14px; }
 .chip.in-pool.active { background: var(--purple-dim); border-color: var(--purple); color: #fff; }
 .chip.in-pool::after {
-  content: "∞"; position: absolute; top: -6px; right: -4px; font-size: 9px;
+  content: "♾️"; position: absolute; top: -7px; right: -5px; font-size: 9px; line-height: 1;
   color: var(--purple); background: var(--bg); border-radius: 50%;
   width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
 }
