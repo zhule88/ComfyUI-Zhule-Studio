@@ -1146,23 +1146,30 @@ export function useGalleryCommon(opts = {}) {
   async function saveDetailPreset() {
     const d = detail.value;
     if (!d || detailPresetSaving.value) return;
-    const names = [];
+    const picked = [];
     const seen = new Set();
     (d.tags || []).forEach((t) => {
       if (!t || !t.prompt) return;
       const n = String(t.name || '').trim();
       if (!n || seen.has(n)) return;
       seen.add(n);
-      names.push(n);
+      // 身份只有词条 id：名字随它一起存只是为了预设卡片上有个可读标签，
+      // 应用时定位一律走 id（后端 preset/get 按 id 解析 tab / relPath / 正文），不按名字反查
+      picked.push({ name: n, id: (t.id != null && t.id !== '') ? String(t.id) : '' });
     });
-    if (!names.length) {
+    if (!picked.length) {
       showToast('这张图没有词条类标签，存成预设后应用回词库会是空的', 'warn');
       return;
     }
+    const noId = picked.filter(it => !it.id).length;
     const base = String(d.name || '').replace(/\.[^.]+$/, '') || '图库预设';
-    const slots = names.map((n) => ({ t: 'item', name: n, chance: 100, lock: false }));
     detailPresetSaving.value = true;
     try {
+      const slots = picked.map((it) => {
+        const slot = { t: 'item', name: it.name, chance: 100, lock: false };
+        if (it.id) slot.id = it.id;
+        return slot;
+      });
       const resp = await fetch('/zhule_studio/api/preset/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1177,7 +1184,9 @@ export function useGalleryCommon(opts = {}) {
         showToast(json.error || '保存预设失败', 'error');
         return;
       }
-      showToast('已存为预设「' + base + '」（' + slots.length + ' 标签），可在词库预设中心改名 / 应用', 'success');
+      showToast('已存为预设「' + base + '」（' + slots.length + ' 标签' +
+        (noId ? '，其中 ' + noId + ' 个标签缺词条 id，应用时可能定位不到' : '') +
+        '），可在词库预设中心改名 / 应用', noId ? 'warn' : 'success');
     } catch (e) {
       showToast('保存预设失败：' + (e.message || ''), 'error');
     } finally {

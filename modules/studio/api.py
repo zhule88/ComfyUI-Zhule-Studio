@@ -1139,6 +1139,100 @@ def _preset_card_brief(payload):
     }
 
 
+def _preset_slot_index():
+    """给预设槽位解析用的三套索引：词条 id / (tab, relPath) 坐标 / 名字候选。
+
+    定位身份只有 id 一个（词条 id 恒定，改名/移动都不脱钩）。坐标与名字索引只服务
+    早期数据——那时图库侧保存只写了标签名、没写 id，属于「不得已」的历史包袱。
+    """
+    try:
+        data = _cards_from_tree(db.fetch_tree())["data"]
+    except Exception:
+        return None
+    by_id = {}
+    by_coord = {}
+    by_name = {}
+    for tab, arr in (data or {}).items():
+        for card in arr or []:
+            cid = str(card.get("id") or "")
+            if cid:
+                by_id.setdefault(cid, (tab, card))
+            rel = card.get("relPath") or ""
+            if rel:
+                by_coord.setdefault((tab, rel), card)
+            nm = str(card.get("name") or "")
+            if nm:
+                by_name.setdefault(nm, []).append((tab, card))
+    return {"by_id": by_id, "by_coord": by_coord, "by_name": by_name}
+
+
+def _preset_resolve_slots(payload):
+    """把预设槽位解析成「词库里的确定位置 + 当前正文」，返回 (payload, missing 数)。
+
+    解析顺序：词条 id（唯一身份）→ (tab, relPath) 坐标 → 名字（仅存量数据，且要求能唯一
+    收窄：同名多条时只认 relPath 末段显示名正好等于该名字的那条，不完全对得上就取先到的那条）。
+    命中后一律用词库当前正文覆盖快照，避免改过提示词的词条应用回来还是老内容。
+    池子（t=pool）原样透传，不动其内部结构。
+    """
+    slots = payload.get("slots") if isinstance(payload, dict) else None
+    if not isinstance(slots, list):
+        return payload, 0
+    idx = _preset_slot_index()
+    if not idx:
+        return payload, 0
+    out = []
+    missing = 0
+    for s in slots:
+        if not isinstance(s, dict) or s.get("t") != "item":
+            out.append(s)
+            continue
+        hit = None
+        cid = str(s.get("id") or "")
+        if cid:
+            hit = idx["by_id"].get(cid)
+        if hit is None:
+            tab = str(s.get("tab") or "")
+            rel = str(s.get("relPath") or "")
+            if tab and rel:
+                card = idx["by_coord"].get((tab, rel))
+                if card:
+                    hit = (tab, card)
+        if hit is None:
+            nm = str(s.get("name") or "").strip()
+            cand = list(idx["by_name"].get(nm) or []) if nm else []
+            if len(cand) > 1:
+                # 同名多条必须挑对：分组头（正文为空、只是挂子项的壳）不能当目标，
+                # 图库标签指的一定是有正文的那条；同分再看 relPath 末段显示名是否严格等于该名字。
+                def _score(pair):
+                    tab_, card_ = pair
+                    body = str(card_.get("content") or "").strip()
+                    leaf = parse_folder(str(card_.get("relPath") or "").split("/")[-1])[1]
+                    return (2 if body else 0) + (1 if leaf == nm else 0)
+                cand.sort(key=_score, reverse=True)
+            if cand:
+                hit = cand[0]
+        if hit is None:
+            missing += 1
+            out.append(dict(s, missing=1))
+            continue
+        tab, card = hit
+        merged = dict(s)
+        merged.update({
+            "tab": tab,
+            "relPath": card.get("relPath") or "",
+            # 老槽位没有 id 的，这里补回真实 id，之后这份预设就走 id 路子了
+            "id": str(card.get("id") or ""),
+            "name": card.get("name") or s.get("name") or "",
+            "content": card.get("content") or "",
+            "content_cn": card.get("content_cn") or "",
+            "neg": card.get("neg") or "",
+            "override": card.get("override") or "",
+        })
+        merged.pop("missing", None)
+        out.append(merged)
+    return dict(payload, slots=out), missing
+
+
 async def get_preset_rows(request):
     """GET /zhule_studio/api/preset?kind=bank —— 预设中心列表（含卡片摘要）。
 
@@ -1165,12 +1259,18 @@ async def get_preset_rows(request):
 
 
 async def get_preset_get(request):
-    """GET /zhule_studio/api/preset/get?pid= —— 单个方案完整内容（载入用）。"""
+    """GET /zhule_studio/api/preset/get?pid= —— 单个方案完整内容（载入用）。
+
+    返回前把槽位里的词条定位按 id 解析好（tab / relPath / 正文），前端应用时不用
+    再回查本地词库、更不按名字反查；解析不到的项标 missing 并计数，如实告知而非静默丢。
+    """
     pid = request.query.get("pid")
     rec = db.preset_get(pid)
     if not rec:
         return web.json_response({"error": "方案不存在"}, status=404)
-    return web.json_response({"ok": True, "preset": rec})
+    payload, missing = _preset_resolve_slots(rec.get("payload") or {})
+    rec = dict(rec, payload=payload)
+    return web.json_response({"ok": True, "preset": rec, "missing": missing})
 
 
 async def post_preset_save(request):

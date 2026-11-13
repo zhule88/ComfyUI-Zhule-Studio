@@ -1337,15 +1337,11 @@ export default {
           out.push(o);
           continue;
         }
-        // 只带名字的槽位（如「图库详情 → 💾 保存」落库的预设，图库那边拿不到词库的 tab/relPath）：
-        // 全库按名精确匹配补回定位；同名多条取第一条，实在找不到才丢弃，避免整份预设应用成空。
-        let sTab = s.tab;
-        let sRel = s.relPath;
-        if ((!sTab || !sRel) && s.name) {
-          const hitTab = Object.keys(bankData.value).find(t => (bankData.value[t] || []).some(c => c && c.name === s.name));
-          const hitCard = hitTab ? (bankData.value[hitTab] || []).find(c => c && c.name === s.name) : null;
-          if (hitCard) { sTab = hitTab; sRel = hitCard.relPath; }
-        }
+        // 槽位定位只认 id / (tab, relPath) 坐标——两者都由后端 preset/get 按词条 id 解析好，
+        // 前端不按名字反查（同名词条太多，按名必串）。缺定位 = 该词条已不在词库，丢弃不占位，
+        // 缺了几项由后端返回的 missing 如实提示，不静默吞掉。
+        const sTab = s.tab;
+        const sRel = s.relPath;
         if (!sTab || !sRel) continue;
         const card = (bankData.value[sTab] || []).find(c => c.relPath === sRel);
         if (card) {
@@ -4903,15 +4899,9 @@ const submitAddTab = async () => {
     };
 
     // 应用预设：payload.slots 走 rebuildSlots 还原（名字/正文按词库当前数据刷一遍）
+    // 一次点击即替换当前「已选」，不再走二次确认（用户明确要求直接点一下就行）
     const applyPreset = async (p) => {
       if (!p) return;
-      // 当前已有已选内容时，先要一次内联确认，免得一键把人家辛苦搭的一套覆盖掉
-      if (data.slots && data.slots.length && !(presetCtr.pending === p.id && presetCtr.pendingKind === 'apply')) {
-        presetCtr.pending = p.id;
-        presetCtr.pendingKind = 'apply';
-        showToast('再点一次「应用」就会用「' + p.name + '」替换当前已选的 ' + data.slots.length + ' 项', 'warn', 3200);
-        return;
-      }
       presetCtr.pending = 0;
       presetCtr.pendingKind = '';
       try {
@@ -4922,7 +4912,10 @@ const submitAddTab = async () => {
           return;
         }
         const payload = (json.preset && json.preset.payload) || {};
-        const slots = rebuildSlots(payload.slots);
+        const rawSlots = Array.isArray(payload.slots) ? payload.slots : [];
+        // 定位已由后端按词条 id 解析（tab / relPath / 正文一并给到），前端不再拉全库、不按名反查
+        const slots = rebuildSlots(rawSlots);
+        const missing = Number(json.missing) || 0;
         if (!slots.length) {
           showToast('这份预设里的标签在词库中已经找不到了，应用结果为空', 'warn', 3600);
           return;
@@ -4931,8 +4924,18 @@ const submitAddTab = async () => {
         pref.genCount = Math.max(0, Number(payload.genCount) || 0);
         data.fillMode = !!payload.fillMode;
         saveState();
-        zhuleLog('applyPreset', 'id=', p.id, 'name=', p.name, 'slots=', slots.length, 'genCount=', pref.genCount);
-        showToast('已载入「' + (p.name || '') + '」：' + slots.length + ' 项 / 次数 ' + pref.genCount, 'success', 3400);
+        // 预设可能跨 tab：懒加载首屏只留当前 tab，其余 tab 的卡片不在本地，已选行会缺参考图/编号
+        // 这类展示信息（正文已由后端按词条 id 一并给到，出图不受影响）。这里按需补拉，backfillSelected 回填。
+        const needTab = new Set();
+        slots.forEach(s => {
+          if (s.t !== 'item') return;
+          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) needTab.add(s.tab);
+        });
+        needTab.forEach(t => load(false, t));
+        zhuleLog('applyPreset', 'id=', p.id, 'name=', p.name, 'slots=', slots.length, 'missing=', missing, 'genCount=', pref.genCount);
+        showToast('已载入「' + (p.name || '') + '」：' + slots.length + ' 项 / 次数 ' + pref.genCount +
+          (missing ? '（另有 ' + missing + ' 项的词条已不在词库，未载入）' : ''),
+          missing ? 'warn' : 'success', missing ? 4200 : 3400);
         closePresetCenter();
       } catch (e) {
         showToast('应用预设失败：' + e.message, 'error');
