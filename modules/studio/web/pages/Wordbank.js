@@ -1,10 +1,6 @@
 import { reactive, computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
 import { useDeleteConfirm, DeleteDialog } from './deleteConfirm.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
-import {
-  loadPresets, upsertPreset, removePreset, newPresetId,
-  toPayload, applyPayload, buildBankIndex, presetSummary,
-} from './preset.js';
 
 export default {
   name: 'Wordbank',
@@ -21,14 +17,13 @@ export default {
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
           <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：遍历池每条补到「次数」张">⏩</button>
+          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ∞ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
             <span class="col-num">{{ pref.columns }}</span>
             <button class="col-btn" @click="changeColumns(1)">+</button>
           </div>
-          <button class="btn" @click="openPresets" data-tip="保存方案：把当前已选标签与池子存成一份方案，可随时载入">💾</button>
         </div>
 
         <div class="bank-tabs-row">
@@ -805,31 +800,6 @@ export default {
           </div>
           <div class="viewer-body">
             <textarea class="viewer-content" readonly spellcheck="false" :value="displayContent(viewer.file)"></textarea>
-          </div>
-        </div>
-      </div>
-
-      <!-- 保存方案（preset）：落库形态是 slots 单序列，见 preset.js -->
-      <div v-if="presetOpen" class="viewer-overlay" @click.self="closePresets">
-        <div class="viewer-dialog" style="max-width:520px;">
-          <div class="viewer-head">
-            <span class="viewer-title">保存方案</span>
-            <button class="btn icon-btn" @click="closePresets" data-tip="关闭">✕</button>
-          </div>
-          <div style="padding:10px 12px; display:flex; flex-direction:column; gap:8px; max-height:52vh; overflow:auto;">
-            <div v-if="!presets.length" style="opacity:.6; font-size:12px;">还没有保存过方案</div>
-            <div v-for="p in presets" :key="p.id"
-                 style="display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid rgba(255,255,255,.12); border-radius:6px;">
-              <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ p.name }}</span>
-              <span style="opacity:.55; font-size:12px;">{{ presetSummary(p) }}</span>
-              <button class="btn" @click="applyPreset(p)" data-tip="载入：整体替换当前已选与池子">载入</button>
-              <button class="btn icon-btn danger" @click="deletePreset(p)" data-tip="删除方案">🗑</button>
-            </div>
-          </div>
-          <div style="padding:10px 12px; border-top:1px solid rgba(255,255,255,.12); display:flex; gap:8px;">
-            <input v-model="presetName" placeholder="方案名字" @keydown.enter.stop.prevent="saveCurrentPreset"
-                   style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,.18); background:transparent; color:inherit;" />
-            <button class="btn" @click="saveCurrentPreset">保存当前</button>
           </div>
         </div>
       </div>
@@ -5661,61 +5631,6 @@ const submitAddTab = async () => {
       window.removeEventListener('drop', preventDropDefault);
     });
 
-    // ============ 保存方案（preset）============
-    // 存的是 slots 单序列（见 preset.js）：词条只存 id，池存 tab / chip / list，名字不进库
-    const presets = ref(loadPresets());
-    const presetOpen = ref(false);
-    const presetName = ref('');
-
-    // 子分类显示名回查：bankNodes 是 {id: node} 索引
-    const chipNameOf = (id) => {
-      const n = (bankNodes.value || {})[String(id)];
-      return (n && n.name) || '';
-    };
-
-    const openPresets = () => {
-      presets.value = loadPresets();
-      presetOpen.value = true;
-    };
-    const closePresets = () => { presetOpen.value = false; };
-
-    const saveCurrentPreset = () => {
-      const name = (presetName.value || '').trim();
-      if (!name) { showToast('先给方案起个名字', 'warn'); return; }
-      const { slots, dropped } = toPayload(data.selected, data.randomPools);
-      if (!slots.length) { showToast('当前没有可存的标签或池子', 'warn'); return; }
-      presets.value = upsertPreset({
-        id: newPresetId(),
-        kind: 'bank',
-        name,
-        payload: { slots, ref: null },
-        ts: Date.now(),
-      });
-      presetName.value = '';
-      showToast(dropped ? '已保存「' + name + '」，' + dropped + ' 项缺 id 未存' : '已保存「' + name + '」',
-        dropped ? 'warn' : 'success', 2600);
-    };
-
-    const applyPreset = (preset) => {
-      if (!preset || !preset.payload) return;
-      const bankIndex = buildBankIndex(bankData.value);
-      const out = applyPayload(preset.payload, { bankIndex, chipName: chipNameOf });
-      data.selected = out.selected;
-      data.randomPools = out.randomPools;
-      syncPlaceholders(); // 池的黄色占位符按新池子重建
-      closePresets();
-      showToast(out.missing
-        ? '已载入「' + preset.name + '」，' + out.missing + ' 项已失效被跳过'
-        : '已载入「' + preset.name + '」',
-      out.missing ? 'warn' : 'success', 3200);
-    };
-
-    const deletePreset = (preset) => {
-      if (!preset) return;
-      presets.value = removePreset(preset.id);
-      showToast('已删除「' + preset.name + '」', 'success', 2000);
-    };
-
     return {
       loaded, tabLoading, error, tabs, data, pref, drag, load,
       editTarget, editName, editContent, editContentCn, editNeg, editOverride, editIsTxt, editing, acc, toggleAcc, allAccOpen, toggleAllAcc,
@@ -5781,9 +5696,6 @@ const submitAddTab = async () => {
       dispKey, sortSaving, saveTabOrder,
       onCardPointerDown, onTagPointerDown, onSelListPointerDown,
       toast, toastIcon, dismissToast,
-      // 保存方案：💾 浮层（slots 单序列）
-      presets, presetOpen, presetName, presetSummary,
-      openPresets, closePresets, saveCurrentPreset, applyPreset, deletePreset,
     };
   },
 };
