@@ -16,8 +16,6 @@ export default {
           <button class="btn" :class="{active: pref.translate}" @click="toggleTranslate">
             {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
           </button>
-          <button class="btn" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-          <button class="btn" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ∞ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
           <div class="col-ctrl">
             <label>每行</label>
             <button class="col-btn" @click="changeColumns(-1)">−</button>
@@ -226,15 +224,39 @@ export default {
         <div class="bottom">
           <div class="selected-header">
             <span class="sel-title">已选 <span class="selected-count">{{ data.slots.length }}</span> 项</span>
-            <!-- 已选标签直接排在这一行：右侧的收起/清空/次数/运行永远固定可见，不被标签挤走 -->
+            <div class="header-actions">
+              <button class="btn" style="padding:4px 10px;font-size:12px;"
+                      :data-tip="selectedCollapsed ? '展开提示词预览' : '收起提示词预览'"
+                      @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开预览' : '⏶ 收起预览' }}</button>
+              <button class="btn btn-ico" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
+              <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ∞ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
+              <button class="btn danger" style="padding:4px 10px;font-size:12px;"
+                      @click="clearAll">清空</button>
+              <div class="count-ctrl">
+                <label>次数</label>
+                <button class="count-btn" @click="changeCount(-1)">−</button>
+                <input type="number" class="count-input" min="0" max="99"
+                       :value="pref.genCount"
+                       @input="onCountInput"
+                       @blur="fixCount">
+                <button class="count-btn" @click="changeCount(1)">+</button>
+              </div>
+              <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
+            </div>
+          </div>
+          <!-- 标签行：从「运行」那一行下放，独立成一行常驻展示，展开/收起只影响下方预览。
+               🎲 骰子与 ⏩ 填充模式作用的对象就是这一行的池标签，所以从顶部工具栏搬下来放「已选」行（清空左侧）。 -->
+          <div class="selected-tags-row">
             <div class="selected-list"
-                 :class="{'drag-active': drag.hoverSide === 'selList', 'is-collapsed': selectedCollapsed}"
+                 :class="{'drag-active': drag.hoverSide === 'selList'}"
                  @pointerdown="onSelListPointerDown">
               <span v-if="!data.slots.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
               <div v-for="(item, idx) in data.slots" :key="idx"
                    class="tag"
                    :class="{
                      'is-pool': item.t === 'pool',
+                     // 遍历池 ∞ 单独挂一个类：跟随机池 🎲 用两套颜色，一眼分清两个池子
+                     'is-pool-traverse': item.t === 'pool' && !!item.traverse,
                      'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
                      'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
                      'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right',
@@ -243,7 +265,7 @@ export default {
                    @pointerdown.stop="onTagPointerDown($event, idx)"
                    @contextmenu.prevent.stop="openTagMenu($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
-                <span v-if="item.t === 'pool'" class="ph-badge" title="黄色分类标签：随机抽取结果绑定显示在本标签内">♻</span>
+                <span v-if="item.t === 'pool'" class="ph-badge" title="池子标签：抽取结果绑定显示在本标签内">♻</span>
                 <!-- 参与率角标：池与普通手选词条都支持，100% 是默认值不显示，低于 100 才挂出来 -->
                 <span v-if="itemChance(item) < 100" class="ph-chance"
                       :title="(item.t === 'pool' ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
@@ -258,23 +280,6 @@ export default {
                 <span v-if="itemLocked(item)" class="tag-lock" title="已锁定：不能修改也不能删除，右键可解锁">🔒</span>
                 <span v-else class="close" @pointerdown.stop="removeSelected(idx)">×</span>
               </div>
-            </div>
-            <div class="header-actions">
-              <button class="btn" style="padding:4px 10px;font-size:12px;"
-                      :data-tip="selectedCollapsed ? '展开已选区' : '收起已选区'"
-                      @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开' : '⏶ 收起' }}</button>
-              <button class="btn danger" style="padding:4px 10px;font-size:12px;"
-                      @click="clearAll">清空</button>
-              <div class="count-ctrl">
-                <label>次数</label>
-                <button class="count-btn" @click="changeCount(-1)">−</button>
-                <input type="number" class="count-input" min="0" max="99"
-                       :value="pref.genCount"
-                       @input="onCountInput"
-                       @blur="fixCount">
-                <button class="count-btn" @click="changeCount(1)">+</button>
-              </div>
-              <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
             </div>
           </div>
           <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
@@ -1190,102 +1195,6 @@ export default {
       return out;
     };
 
-    // 旧存档池清洗：兼容数组形态与更早的「按 tab 分桶」对象形态
-    const cleanLegacyPools = (raw) => {
-      if (!raw) return [];
-      const clean = [];
-      if (Array.isArray(raw)) {
-        clean.push(...raw.filter(it => it && (it.kind === 'tab' || it.kind === 'chip' || it.kind === 'list') && typeof it.tab === 'string'
-          && (it.kind !== 'chip' || it.chipId)));
-      } else if (typeof raw === 'object') {
-        Object.keys(raw).forEach(t => {
-          const arr = raw[t];
-          if (!Array.isArray(arr)) return;
-          arr.forEach(it => {
-            if (it && (it.kind === 'tab' || it.kind === 'chip') && Array.isArray(it.path)) {
-              clean.push({ kind: it.kind, tab: t, path: it.path, display: it.display || '' });
-            }
-          });
-        });
-      }
-      clean.forEach(it => {
-        // 池的 chip 身份即节点 id（后端已不再下发 path，路径存档早于本版即作废）
-        delete it.path;
-        if (it.kind !== 'chip') return;
-        if (!it.chipId) it.dead = true;
-        else it.display = nodeNameOf(it.chipId) || it.display || String(it.chipId);
-      });
-      const kept = clean.filter(it => {
-        if (it.kind === 'chip' && it.dead) return false;
-        if (it.kind !== 'list') return true;
-        it.items = (Array.isArray(it.items) ? it.items : []).filter(e => e && typeof e.tab === 'string' && typeof e.relPath === 'string');
-        if (!it.poolId) it.poolId = 'L' + Math.random().toString(36).slice(2, 10);
-        if (!it.display) it.display = '凝结' + it.items.length + '项';
-        return it.items.length > 0;
-      });
-      // 池类型 / 参与率：旧存档没有字段 → 一律随机池 🎲 + 100%（与旧行为完全一致，不改变既有出图结果）
-      kept.forEach(it => {
-        it.traverse = !!it.traverse;
-        it.chance = it.traverse ? 100 : normalizeChance(it.chance);
-      });
-      return kept;
-    };
-
-    // 旧存档迁移（selected + randomPools 双数组靠 _poolKey 缝合）→ 单数组 slots。
-    // 旧 _poolKey 是拼接串，格式已随旧版淘汰，这里按「串里含 tab / chipId / poolId」宽松认领，
-    // 认不出来就按顺序取下一个没用掉的池——占位符本来就是按池顺序铺出来的，顺序兜底足够准。
-    const migrateLegacy = (legacySelected, pools) => {
-      const left = pools.slice();
-      const take = (ph) => {
-        if (!left.length) return null;
-        const k = String(ph._poolKey || '');
-        const hit = k ? left.findIndex(p => (p.kind === 'tab'
-          ? k === 'T:' + p.tab || k.indexOf(String(p.tab)) >= 0
-          : p.kind === 'chip'
-            ? k === 'C:' + p.tab + ':' + p.chipId || k.indexOf(String(p.chipId)) >= 0
-            : !!p.poolId && k.indexOf(String(p.poolId)) >= 0)) : -1;
-        return left.splice(hit >= 0 ? hit : 0, 1)[0];
-      };
-      const out = [];
-      for (const sel of legacySelected) {
-        if (!sel) continue;
-        if (sel._poolKey !== undefined || sel._ph) {
-          const p = take(sel);
-          if (!p) continue;   // 找不到池的旧占位符直接丢弃，不留没有归属的空位
-          const slot = { t: 'pool', kind: p.kind };
-          if (p.kind === 'list') { slot.poolId = p.poolId; slot.items = p.items; slot.display = p.display; }
-          else { slot.tab = p.tab; if (p.kind === 'chip') slot.chipId = p.chipId; slot.display = p.display || ''; }
-          slot.traverse = !!p.traverse;
-          slot.chance = slot.traverse ? 100 : normalizeChance(p.chance);
-          if (p.lock) slot.lock = true;
-          if (p.pin) slot.pin = p.pin;
-          // 旧存档「已抽定」的占位符把绑定词条原样搬成 picked，运行时立刻能用
-          if ((sel._filled || sel._ph) && sel.content) {
-            slot.picked = {
-              tab: sel.tab || '', relPath: sel.relPath || '', id: sel.id || '', name: sel.name || '',
-              content: sel.content || '', content_cn: sel.content_cn || '',
-              neg: sel.neg || '', override: sel.override || '',
-            };
-          }
-          out.push(slot);
-          continue;
-        }
-        out.push(sel);
-      }
-      // 剩下没被任何占位符认领的池（旧存档一般不会出现）追加到末尾，别把用户配好的池弄丢
-      for (const p of left) {
-        const slot = { t: 'pool', kind: p.kind };
-        if (p.kind === 'list') { slot.poolId = p.poolId; slot.items = p.items; slot.display = p.display; }
-        else { slot.tab = p.tab; if (p.kind === 'chip') slot.chipId = p.chipId; slot.display = p.display || ''; }
-        slot.traverse = !!p.traverse;
-        slot.chance = slot.traverse ? 100 : normalizeChance(p.chance);
-        if (p.lock) slot.lock = true;
-        if (p.pin) slot.pin = p.pin;
-        out.push(slot);
-      }
-      return out;
-    };
-
     const saveState = () => {
       // 恢复完成前禁止写入：初始化竞态期间的中间状态不得覆盖已保存存档
       if (!stateRestored) return;
@@ -1295,9 +1204,6 @@ export default {
         selections: data.selections,
         // 单一 slots：池与提示词位置同在一个数组里，顺序即身份
         slots: serializeSlots(),
-        // 模式存档版本：3 起「随机」是池类型（每个池的 traverse 字段）而非全局模式；
-        // 4 起移除遍历开关（遍历恒为默认跑法）；填充模式 ⏩ 重新加入，但目标数量改为「词库里设的次数」。
-        modeVer: 4,
         fillMode: data.fillMode,
         imgIndices: data.imgIndices,
         chipsCollapsed: chipsCollapsed.value,
@@ -1392,24 +1298,14 @@ export default {
         if (typeof state.chipsCollapsed === 'boolean') chipsCollapsed.value = state.chipsCollapsed;
         if (typeof state.chipsHeight === 'number') chipsHeight.value = Math.min(420, Math.max(40, state.chipsHeight));
         if (typeof state.selectedCollapsed === 'boolean') selectedCollapsed.value = state.selectedCollapsed;
-        // 池清洗只给旧存档迁移用：新存档的池槽已经在 slots 里，不需要单独一份池数组
-        let legacyPools = [];
-        // 旧存档迁移：modeVer < 3 时旧「随机模式 🔄」= 各池各抽一条逐条出图，等价于「所有池都是 🎲 随机池」。
-        // 遍历开关已移除（遍历恒为默认跑法）；填充模式 ⏩ 已回归，存档里的 fillMode 照原样恢复。
+        // 填充模式 ⏩ 照原样恢复；遍历恒为默认跑法，没有全局开关
         if (typeof state.fillMode === 'boolean') data.fillMode = state.fillMode;
         if (state.imgIndices && typeof state.imgIndices === 'object') data.imgIndices = state.imgIndices;
         if (state.activeTab && tabs.value.includes(state.activeTab)) data.activeTab = state.activeTab;
         // 忽略历史存档中的 tabSortSettings：排序已固定为「深度（目录序）」，不做手动选择
-        // 读档：新存档直接读 slots；旧存档（selected + randomPools 双数组）就地迁移成单数组
+        // 读档：只认 slots 单数组格式（旧的 selected + randomPools 双数组存档不再兼容）
         if (Array.isArray(state.slots)) {
           data.slots = rebuildSlots(state.slots);
-        } else if (Array.isArray(state.selected)) {
-          legacyPools = cleanLegacyPools(state.randomPools);
-          data.slots = rebuildSlots(migrateLegacy(state.selected, legacyPools));
-        }
-        // 旧「随机模式」存档整份降级为随机池（放在 slots 建好之后跑，否则遍历的是个空数组）
-        if (!(state.modeVer >= 3) && state.randomMode) {
-          for (const it of allPools.value) it.traverse = false;
         }
         // 恢复流程正常完成：标记守卫放行，此后状态变更才允许写盘
         stateRestored = true;

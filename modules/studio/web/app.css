@@ -485,14 +485,15 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 12px 18px; display: flex; flex-direction: column; gap: 10px; }
 .selected-header { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-2); }
 .selected-header .sel-title { flex-shrink: 0; white-space: nowrap; }
-/* 已选标签排在 header 行内：占用中间剩余宽度，超出纵向滚动；右侧操作区固定不被挤走 */
-.selected-header .selected-list { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: 72px;
-  overflow-y: auto; overflow-x: hidden; padding: 0; gap: 5px; align-content: flex-start; }
-/* 收起态：标签不隐藏，只压成单行，超出部分横向滚动 */
-.selected-header .selected-list.is-collapsed { flex-wrap: nowrap; max-height: 26px;
-  overflow-x: auto; overflow-y: hidden; }
-.selected-header .selected-list .tag { padding: 2px 6px 2px 8px; font-size: 11.5px; }
 .selected-header .header-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+/* 🎲 骰子与 ⏩ 填充模式：放在「已选 N 项」这一行、清空按钮左边，字号放大一档便于一眼点中 */
+.selected-header .header-actions .btn-ico { padding: 2px 11px; font-size: 18px; line-height: 1.15; }
+.selected-header .header-actions .btn-ico.active { background: rgba(167, 139, 250, 0.22); border-color: var(--purple); color: #e9dcff; }
+/* 标签行：从「运行」那一行下放，独立成行常驻——展开/收起只影响下方预览，本行始终可见。 */
+.selected-tags-row { display: flex; align-items: flex-start; gap: 10px; }
+.selected-tags-row .selected-list { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: 72px;
+  overflow-y: auto; overflow-x: hidden; padding: 0; gap: 5px; align-content: flex-start; }
+.selected-tags-row .selected-list .tag { padding: 2px 6px 2px 8px; font-size: 11.5px; }
 .selected-count { color: var(--accent); font-weight: 600; }
 .selected-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 32px; position: relative;
   padding: 4px; border-radius: 6px; }
@@ -505,8 +506,23 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tag.drag-over-insert { box-shadow: -4px 0 0 0 var(--primary); border-left-color: var(--primary); }
 .tag.drag-over-insert-right { box-shadow: 4px 0 0 0 var(--green); border-right-color: var(--green); }
 .tag.drag-over-replace { background: var(--red-dim); border-color: var(--red); color: #ffd4d4; }
-.tag.placeholder { background: rgba(255, 180, 60, 0.12); border-color: rgba(255, 180, 60, 0.55); border-style: dashed; color: #ffd9a8; }
-.tag.placeholder .ph-badge { color: #ffb43c; font-size: 11px; line-height: 1; padding: 0 1px; }
+.tag.placeholder,
+/* 随机池 🎲 的标签：橙色虚线，跟手选词条的蓝色区分开（slots 重构后类名由 placeholder 改为 is-pool）
+   遍历池 ∞ 再用 is-pool-traverse 覆盖成紫色，见下方同名规则 */
+.tag.is-pool { background: rgba(255, 180, 60, 0.12); border-color: rgba(255, 180, 60, 0.55); border-style: dashed; color: #ffd9a8; }
+.tag.placeholder .ph-badge,
+.tag.is-pool .ph-badge { color: #ffb43c; font-size: 11px; line-height: 1; padding: 0 1px; }
+.tag.is-pool .close { color: #ffcf96; }
+.tag.is-pool .close:hover { color: #fff; }
+.tag.is-pool.locked { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); color: #e6e6e6; }
+/* 遍历池 ∞：同一套虚线样式，颜色换成紫色，跟随机池 🎲 的橙色区分开
+   （⏩ 填充模式作用于遍历池，激活态也是紫色，语义上对得上） */
+.tag.is-pool-traverse { background: rgba(170, 140, 255, 0.14); border-color: rgba(170, 140, 255, 0.58); color: #ddd0ff; }
+.tag.is-pool-traverse .ph-badge { color: #b79bff; }
+.tag.is-pool-traverse .close { color: #cbb6ff; }
+.tag.is-pool-traverse .close:hover { color: #fff; }
+.tag.is-pool-traverse .ph-chance { color: #ddccff; background: rgba(170, 140, 255, 0.18); border-color: rgba(170, 140, 255, 0.4); }
+.tag.is-pool-traverse.locked { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); color: #e6e6e6; }
 /* 参与率角标：只在低于 100% 时出现，比 ph-badge 更轻，不抢标签名的视觉重量 */
 .tag .ph-chance {
   font-size: 10px; line-height: 1; padding: 1px 4px; border-radius: 7px;
