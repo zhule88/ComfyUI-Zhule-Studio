@@ -230,6 +230,10 @@ export default {
                       @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开预览' : '⏶ 收起预览' }}</button>
               <button class="btn btn-ico" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
               <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ♾️ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
+              <button class="btn" style="padding:4px 10px;font-size:12px;"
+                      :class="{ active: presetDlg.open }"
+                      @click="openPresetDlg"
+                      data-tip="保存方案：把当前这套已选（提示词 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一个方案，随时一键还原">💾 保存</button>
               <button class="btn danger" style="padding:4px 10px;font-size:12px;"
                       @click="clearAll">清空</button>
               <div class="count-ctrl">
@@ -282,15 +286,38 @@ export default {
               </div>
             </div>
           </div>
-          <!-- 预览：展示拼接后的最终结果（含父级分类继承），负面提示词一键折叠/展开 -->
-          <div class="preview" v-show="!selectedCollapsed" :class="{'random-mode': allPools.length > 0}">
-            <span class="pv-text">{{ previewText }}</span>
+          <!-- 预览：以已选提示词为主干，池子按顺序融入并挂徽标（不再整块替换成池子说明） -->
+          <div class="preview" v-show="!selectedCollapsed">
+            <span class="pv-flow">
+              <template v-for="(c, ci) in previewChunks" :key="ci">
+                <span v-if="ci" class="pv-sep">,</span>
+                <span v-if="c.k === 'pool'" class="pv-pool" :class="['pv-pool-' + c.mode, { 'pv-pool-ph': c.placeholder }]"
+                      :data-tip="c.tip">
+                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  ><span class="pv-pool-label">{{ c.label }}</span
+                  ><span v-if="c.text" class="pv-pool-word">：{{ c.text }}</span>
+                </span>
+                <span v-else class="pv-text">{{ c.text }}</span>
+              </template>
+              <span v-if="!previewChunks.length" class="pv-empty">（空）</span>
+              <span v-if="previewRemoved" class="pv-removed">（排除 {{ previewRemoved }} 段）</span>
+            </span>
+            <span v-if="data.fillMode" class="pv-fill" :data-tip="fillPreviewTip">⏩</span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
                     :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
           </div>
-          <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview"
-               :class="{'random-mode': allPools.length > 0}">
-            <span class="pv-text">{{ previewNegText || '（无）' }}</span>
+          <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview">
+            <span class="pv-flow">
+              <template v-for="(c, ci) in previewNegChunks" :key="ci">
+                <span v-if="ci" class="pv-sep">,</span>
+                <span v-if="c.k === 'pool'" class="pv-pool" :class="'pv-pool-' + c.mode" :data-tip="c.tip">
+                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  ><span class="pv-pool-label">{{ c.label }}</span>
+                </span>
+                <span v-else class="pv-text">{{ c.text }}</span>
+              </template>
+              <span v-if="!previewNegChunks.length" class="pv-empty">（无）</span>
+            </span>
           </div>
         </div>
       </template>
@@ -778,6 +805,60 @@ export default {
           <div class="actions">
             <button class="btn" @click="closeVgJoin">取消</button>
             <button class="btn primary" @click="submitVgJoin" :disabled="vgJoin.busy">聚拢</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 保存方案：把「已选」这一整套（提示词 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一个可复用方案。
+           当前是设计预览版：结构已算好，落库接口（preset 表）等样式定稿后再接。 -->
+      <div v-if="presetDlg.open" class="edit-overlay" @click.self="closePresetDlg">
+        <div class="edit-dialog preset-dialog">
+          <div class="title"><span class="title-text">保存方案</span>
+            <span class="preset-badge">设计预览</span>
+          </div>
+          <div class="edit-body">
+            <div class="field">
+              <label>方案名</label>
+              <input type="text" v-model="presetDlg.name" placeholder="如 卧室氛围 / 表情特写" spellcheck="false"
+                     @keydown.enter="submitPresetSave">
+            </div>
+            <div class="preset-sec-title">将要保存的内容</div>
+            <div class="preset-list">
+              <div class="preset-row">
+                <span class="preset-k">提示词</span>
+                <span class="preset-v">{{ presetSummary.items }} 条</span>
+              </div>
+              <div class="preset-row" v-if="presetSummary.trav.length">
+                <span class="preset-k">♾️ 遍历池</span>
+                <span class="preset-v">{{ presetSummary.trav.length }} 个 · {{ presetSummary.trav.join('、') }}</span>
+              </div>
+              <div class="preset-row" v-if="presetSummary.rnd.length">
+                <span class="preset-k">🎲 随机池</span>
+                <span class="preset-v">{{ presetSummary.rnd.length }} 个 · {{ presetSummary.rnd.join('、') }}</span>
+              </div>
+              <div class="preset-row">
+                <span class="preset-k">其它</span>
+                <span class="preset-v">次数 {{ presetSummary.count }}{{ presetSummary.fill ? ' · 填充模式 ⏩ 已开' : '' }} · 顺序 / 参与率 / 锁定一并保存</span>
+              </div>
+            </div>
+            <div class="preset-flow">
+              <template v-for="(c, ci) in previewChunks" :key="ci">
+                <span v-if="ci" class="pv-sep">,</span>
+                <span v-if="c.k === 'pool'" class="pv-pool" :class="['pv-pool-' + c.mode, { 'pv-pool-ph': c.placeholder }]">
+                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  ><span class="pv-pool-label">{{ c.label }}</span
+                  ><span v-if="c.text" class="pv-pool-word">：{{ c.text }}</span>
+                </span>
+                <span v-else class="pv-text">{{ c.text }}</span>
+              </template>
+            </div>
+            <div class="hint" style="margin-top:10px">
+              这是设计预览版：清单与结构已经算好，<b>preset 表落库接口尚未接上</b>，点「保存」只会校验不写库。
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" @click="closePresetDlg">取消</button>
+            <button class="btn primary" @click="submitPresetSave">保存方案</button>
           </div>
         </div>
       </div>
@@ -3064,50 +3145,87 @@ export default {
     };
     const withRemoved = (ph) => (ph.removed ? '（排除 ' + ph.removed + ' 段）' + (ph.text || '（空）') : (ph.text || '（空）'));
 
-    const previewText = computed(() => {
-      // 填充模式 ⏩：目标张数就是词库里设的「次数」，逐条补到该数量为止
-      if (data.fillMode) {
-        const filledFill = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
-        if (filledFill.length) return '填充抽取：' + withRemoved(composePreview(filledFill));
-        const labF = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-        if (!allPools.value.length) return '填充模式 ⏩ 已开，但池子为空。右键 tab / chip 加入池子，再右键可改成遍历池 ♾️';
-        const travF = allPools.value.filter(it => it.traverse).map(labF);
-        const rndF = allPools.value.filter(it => !it.traverse).map(labF);
-        const targetF = Math.max(1, Number(pref.genCount) || 0);
-        return '填充 ⏩：♾️ 遍历池 ' + (travF.join(' | ') || '（无，填充需要至少一个）')
-          + (rndF.length ? ' → 🎲 随机池 ' + rndF.join(' | ') + '（每张图照常各抽 1 条）' : '')
-          + '；目标 = 遍历池内每条提示词参考图补到 ' + targetF + ' 张（次数），不足的逐条补跑，已有更多的不动';
-      }
-      if (allPools.value.length) {
-        const filled = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
-        if (filled.length) {
-          return '遍历抽取：' + withRemoved(composePreview(filled));
+    // ---- 预览流：以「已选提示词」为主干，池子按 slots 原位融入，并挂专属徽标 ----
+    // 为什么这么改：以前只要「有池子」，预览就整块被替换成「♾️ 遍历池 N 个 [...]」那种说明文字，
+    // 手选词条一个字都不显示 → 表现成「一加池子预览区整体就变了」「关掉填充再添加提示词预览没反应」。
+    // 现在统一按 data.slots 的顺序逐槽输出（与运行时 arrangeBySelection 同一顺序、同一套继承与排除词规则）：
+    //   item 槽 → 出正文；pool 槽（已抽定）→ ♾️/🎲 + 池名 + 抽中的词；pool 槽（未抽定）→ 「待抽」占位。
+    const poolLabelOfSlot = (s) => (s.kind === 'tab' ? (tabLabel(s.tab) || String(s.tab || ''))
+      : s.kind === 'list' ? (s.display || ('凝结' + (s.items || []).length + '项'))
+        : (nodeNameOf(s.chipId) || s.display || String(s.chipId || '')));
+    const poolChunkTip = (mode, label, name) => {
+      const head = (mode === 'traverse' ? '♾️ 遍历池「' : '🎲 随机池「') + label + '」';
+      if (!name) return head + '：运行期才定词（' + (mode === 'traverse' ? '全词条穷举' : '每轮现抽 1 条') + '）';
+      return head + '：' + (mode === 'traverse' ? '全词条穷举，这里显示' : '每轮现抽 1 条，当前抽中')
+        + '「' + name + '」，右键池标签可切类型 / 改参与率 / 只重抽这一个池';
+    };
+    // neg=true 生成负面预览流；正面流会顺带统计被排除词删掉的段数
+    const buildPreviewFlow = (neg) => {
+      const nodes = [];
+      for (const s of (data.slots || [])) {
+        if (!s) continue;
+        if (s.t === 'item') {
+          nodes.push({ type: 'item', src: resolveVgForPreview(s) });
+        } else if (s.t === 'pool') {
+          nodes.push({
+            type: 'pool',
+            label: poolLabelOfSlot(s),
+            mode: s.traverse ? 'traverse' : 'random',
+            src: s.picked ? resolveVgForPreview(slotData(s)) : null,
+          });
         }
-        const lab = (p) => (p.kind === 'tab' ? tabLabel(p.tab) + '(全部)' : p.display);
-        const trav = allPools.value.filter(it => it.traverse).map(lab);
-        const rnd = allPools.value.filter(it => !it.traverse).map(lab);
-        const parts = [];
-        if (trav.length) parts.push('♾️ 遍历池 ' + trav.length + ' 个 [' + trav.join(' | ') + ']');
-        if (rnd.length) parts.push('🎲 随机池 ' + rnd.length + ' 个 [' + rnd.join(' | ') + ']');
-        const rounds = Math.max(1, Number(pref.genCount) || 0);
-        const extra = trav.length
-          ? '；遍历池做全组合，次数 ' + rounds + ' = 整套组合重复 ' + rounds + ' 轮'
-          : '；无遍历池 ♾️，按普通模式逐条运行（每轮各抽 1 条）';
-        return parts.join(' → ') + extra;
       }
-      const picked = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
-      if (!picked.length) return '（空）';
-      return withRemoved(composePreview(picked));
-    });
-
-    // 负面预览：同样是「自身 + 父级分类」拼完的最终结果，与正向一一对应
-    const previewNegText = computed(() => {
-      if (allPools.value.length) {
-        return '（运行期按实际抽中的提示词拼接 自身 + 父级 负面）';
+      // 展开父级分类继承；排除词只删「别的词条」产出的段，永远不删自己
+      const filters = [];
+      for (const n of nodes) {
+        if (!n.src) continue;
+        const ex = expandInherit(n.src);
+        n.id = n.src.id || '';
+        n.name = n.src.name || '';
+        n.text = neg ? ex.neg : (pref.translate ? (ex.content_cn || ex.content) : ex.content);
+        if (!neg) parseFilters(ex.override).forEach(words => filters.push({ src: n.id, words }));
       }
-      const picked = filledSlots.value.map(s => resolveVgForPreview(slotData(s)));
-      if (!picked.length) return '';
-      return joinInherit(expandItems(picked).map(s => s.neg));
+      let removed = 0;
+      const chunks = [];
+      for (const n of nodes) {
+        if (!n.src) {
+          // 还没抽定的池：正面预览给占位（运行期才定词），负面预览没有内容可占位就跳过
+          if (neg) continue;
+          chunks.push({ k: 'pool', mode: n.mode, label: n.label, name: '', text: '待抽',
+            placeholder: true, tip: poolChunkTip(n.mode, n.label, '') });
+          continue;
+        }
+        const kept = [];
+        splitSegments(n.text).forEach((t) => {
+          const low = t.toLowerCase();
+          const hit = filters.some(f => f.src !== n.id && f.words.some(w => low.includes(w)));
+          if (hit) removed++;
+          else kept.push(t);
+        });
+        if (!kept.length) continue;
+        const text = kept.join(', ');
+        if (n.type === 'item') chunks.push({ k: 'w', text });
+        else chunks.push({ k: 'pool', mode: n.mode, label: n.label, name: n.name, text,
+          placeholder: false, tip: poolChunkTip(n.mode, n.label, n.name) });
+      }
+      return { chunks, removed };
+    };
+    const previewFlow = computed(() => buildPreviewFlow(false));
+    const previewChunks = computed(() => previewFlow.value.chunks);
+    const previewRemoved = computed(() => previewFlow.value.removed);
+    const previewNegChunks = computed(() => buildPreviewFlow(true).chunks);
+    // 填充模式 ⏩ 只作为徽标提示挂在预览框上，不再霸占预览正文
+    const fillPreviewTip = computed(() => {
+      if (!data.fillMode) return '';
+      const target = Math.max(1, Number(pref.genCount) || 0);
+      if (!allPools.value.length) {
+        return '填充模式 ⏩：池子还是空的。先右键 tab / chip 加入池子，再把要补图的池改成 ♾️ 遍历池';
+      }
+      const trav = allPools.value.filter(it => it.traverse).map(it => poolLabelOfSlot(it));
+      const rnd = allPools.value.filter(it => !it.traverse).map(it => poolLabelOfSlot(it));
+      return '填充模式 ⏩：点「运行」后，♾️ 遍历池 ' + (trav.join('、') || '（无，填充至少需要一个遍历池）')
+        + ' 里每条提示词的参考图逐条补到 ' + target + ' 张（次数），已有更多的不动'
+        + (rnd.length ? '；🎲 随机池 ' + rnd.join('、') + ' 每张图照常各抽 1 条' : '');
     });
     // 预览框上的负面提示词折叠开关（唯一入口，直接写回 pref 并持久化）
     const toggleNegPreview = () => { pref.showNegPreview = !pref.showNegPreview; };
@@ -4531,6 +4649,47 @@ const submitAddTab = async () => {
       data.slots.splice(idx, 1);
       zhuleLog('removeSelected: 删除槽', s.t, s.t === 'pool' ? (s.display || s.tab) : s.name, 'idx=', idx, 'slots=', selSummary());
     };
+    // ============ 保存方案：把「已选」整套存成一个可复用方案 ============
+    // 本版为设计预览：清单/结构都按真实数据算好（复用 serializeSlots 的口径），落库接口
+    // （preset 表 id/kind/name/payload/gallery_id）等 UI 样式定稿后再接，届时 payload 直接用
+    // { slots: serializeSlots(), genCount, fillMode } 即可，不必再改这套结构。
+    const presetDlg = reactive({ open: false, name: '' });
+    const presetSummary = computed(() => {
+      const slots = data.slots || [];
+      const pools = slots.filter(s => s.t === 'pool');
+      return {
+        items: slots.filter(s => s.t === 'item').length,
+        rnd: pools.filter(s => !s.traverse).map(s => poolLabelOfSlot(s)),
+        trav: pools.filter(s => s.traverse).map(s => poolLabelOfSlot(s)),
+        count: Math.max(1, Number(pref.genCount) || 0),
+        fill: !!data.fillMode,
+        total: slots.length,
+      };
+    });
+    const presetDefaultName = () => {
+      const d = new Date();
+      const p2 = (n) => String(n).padStart(2, '0');
+      return '方案 ' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+    };
+    const openPresetDlg = () => {
+      if (!data.slots.length) {
+        return showToast('还没有已选内容：先点卡片加提示词，或右键 tab / chip 加入池子再保存', 'warn', 3400);
+      }
+      presetDlg.name = presetDefaultName();
+      presetDlg.open = true;
+    };
+    const closePresetDlg = () => { presetDlg.open = false; };
+    const submitPresetSave = () => {
+      const nm = (presetDlg.name || '').trim();
+      if (!nm) return showToast('请先给方案起个名字', 'warn', 2600);
+      // TODO(接线)：POST /zhule_studio/api/preset/save { kind:'bank', name:nm, payload:{slots,genCount,fillMode} }
+      const payload = { slots: serializeSlots(), genCount: Math.max(1, Number(pref.genCount) || 0), fillMode: !!data.fillMode };
+      zhuleLog('submitPresetSave', 'name=', nm, 'total=', payload.slots.length, 'genCount=', payload.genCount, payload);
+      showToast('设计预览：「' + nm + '」结构校验通过（' + payload.slots.length + ' 项 / 次数 ' + payload.genCount
+        + '），接入 preset 表后即可真正落库', 'success', 5200);
+      presetDlg.open = false;
+    };
+
     // 「清空」= 一键复位：已选提示词清空 + 随机池清空（否则上方 tab/chip 仍留着 in-pool 选中样式）
     // + 运行次数归零（次数输入框同步回 0，pref 走 watch 自动落 localStorage）
     const clearAll = () => {
@@ -5568,7 +5727,7 @@ const submitAddTab = async () => {
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,
-      chipLines, filteredFiles, previewText,
+      chipLines, filteredFiles, previewChunks, previewRemoved, previewNegChunks, fillPreviewTip,
       // 搜索：listFiles = 列表唯一出口（有搜索词走搜索结果，无词走分类浏览）
       listFiles, searchText, searchScope, searchQ, searching, searchOpen, searchClosing, searchInputEl, openSearch, onSearchBlur, closeSearchBox, searchAllLoading, searchLoading, searchFailed,
       showCardTab, cardTabLabel,
@@ -5604,7 +5763,7 @@ const submitAddTab = async () => {
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
       onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef, onCardToCategory,
       catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
-      previewNegText, toggleNegPreview, bankNodes, nodeOfCat,
+      toggleNegPreview, bankNodes, nodeOfCat,
       canAddChip, chipParentLabel, addCardIsTxt,
       chipThemeClass, chipStyle,
       addChipOpen, addChipName, addChipDepth, addChipInput, addingChip, openAddChip, closeAddChip, submitAddChip,
@@ -5621,6 +5780,7 @@ const submitAddTab = async () => {
       prevImage, nextImage, randomImage, goToGallery,
       viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
+    presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,

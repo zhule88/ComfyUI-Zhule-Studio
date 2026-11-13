@@ -2097,6 +2097,51 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .pv-neg-toggle:hover { color: var(--text); border-color: #3d4c63; }
 .pv-neg-toggle.on { color: #ffb3b3; border-color: #7a2626; background: rgba(229, 72, 77, 0.12); }
 .preview.neg { background: rgba(229, 72, 77, 0.13); border-color: rgba(229, 72, 77, 0.38); color: #ffd6d6; }
+/* 预览流：以提示词为主干，池子作为「段」嵌在句子里并挂徽标（不再整块替换预览） */
+.pv-flow { flex: 1 1 auto; min-width: 0; }
+.pv-sep { color: var(--text-3); }
+.pv-empty { color: var(--text-3); }
+.pv-removed { margin-left: 6px; color: #ffd7a3; font-size: 11px; }
+.pv-pool {
+  display: inline-flex; align-items: center; gap: 3px; vertical-align: baseline;
+  padding: 0 5px; margin: 0 1px; border-radius: 4px;
+  border: 1px dashed; font-size: 11.5px; line-height: 1.6;
+}
+/* 🎲 随机池：橙；♾️ 遍历池：紫。与 tab/chip 上 in-pool-random / in-pool 配色保持同一语言 */
+.pv-pool-random { color: #ffcf8a; border-color: rgba(255, 184, 107, 0.55); background: rgba(255, 168, 76, 0.12); }
+.pv-pool-traverse { color: var(--purple); border-color: rgba(167, 139, 250, 0.55); background: rgba(167, 139, 250, 0.13); }
+.pv-pool-ph { opacity: 0.75; }
+.pv-pool-badge { font-size: 10px; line-height: 1; }
+.pv-pool-label { font-weight: 600; }
+.pv-pool-word { color: inherit; opacity: 0.92; }
+.preview.neg .pv-pool-random { color: #ffcf8a; border-color: rgba(255, 184, 107, 0.45); background: rgba(255, 168, 76, 0.10); }
+/* 填充模式 ⏩：只作为预览框右侧的徽标提示，正文照常显示已选词 */
+.pv-fill {
+  flex-shrink: 0; margin-left: auto; padding: 1px 6px; font-size: 11px;
+  color: #ffcf8a; border: 1px dashed rgba(255, 184, 107, 0.6); border-radius: 6px;
+  background: rgba(255, 168, 76, 0.12); cursor: help;
+}
+.pv-fill + .pv-neg-toggle { margin-left: 0; }
+
+/* 保存方案弹窗 */
+.preset-dialog { width: 560px; max-width: 92vw; }
+.preset-dialog .preset-badge {
+  margin-left: 8px; padding: 1px 7px; font-size: 10.5px; font-weight: 400;
+  color: #ffcf8a; border: 1px dashed rgba(255, 184, 107, 0.6); border-radius: 999px;
+  background: rgba(255, 168, 76, 0.12);
+}
+.preset-sec-title { margin: 12px 0 6px; font-size: 11.5px; color: var(--text-3); letter-spacing: 0.3px; }
+.preset-list { border: 1px solid var(--border); border-radius: 8px; background: #10151d; overflow: hidden; }
+.preset-row { display: flex; gap: 10px; padding: 7px 10px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.preset-row:last-child { border-bottom: none; }
+.preset-k { flex-shrink: 0; width: 68px; color: var(--text-3); }
+.preset-v { flex: 1 1 auto; min-width: 0; color: var(--text); word-break: break-all; }
+.preset-flow {
+  margin-top: 10px; padding: 8px 10px; max-height: 84px; overflow-y: auto;
+  background: rgba(79, 143, 247, 0.10); border: 1px solid rgba(79, 143, 247, 0.30);
+  border-radius: 6px; color: #cfe1ff; font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.6; word-break: break-all;
+}
 
 /* 编辑分类弹层里的负向 / 排除字段，与词条弹层同一套配色 */
 .edit-dialog .field.neg > label,
