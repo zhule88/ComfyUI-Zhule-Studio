@@ -937,9 +937,9 @@ export default {
                 <span class="pc-sub">次数 {{ p.genCount }}{{ p.fillMode ? ' · ⏩ 填充' : '' }}</span>
                 <div class="pc-ops">
                   <button class="btn primary" @click="applyPreset(p)"
-                          data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">{{ pcBtnText(p, 'apply', '应用') }}</button>
+                          data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">应用</button>
                   <button class="btn danger" @click="deletePreset(p)"
-                          data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">{{ pcBtnText(p, 'delete', '删除') }}</button>
+                          data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">删除</button>
                 </div>
               </div>
             </div>
@@ -4747,10 +4747,8 @@ const submitAddTab = async () => {
     // 语义完全靠 serializeSlots / rebuildSlots 两端对齐（顺带把「池子与提示词同数组」的顺序一起带走）。
     const PRESET_KIND = 'bank';
     const presetDlg = reactive({ open: false, name: '', saving: false });
-    // pending：载入 / 删除的内联二次确认（同一张卡再点一次才生效），不弹二层框打断浏览
     const presetCtr = reactive({
       open: false, list: [], loading: false, q: '', renaming: 0, renameText: '',
-      pending: 0, pendingKind: '',   // pending 只是「同一张卡再点一次」，必须带操作类型才不会串（点应用再点删除不算确认）
       w: 72, h: 64,                  // 面板尺寸（vw / vh），右下握把可拖，尺寸持久化
     });
 
@@ -4797,9 +4795,6 @@ const submitAddTab = async () => {
       document.addEventListener('mousemove', onPresetResizeMove);
       document.addEventListener('mouseup', onPresetResizeUp);
     };
-
-    // 三种操作共用 pending：按钮文案按「操作类型 + 卡片 id」一起判定，点应用不再是删除的确认
-    const pcBtnText = (p, kind, base) => (presetCtr.pending === p.id && presetCtr.pendingKind === kind ? '确认' + base : base);
 
     const presetSummary = computed(() => {
       const slots = data.slots || [];
@@ -4901,8 +4896,6 @@ const submitAddTab = async () => {
     const closePresetCenter = () => {
       presetCtr.open = false;
       presetCtr.renaming = 0;
-      presetCtr.pending = 0;
-      presetCtr.pendingKind = '';
     };
 
     const openPresetDlg = () => {
@@ -4956,8 +4949,6 @@ const submitAddTab = async () => {
     // 一次点击即替换当前「已选」，不再走二次确认（用户明确要求直接点一下就行）
     const applyPreset = async (p) => {
       if (!p) return;
-      presetCtr.pending = 0;
-      presetCtr.pendingKind = '';
       try {
         const resp = await fetch('/zhule_studio/api/preset/get?pid=' + encodeURIComponent(p.id));
         const json = await resp.json();
@@ -5024,33 +5015,37 @@ const submitAddTab = async () => {
       }
     };
 
-    // 删除预设：同样两道点击。只删预设记录，词库 / 图库里的东西一个不碰
+    // 删除预设：与图库图片 / 图库标签 / 词库词条共用同一套删除确认（deleteConfirm.js）。
+    // 不再做「同一张卡再点一次」的内联确认——那是本页自造的第三种交互；
+    // 现在一律按设置里的「删除免确认」（zhule_ui_pref.common.noDeleteConfirm）：
+    //   开 = 点一下就删（不弹框）；关 = 弹统一的确认框，确认后才删。
+    // 只删预设记录，词库词条与图库图片一个都不碰。
     const deletePreset = async (p) => {
       if (!p) return;
-      if (!(presetCtr.pending === p.id && presetCtr.pendingKind === 'delete')) {
-        presetCtr.pending = p.id;
-        presetCtr.pendingKind = 'delete';
-        showToast('再点一次「删除」就删掉预设「' + p.name + '」（只删预设记录，不动词库）', 'warn', 3400);
-        return;
-      }
-      presetCtr.pending = 0;
-      presetCtr.pendingKind = '';
-      try {
-        const resp = await fetch('/zhule_studio/api/preset/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pid: p.id }),
-        });
-        const json = await resp.json();
-        if (!resp.ok || json.error) {
-          showToast(json.error || '删除失败', 'error');
-          return;
-        }
-        presetCtr.list = (presetCtr.list || []).filter(x => x.id !== p.id);
-        showToast('已删除预设「' + p.name + '」', 'success', 2800);
-      } catch (e) {
-        showToast('删除失败：' + e.message, 'error');
-      }
+      await del.ask({
+        title: '确认删除预设',
+        message: '只删除这份预设记录，词库里的词条、图库里的图片都不动。',
+        name: p.name,
+        run: async () => {
+          try {
+            const resp = await fetch('/zhule_studio/api/preset/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pid: p.id }),
+            });
+            const json = await resp.json();
+            if (!resp.ok || json.error) {
+              // run 里不往外抛：确认框只管「确认/取消」，失败原因用 toast 说清
+              showToast(json.error || '删除失败', 'error');
+              return;
+            }
+            presetCtr.list = (presetCtr.list || []).filter(x => x.id !== p.id);
+            showToast('已删除预设「' + p.name + '」', 'success', 2800);
+          } catch (e) {
+            showToast('删除失败：' + (e.message || ''), 'error');
+          }
+        },
+      });
     };
 
     // 「清空」= 一键复位：已选提示词清空 + 随机池清空（否则上方 tab/chip 仍留着 in-pool 选中样式）
@@ -6149,7 +6144,7 @@ const submitAddTab = async () => {
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
       applyPreset, deletePreset, presetThumbUrl, jumpPresetGallery, enablePresetPrompt,
-      startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize, pcBtnText,
+      startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,
