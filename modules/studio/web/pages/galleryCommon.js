@@ -1139,6 +1139,51 @@ export function useGalleryCommon(opts = {}) {
       return true;
     });
   });
+  // 图库详情「保存」：把这张图的提示词标签组合直接存成一份词库预设（preset 表 kind=bank），
+  // 不用切到词库页重新一个个点。只存词条类标签——自定义标签是图库自己的分组，词库里没有对应词条，
+  // 硬塞进去「应用」时会被丢掉。名字取图片名主干，同一张图重复保存即覆盖同名预设，不堆垃圾条目。
+  const detailPresetSaving = ref(false);
+  async function saveDetailPreset() {
+    const d = detail.value;
+    if (!d || detailPresetSaving.value) return;
+    const names = [];
+    const seen = new Set();
+    (d.tags || []).forEach((t) => {
+      if (!t || !t.prompt) return;
+      const n = String(t.name || '').trim();
+      if (!n || seen.has(n)) return;
+      seen.add(n);
+      names.push(n);
+    });
+    if (!names.length) {
+      showToast('这张图没有词条类标签，存成预设后应用回词库会是空的', 'warn');
+      return;
+    }
+    const base = String(d.name || '').replace(/\.[^.]+$/, '') || '图库预设';
+    const slots = names.map((n) => ({ t: 'item', name: n, chance: 100, lock: false }));
+    detailPresetSaving.value = true;
+    try {
+      const resp = await fetch('/zhule_studio/api/preset/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'bank',
+          name: base,
+          payload: { slots: slots, genCount: 1, fillMode: false },
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || json.error) {
+        showToast(json.error || '保存预设失败', 'error');
+        return;
+      }
+      showToast('已存为预设「' + base + '」（' + slots.length + ' 标签），可在词库预设中心改名 / 应用', 'success');
+    } catch (e) {
+      showToast('保存预设失败：' + (e.message || ''), 'error');
+    } finally {
+      detailPresetSaving.value = false;
+    }
+  }
   // 自定义标签：按 '测试/喜欢' 完整路径还原为层级树（父'测试'下挂子'喜欢'），置于提示词标签之后。
   // 树节点复用详情标签对象：叶子携带 tag/style，中间层级为纯容器（isGroup）。
   const customDetailTree = computed(() => {
@@ -2278,6 +2323,7 @@ export function useGalleryCommon(opts = {}) {
     leafName, cardTags,
     tagKey, tagList,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, tagThemeClass, addDetailTagToFilter,
+    saveDetailPreset, detailPresetSaving,
     copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,

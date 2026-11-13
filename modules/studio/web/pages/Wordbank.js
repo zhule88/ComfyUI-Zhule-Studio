@@ -885,15 +885,13 @@ export default {
               <input v-model="presetCtr.q" class="pc-search" placeholder="搜预设名 / 标签 / 池名" spellcheck="false">
               <button class="btn" style="padding:4px 10px;font-size:12px;" @click="refreshPresetList"
                       :disabled="presetCtr.loading" data-tip="重新读取预设列表">↻</button>
-              <button class="btn" style="padding:4px 10px;font-size:12px;" @click="openPresetDlgFromCenter"
-                      data-tip="把当前「已选」这一整套存成新预设">💾 存当前</button>
               <button class="btn icon-btn" @click="closePresetCenter" data-tip="关闭">✕</button>
             </div>
           </div>
           <div v-if="presetCtr.loading && !presetCtr.list.length" class="pc-empty">读取中…</div>
           <div v-else-if="!presetFiltered.length" class="pc-empty">
             <template v-if="presetCtr.list.length">没有匹配「{{ presetCtr.q }}」的预设</template>
-            <template v-else>还没有存过预设。先把标签 / 池子选好，点右上「💾 存当前」把这一套存下来。</template>
+            <template v-else>还没有存过预设。先把标签 / 池子选好，点右下「💾 保存」把这一套存下来。</template>
           </div>
           <div v-else class="pc-grid">
             <div v-for="p in presetFiltered" :key="p.id" class="pc-card">
@@ -904,7 +902,8 @@ export default {
                        @keydown.esc="cancelPresetRename" @blur="commitPresetRename(p)">
                 <span v-else class="pc-name" :title="p.name + '（双击改名）'"
                       @dblclick="startPresetRename(p)">{{ p.name }}</span>
-                <span class="pc-items">{{ p.items }} 标签</span>
+                <!-- 计数按「标签 + 池子」合计：池子在用户语境里本身就是一枚标签，不该被漏掉 -->
+                <span class="pc-items">{{ (p.flow || []).length }} 标签</span>
               </div>
               <!-- 完整标签 + 池子，按出图顺序铺开；标签（灰）与池（橙/紫）同层并列 -->
               <div class="pc-tags">
@@ -923,8 +922,6 @@ export default {
                 <div class="pc-ops">
                   <button class="btn primary" @click="applyPreset(p)"
                           data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">{{ pcBtnText(p, 'apply', '应用') }}</button>
-                  <button class="btn" @click="overwritePreset(p)"
-                          data-tip="用当前「已选」整套改写这份预设（名字不变，原内容被替换）">{{ pcBtnText(p, 'overwrite', '改写') }}</button>
                   <button class="btn danger" @click="deletePreset(p)"
                           data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">{{ pcBtnText(p, 'delete', '删除') }}</button>
                 </div>
@@ -1340,12 +1337,21 @@ export default {
           out.push(o);
           continue;
         }
-        if (!s.tab || !s.relPath) continue;
-        const card = (bankData.value[s.tab] || []).find(c => c.relPath === s.relPath);
+        // 只带名字的槽位（如「图库详情 → 💾 保存」落库的预设，图库那边拿不到词库的 tab/relPath）：
+        // 全库按名精确匹配补回定位；同名多条取第一条，实在找不到才丢弃，避免整份预设应用成空。
+        let sTab = s.tab;
+        let sRel = s.relPath;
+        if ((!sTab || !sRel) && s.name) {
+          const hitTab = Object.keys(bankData.value).find(t => (bankData.value[t] || []).some(c => c && c.name === s.name));
+          const hitCard = hitTab ? (bankData.value[hitTab] || []).find(c => c && c.name === s.name) : null;
+          if (hitCard) { sTab = hitTab; sRel = hitCard.relPath; }
+        }
+        if (!sTab || !sRel) continue;
+        const card = (bankData.value[sTab] || []).find(c => c.relPath === sRel);
         if (card) {
-          out.push({ t: 'item', tab: s.tab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+          out.push({ t: 'item', tab: sTab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
         } else {
-          out.push({ t: 'item', tab: s.tab, relPath: s.relPath, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+          out.push({ t: 'item', tab: sTab, relPath: sRel, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
         }
       }
       return out;
@@ -4858,10 +4864,8 @@ const submitAddTab = async () => {
       presetDlg.open = true;
       refreshPresetList();   // 顺带把同名检测所需的现有名单取回
     };
-    // 预设中心里「存当前」：先收起中心，弹回保存框（存完再回中心）
-    const openPresetDlgFromCenter = () => {
-      openPresetDlg();
-    };
+    // 预设中心里不再提供「把当前已选存成新预设」的入口：保存只走工具栏的 💾 保存，
+    // 中心只负责「应用 / 改名 / 删除」三件事，入口单一才不会两边打架。
     const closePresetDlg = () => { presetDlg.open = false; };
 
     const presetPayloadNow = () => ({
@@ -4932,39 +4936,6 @@ const submitAddTab = async () => {
         closePresetCenter();
       } catch (e) {
         showToast('应用预设失败：' + e.message, 'error');
-      }
-    };
-
-    // 改写：用当前「已选」替换这份预设的内容，名字 / 图库关联都不动
-    const overwritePreset = async (p) => {
-      if (!p) return;
-      if (!data.slots || !data.slots.length) {
-        return showToast('当前没有已选内容，没什么可覆盖的', 'warn', 2800);
-      }
-      if (!(presetCtr.pending === p.id && presetCtr.pendingKind === 'overwrite')) {
-        presetCtr.pending = p.id;
-        presetCtr.pendingKind = 'overwrite';
-        showToast('再点一次「改写」就用当前已选（' + data.slots.length + ' 项）替换「' + p.name + '」原来的内容', 'warn', 3400);
-        return;
-      }
-      presetCtr.pending = 0;
-      presetCtr.pendingKind = '';
-      try {
-        const resp = await fetch('/zhule_studio/api/preset/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // pid + 原 gallery_id：db.preset_save 收到 gallery_id=None 会清空关联，这里必须原样带回去
-          body: JSON.stringify({ kind: PRESET_KIND, name: p.name, pid: p.id, gallery_id: p.gallery_id, payload: presetPayloadNow() }),
-        });
-        const json = await resp.json();
-        if (!resp.ok || json.error) {
-          showToast(json.error || '改写失败', 'error');
-          return;
-        }
-        showToast('已用当前已选改写「' + p.name + '」', 'success', 3200);
-        refreshPresetList();
-      } catch (e) {
-        showToast('改写失败：' + e.message, 'error');
       }
     };
 
@@ -6120,7 +6091,7 @@ const submitAddTab = async () => {
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      openPresetDlgFromCenter, applyPreset, overwritePreset, deletePreset,
+      applyPreset, deletePreset,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize, pcBtnText,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

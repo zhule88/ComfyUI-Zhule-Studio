@@ -226,7 +226,11 @@ export default {
               </div></div>
 
             <div class="zhg-detail-section">
-              <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span></div>
+              <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span>
+                <!-- 标签计数右边就地存预设：这张图的词条标签组合一键落成词库预设，省得回词库重选一遍 -->
+                <button class="zhg-detail-save" :disabled="detailPresetSaving" @click.stop="saveDetailPreset"
+                        data-tip="把这套提示词标签存成一份词库预设（可在词库「预设中心」里改名 / 一键应用）">💾 保存</button>
+              </div>
               <div class="zhg-detail-row">
                 <div class="zhg-detail-tags">
                   <!-- 提示词标签（词库词条）在前：只读，左键放入筛选区并启用、右键编辑词条 -->
