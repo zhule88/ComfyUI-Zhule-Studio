@@ -3199,6 +3199,9 @@ export default {
     const healSelectedIds = () => {
       let fixed = 0;
       for (const s of data.slots) {
+        // 槽位类型标记自愈：历史存档或老拖拽路径建出来的词条槽可能没有 t，
+        // 预览/统计/预设按 t 分流时会把它当不存在，这里统一补回 'item'（池槽自带 'pool' 不动）
+        if (s && !s.t) s.t = 'item';
         if (s.id) continue;
         const cards = bankData.value[s.tab] || [];
         const f = cards.find(x => x.relPath === s.relPath);
@@ -3257,15 +3260,18 @@ export default {
       const nodes = [];
       for (const s of (data.slots || [])) {
         if (!s) continue;
-        if (s.t === 'item') {
-          nodes.push({ type: 'item', src: resolveVgForPreview(s) });
-        } else if (s.t === 'pool') {
+        // 判定口径与运行时 arrangeBySelection 严格一致：只有 pool 走池分支，其余一律当词条。
+        // 绝不能写 s.t === 'item'——槽位是历史数据/新建对象混着来的，漏 t 就会被预览整条丢掉，
+        // 而池子自带 t:'pool' 照旧生效，症状就是「加词条预览没反应、只有池子还有效果」。
+        if (s.t === 'pool') {
           nodes.push({
             type: 'pool',
             label: poolLabelOfSlot(s),
             mode: s.traverse ? 'traverse' : 'random',
             src: s.picked ? resolveVgForPreview(slotData(s)) : null,
           });
+        } else {
+          nodes.push({ type: 'item', src: resolveVgForPreview(s) });
         }
       }
       // 展开父级分类继承；排除词只删「别的词条」产出的段，永远不删自己
@@ -5969,7 +5975,7 @@ const submitAddTab = async () => {
           else t = fromIdx < idx ? idx : idx + 1;
           data.slots.splice(t, 0, moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
+          const item = { t: 'item', tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           const existIdx = data.slots.findIndex(s => sameCard(s, item));
           let targetIdx = idx;
           if (existIdx >= 0) {
@@ -5987,7 +5993,7 @@ const submitAddTab = async () => {
           const [moved] = data.slots.splice(p.sourceIdx, 1);
           data.slots.push(moved);
         } else {
-          const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
+          const item = { t: 'item', tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           if (data.slots.some(s => sameCard(s, item))) return;
           data.slots.push(item);
         }
@@ -6002,7 +6008,7 @@ const submitAddTab = async () => {
         const target = rel ? listFiles.value.find(x => x.relPath === rel && (!tabAttr || String(x.tab || '') === tabAttr)) : null;
         if (!target) return;
         const targetIdx = data.slots.findIndex(s => sameCard(s, target));
-        const item = { tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
+        const item = { t: 'item', tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
         if (targetIdx >= 0) {
           data.slots.splice(targetIdx, 1, item);
         } else {
@@ -6016,6 +6022,10 @@ const submitAddTab = async () => {
       const idx = data.slots.findIndex(s => sameCard(s, file));
       if (idx >= 0) data.slots.splice(idx, 1);
       else data.slots.push({
+        // t 是槽位类型标记，buildPreviewFlow / allItems / 预设统计全按它分流：
+        // 早先这里漏了 t，新点进来的词条在预览框里被当成「既不是 item 也不是 pool」整条跳过，
+        // 表现成「点一下加进已选，预览框一个字都不写，只有池子还有效果」。
+        t: 'item',
         tab: file.tab || data.activeTab, relPath: file.relPath, id: file.id || '', name: file.name,
         content: file.content, content_cn: file.content_cn,
         neg: file.neg || '', override: file.override || '',
