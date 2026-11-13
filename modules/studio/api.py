@@ -1126,6 +1126,9 @@ def _preset_card_brief(payload):
             flow.append({
                 "t": "tag",
                 "label": label,
+                # 词条 id 随卡片一起走：预设中心「跳图库 / 启用这套提示词」按 id 筛选，
+                # 改名后不失效（与落库、应用全链路一致，一律只用 id）
+                "id": str(s.get("id") or "").strip(),
                 "chance": int(s.get("chance") or 100),
                 "lock": bool(s.get("lock")),
             })
@@ -1253,6 +1256,7 @@ async def get_preset_rows(request):
             "name": rec.get("name"),
             "gallery_id": rec.get("gallery_id"),
             "gallery_name": rec.get("gallery_name"),
+            "gallery_mtime": rec.get("gallery_mtime") or 0,
             **brief,
         })
     return web.json_response({"ok": True, "presets": out})
@@ -1291,7 +1295,10 @@ async def post_preset_save(request):
     if not isinstance(payload, dict) or not isinstance(payload.get("slots"), list):
         return web.json_response({"error": "payload.slots 必须是数组"}, status=400)
     kind = (body.get("kind") or PRESET_KIND_DEFAULT).strip() or PRESET_KIND_DEFAULT
-    pid = db.preset_save(kind, name, payload, body.get("gallery_id"), body.get("pid"))
+    # body 里没有 gallery_id 键 = 这次保存跟配图无关（词库页保存预设），
+    # 不能当成「清空配图」，否则覆盖同名预设会把图库带过来的图抹掉
+    pid = db.preset_save(kind, name, payload, body.get("gallery_id"), body.get("pid"),
+                         gallery_touch=("gallery_id" in body))
     if pid is None:
         return web.json_response({"error": "保存失败"}, status=500)
     rec = db.preset_get(pid) or {}

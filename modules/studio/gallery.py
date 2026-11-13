@@ -1615,6 +1615,8 @@ async def get_gallery_detail(request):
                      "cn": _tag_cn(leaf), "en": _tag_en(leaf)})
     pt = rec.get("prompt") or ""
     data = {
+        # 行主键：图库详情「保存预设」要把它写成 preset.gallery_id（配图关联只认 id）
+        "id": int(rec.get("id") or 0),
         "path": rel,
         "name": rec.get("name") or os.path.basename(rel.replace("/", os.sep).replace("\\", os.sep)),
         "mtime": int(rec.get("mtime") or 0),

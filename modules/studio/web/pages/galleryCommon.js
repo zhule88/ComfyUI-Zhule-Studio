@@ -1170,14 +1170,20 @@ export function useGalleryCommon(opts = {}) {
         if (it.id) slot.id = it.id;
         return slot;
       });
+      const gid = (d.id != null && d.id !== '' && Number(d.id) > 0) ? Number(d.id) : null;
+      const bodyObj = {
+        kind: 'bank',
+        name: base,
+        payload: { slots: slots, genCount: 1, fillMode: false },
+      };
+      // 配图关联只写行 id（gallery_image.id）：图可在图库里改名，id 才是行身份。
+      // 没有 id 就整个键都不发 —— 后端把「无 gallery_id 键」当作「这次保存跟图无关」，
+      // 不会拿它去清空已存的配图；传 null 才是显式解绑。
+      if (gid) bodyObj.gallery_id = gid;
       const resp = await fetch('/zhule_studio/api/preset/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: 'bank',
-          name: base,
-          payload: { slots: slots, genCount: 1, fillMode: false },
-        }),
+        body: JSON.stringify(bodyObj),
       });
       const json = await resp.json();
       if (!resp.ok || json.error) {
@@ -1185,6 +1191,7 @@ export function useGalleryCommon(opts = {}) {
         return;
       }
       showToast('已存为预设「' + base + '」（' + slots.length + ' 标签' +
+        (gid ? '，含配图' : '，未关联配图') +
         (noId ? '，其中 ' + noId + ' 个标签缺词条 id，应用时可能定位不到' : '') +
         '），可在词库预设中心改名 / 应用', noId ? 'warn' : 'success');
     } catch (e) {
@@ -2282,42 +2289,55 @@ export function useGalleryCommon(opts = {}) {
     window.addEventListener('zhule-pref-changed', onPrefChanged);
     if (opts.onMountedExtra) opts.onMountedExtra();
     const q = route.query.tags;
-    let pendingTagId = null;
+    // 待按 id 回填显示名的标签（纯数字 = 词条 id，标签树加载完再补 name / rel / 域）
+    const pendingTagIds = [];
     if (q) {
-      const first = String(q).split(',').filter(Boolean)[0];
-      if (first) {
-        // 词库跳转：不覆盖已有标签，新标签生效并取消其它标签的选中状态（仅新标签生效）。
-        // 纯数字 = 词条 id（词库箭头跳转）：先按 id 筛选，显示名等标签树加载后再回显
+      // 多标签：预设中心「启用这套提示词」会把整份预设的 id 用逗号串起来传进来，
+      // 全部放进筛选区并启用；单词条跳转（词库箭头）只是这个形式只有一段的特例。
+      const parts = String(q).split(',').map((x) => x.trim()).filter(Boolean);
+      if (parts.length) {
+        // 词库/预设跳转：不覆盖已有标签，新标签生效并取消其它标签的选中状态（仅新标签生效）
         for (const t of tagMap.values()) patchTag(t, { active: false });
-        const isId = /^\d+$/.test(first);
-        if (isId) pendingTagId = first;
-        const info = isId
-          ? { id: first, name: first, rel: '', kind: 'prompt' }
-          : { name: first, rel: '', kind: 'prompt' };
-        // 命中已有条目就复用并激活（本地点过、再被词库跳转带进来时不会再多出一条），取不到才新建
-        const exist = findTagEntry(info) || upsertTag(info);
-        patchTag(exist, { active: true, hidden: false, inner: false });
+        const seen = new Set();
+        for (const one of parts) {
+          if (seen.has(one)) continue;
+          seen.add(one);
+          const isId = /^\d+$/.test(one);
+          if (isId) pendingTagIds.push(one);
+          const info = isId
+            ? { id: one, name: one, rel: '', kind: 'prompt' }
+            : { name: one, rel: '', kind: 'prompt' };
+          // 命中已有条目就复用并激活（本地点过、再被跳转带进来时不会再多出一条），取不到才新建
+          const exist = findTagEntry(info) || upsertTag(info);
+          patchTag(exist, { active: true, hidden: false, inner: false });
+        }
       }
     }
     const qm = String(route.query.mode || 'and').toLowerCase();
     if (qm === 'or') filters.tagMode = 'or';
     ensureTagTree().then(() => {
-      if (!pendingTagId) return;
-      const nm = tagIdNameMap.value[pendingTagId];
-      // 按 id 反查（此时条目的键可能已被 backfill 迁移过），限定提示词域避免与自定义 id 撞号
-      const t = tagList.value.find((x) => String(x.id || '') === pendingTagId && x.kind !== 'custom');
-      if (!t) return;
-      // 跳转只带 id，rel/域信息缺失：用标签树 meta 补齐，否则父子祖先判断（tagAncestorOf）对这条失效
-      const m = tagKidMeta.value[t.rel || t.name || nm] || (nm ? tagKidMeta.value[nm] : null);
-      const patch = {};
-      if (nm && t.name !== nm) patch.name = nm;
-      if (!t.rel && m && m.rel) patch.rel = m.rel;
-      if (!t.kind && m) patch.kind = m.isCustom ? 'custom' : 'prompt';
-      if (Object.keys(patch).length) patchTag(t, patch);
+      if (!pendingTagIds.length) return;
+      for (const pendingTagId of pendingTagIds) {
+        const nm = tagIdNameMap.value[pendingTagId];
+        // 按 id 反查（此时条目的键可能已被 backfill 迁移过），限定提示词域避免与自定义 id 撞号
+        const t = tagList.value.find((x) => String(x.id || '') === pendingTagId && x.kind !== 'custom');
+        if (!t) continue;
+        // 跳转只带 id，rel/域信息缺失：用标签树 meta 补齐，否则父子祖先判断（tagAncestorOf）对这条失效
+        const m = tagKidMeta.value[t.rel || t.name || nm] || (nm ? tagKidMeta.value[nm] : null);
+        const patch = {};
+        if (nm && t.name !== nm) patch.name = nm;
+        if (!t.rel && m && m.rel) patch.rel = m.rel;
+        if (!t.kind && m) patch.kind = m.isCustom ? 'custom' : 'prompt';
+        if (Object.keys(patch).length) patchTag(t, patch);
+      }
     });
     // 首次进入立即加载列表与元数据；不做自动探活/自动刷新，需要最新数据时手动刷新页面
     loadMeta();
     applyFilter();
+    // 预设中心「跳图库」带 ?open=<图库相对路径>：进来就把那张图的详情摊开，
+    // 不用再去网格里翻找（路径是图库定位字段，与详情接口 ?path= 一致）
+    const openPath = String(route.query.open || '').trim();
+    if (openPath) openDetailByPath(openPath);
   });
   onBeforeUnmount(() => {
     window.removeEventListener('zhule-pref-changed', onPrefChanged);

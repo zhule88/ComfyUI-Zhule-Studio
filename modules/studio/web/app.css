@@ -2219,14 +2219,33 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .pc-card {
   display: flex; flex-direction: column; gap: 9px;
-  padding: 12px; background: #171f2b;
+  /* 上缘留给配图，左右内边距下沉到 head / tags / foot 各自身上（图要通栏贴边） */
+  padding: 0; background: #171f2b;
   border: 1px solid #2c3a4e; border-radius: 10px;
-  height: 196px;            /* 定高：head + 标签区 + foot 的固定三段，标签多了就在区内滚 */
+  /* 定高：配图 + head + 标签区 + foot 的固定四段，标签多了只在标签区内滚 */
+  height: 300px;
   align-self: start;
+  overflow: hidden;
   transition: border-color 0.15s, transform 0.15s;
 }
+/* 配图主视觉：图库详情保存预设时带过来的那张图（preset.gallery_id → gallery_image） */
+.pc-thumb {
+  position: relative; flex: 0 0 auto; height: 96px; overflow: hidden;
+  background: #0e141c; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.pc-thumb-img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  transition: transform 0.2s;
+}
+.pc-thumb:hover .pc-thumb-img { transform: scale(1.04); }
+.pc-thumb:hover { box-shadow: inset 0 0 0 1px rgba(79, 143, 247, 0.5); }
+.pc-thumb-none {
+  font-size: 11.5px; color: var(--text-3); letter-spacing: 0.5px;
+  border: 1px dashed #2c3a4e; border-radius: 8px; padding: 6px 12px;
+}
 .pc-card:hover { border-color: rgba(79, 143, 247, 0.5); transform: translateY(-1px); }
-.pc-card-head { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+.pc-card-head { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; padding: 10px 12px 0; }
 .pc-name {
   flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text;
@@ -2241,7 +2260,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .pc-tags {
   display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  padding-right: 2px;
+  padding: 0 12px 0 12px;
 }
 .pc-tags::-webkit-scrollbar { width: 6px; }
 .pc-tags::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
@@ -2260,11 +2279,18 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .pc-tag-item .pc-tag-label { font-weight: 500; }
 .pc-tag-none { font-size: 11.5px; color: var(--text-3); align-self: center; }
 .pc-foot {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  padding-top: 9px; border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
+  margin: 0 12px 12px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .pc-sub { font-size: 11px; color: var(--text-3); white-space: nowrap; }
-.pc-ops { margin-left: auto; display: flex; gap: 5px; }
+.pc-ops { margin-left: auto; display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+/* 图库联动入口行（启用提示词 / 一览图库）：独立一行，别跟应用/删除挤在 foot 里折行 */
+.pc-links {
+  display: flex; gap: 5px; flex-shrink: 0; padding: 0 12px;
+}
+.pc-links .btn {
+  flex: 1 1 0; padding: 3px 6px; font-size: 11.5px; white-space: nowrap;
+}
 /* 卡片按钮都不许被 flex 压扁：早先「删」被挤成半个字，就是缺 nowrap + flex-shrink:0 */
 .pc-ops .btn { padding: 3px 9px; font-size: 11.5px; white-space: nowrap; flex: 0 0 auto; }
 

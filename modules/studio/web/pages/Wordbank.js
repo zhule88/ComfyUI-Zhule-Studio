@@ -895,6 +895,15 @@ export default {
           </div>
           <div v-else class="pc-grid">
             <div v-for="p in presetFiltered" :key="p.id" class="pc-card">
+              <!-- 配图：图库详情💾保存的预设带着来源图（preset.gallery_id → 图库行 id）。
+                   没有图的话一排预设只靠名字根本分不清是哪张图出的，所以图放卡片最上面当主视觉；
+                   点图直接跳图库并把这张图的详情摊开。图被删/改名取不到路径时按「无配图」降级，不冒充别人的图。 -->
+              <div class="pc-thumb" @click="jumpPresetGallery(p)"
+                   :data-tip="p.gallery_name ? '跳转图库查看这张图' : '这份预设没有关联配图（词库页保存的预设不带图）'">
+                <img v-if="p.gallery_name" class="pc-thumb-img" :src="presetThumbUrl(p)"
+                     :alt="p.gallery_name" loading="lazy">
+                <span v-else class="pc-thumb-none">🖼 无配图</span>
+              </div>
               <div class="pc-card-head">
                 <!-- 卡片内改名：双击名字就地改，不弹二层框 -->
                 <input v-if="presetCtr.renaming === p.id" class="pc-name-input" v-model="presetCtr.renameText"
@@ -906,6 +915,13 @@ export default {
                 <span class="pc-items">{{ (p.flow || []).length }} 标签</span>
               </div>
               <!-- 完整标签 + 池子，按出图顺序铺开；标签（灰）与池（橙/紫）同层并列 -->
+              <!-- 图库联动入口：一个按预设的标签去图库里看「这套词能出什么图」，一个直接看这份预设的来源图 -->
+              <div class="pc-links">
+                <button class="btn" @click="enablePresetPrompt(p)"
+                        data-tip="跳转图库，把这套预设的提示词标签全部放进筛选区并启用（按词条 id 筛，改名不失效）">⚡ 启用提示词</button>
+                <button class="btn" @click="jumpPresetGallery(p)"
+                        data-tip="跳转图库并把这份预设的配图详情打开">🖼 一览图库</button>
+              </div>
               <div class="pc-tags">
                 <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
                       :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'">
@@ -4830,6 +4846,44 @@ const submitAddTab = async () => {
       }
     };
 
+    // ---------- 预设卡片上的配图与图库入口 ----------
+    // 缩略图直连图库缩略图接口：preset.gallery_name 就是 gallery_image.name（图库相对路径），
+    // 与 /gallery/thumb?path= 的定位字段完全一致，不用再按 id 绕一圈取路径。
+    // t=mtime 破缓存：同名文件内容被换掉时 URL 跟着变，不会一直显示旧图。
+    const presetThumbUrl = (p) => '/zhule_studio/api/gallery/thumb?path=' +
+      encodeURIComponent(p.gallery_name) + '&t=' + (p.gallery_mtime || '');
+
+    // 跳图库并摊开配图详情：open 参数由图库页 onMounted 消费（openDetailByPath）。
+    // 新开标签页，词库这边的已选状态一律不动。
+    const jumpPresetGallery = (p) => {
+      if (!p || !p.gallery_name) {
+        showToast('这份预设没有关联配图（只有图库详情里点💾保存的预设才带图）', 'warn');
+        return;
+      }
+      const url = '/zhule_studio#/gallery?open=' + encodeURIComponent(p.gallery_name);
+      window.open(url, '_blank');
+    };
+
+    // 启用提示词：把这套预设的标签全部带到图库筛选区并启用（一次跳转即生效）。
+    // 参数一律走词条 id（落库/应用/筛选全链路只用 id，改名不失效）；
+    // 历史预设槽位没有 id 时才退回标签名，别让老数据点了没反应。
+    const enablePresetPrompt = (p) => {
+      const tags = (p && p.flow ? p.flow : [])
+        .filter(it => it && it.t === 'tag')
+        .map(it => String(it.id || '').trim() || String(it.label || '').trim())
+        .filter(Boolean);
+      if (!tags.length) {
+        showToast('这份预设里没有提示词标签，跳过去也是空的', 'warn');
+        return;
+      }
+      // 随机池（t=pool）是「运行时抽一条标签」的规则，不是具体词条，图库里没法按它筛，只能跳过
+      const poolCnt = (p.flow || []).filter(it => it && it.t === 'pool').length;
+      showToast('已在图库启用 ' + tags.length + ' 个提示词标签' +
+        (poolCnt ? '（另有 ' + poolCnt + ' 个随机池项未带入：池是运行时抽取，图库无法按它筛）' : ''));
+      const url = '/zhule_studio#/gallery?mode=and&tags=' + encodeURIComponent(tags.join(','));
+      window.open(url, '_blank');
+    };
+
     const presetFiltered = computed(() => {
       const q = (presetCtr.q || '').trim().toLowerCase();
       const list = presetCtr.list || [];
@@ -6094,7 +6148,7 @@ const submitAddTab = async () => {
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      applyPreset, deletePreset,
+      applyPreset, deletePreset, presetThumbUrl, jumpPresetGallery, enablePresetPrompt,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize, pcBtnText,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

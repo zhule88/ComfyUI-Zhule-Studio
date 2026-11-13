@@ -2209,13 +2209,31 @@ def _preset_gallery_name(conn, gallery_id):
     return row["name"] if row else None
 
 
+def _preset_gallery_meta(conn, gallery_id):
+    """配图当前 (name, mtime)；图已不存在返回 (None, 0)。
+
+    name 就是图库相对路径，前端缩略图接口 /gallery/thumb?path= 直接吃得下；
+    mtime 用来破缩略图缓存——同名文件被换掉内容时 URL 跟着变，不会显示旧图。
+    """
+    gid = _as_int_or_none(gallery_id)
+    if gid is None:
+        return None, 0
+    row = conn.execute(
+        "SELECT name, mtime FROM {0} WHERE id = ?".format(GAL_IMG_TABLE), (gid,)
+    ).fetchone()
+    if not row:
+        return None, 0
+    return row["name"], int(row["mtime"] or 0)
+
+
 def preset_rows(kind=None):
     """列出方案（不带 payload 大字段，列表只给名字与配图），按 id 倒序。
 
     kind 为空则列全部；gallery_name 为配图当前相对路径，None 表示该图已不存在。
     """
     sql = (
-        "SELECT p.id, p.kind, p.name, p.gallery_id, g.name AS gallery_name "
+        "SELECT p.id, p.kind, p.name, p.gallery_id, "
+        "g.name AS gallery_name, g.mtime AS gallery_mtime "
         "FROM {0} p LEFT JOIN {1} g ON g.id = p.gallery_id".format(
             PRESET_TABLE, GAL_IMG_TABLE
         )
@@ -2255,7 +2273,9 @@ def preset_get(pid):
             rec = dict(row)
             rec["payload"] = _preset_payload_out(row["payload"])
             rec["gallery_id"] = _as_int_or_none(row["gallery_id"])
-            rec["gallery_name"] = _preset_gallery_name(conn, row["gallery_id"])
+            gname, gmtime = _preset_gallery_meta(conn, row["gallery_id"])
+            rec["gallery_name"] = gname
+            rec["gallery_mtime"] = gmtime
             return rec
         except sqlite3.Error as e:
             print(f"[ZhuleDB] 方案读取失败: {e}")
@@ -2264,11 +2284,14 @@ def preset_get(pid):
             conn.close()
 
 
-def preset_save(kind, name, payload, gallery_id=None, pid=None):
+def preset_save(kind, name, payload, gallery_id=None, pid=None, gallery_touch=True):
     """保存方案，返回行 id；失败返回 None。
 
     pid 有值按 id 覆盖；无 pid 时按 (kind, name) 命中同一行做更新（name 大小写不敏感），
     避免同名方案点两次存出两行。gallery_id 传 gallery_image.id，传 None 即清空配图。
+
+    gallery_touch=False 表示调用方根本没提配图这件事（如词库页保存预设），此时
+    UPDATE 不动 gallery_id、INSERT 落 NULL——否则词库侧覆盖同名预设会把图库存的配图抹掉。
     """
     kind = (kind or "").strip()
     name = (name or "").strip()
@@ -2294,12 +2317,20 @@ def preset_save(kind, name, payload, gallery_id=None, pid=None):
                     (kind, name, raw, gid),
                 )
                 target = cur.lastrowid
-            else:
+            elif gallery_touch:
                 conn.execute(
                     "UPDATE {0} SET kind = ?, name = ?, payload = ?, gallery_id = ? WHERE id = ?".format(
                         PRESET_TABLE
                     ),
                     (kind, name, raw, gid, target),
+                )
+            else:
+                # 调用方未涉及配图：只更新内容，配图列原样保留
+                conn.execute(
+                    "UPDATE {0} SET kind = ?, name = ?, payload = ? WHERE id = ?".format(
+                        PRESET_TABLE
+                    ),
+                    (kind, name, raw, target),
                 )
             conn.commit()
             return int(target)
