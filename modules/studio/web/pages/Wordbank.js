@@ -233,11 +233,11 @@ export default {
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetCtr.open }"
                       @click="openPresetCenter"
-                      data-tip="方案中心：已存下来的方案都在这里，按池标签认方案，点「载入」一键还原整套已选">🗂 方案</button>
+                      data-tip="预设中心：已存下来的预设都在这里，卡片铺开全部标签与池子，点「应用」一键还原整套已选">🗂 预设</button>
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetDlg.open }"
                       @click="openPresetDlg"
-                      data-tip="保存方案：把当前这套已选（提示词 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一个方案，随时一键还原">💾 保存</button>
+                      data-tip="保存预设：把当前这套已选（标签 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一份预设，随时一键还原">💾 保存</button>
               <button class="btn danger" style="padding:4px 10px;font-size:12px;"
                       @click="clearAll">清空</button>
               <div class="count-ctrl">
@@ -813,20 +813,20 @@ export default {
         </div>
       </div>
 
-      <!-- 保存方案：把「已选」这一整套（提示词 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一个可复用方案。
-           落库走 preset 表（payload = { slots, genCount, fillMode }），存完即可在「方案中心」里看到。 -->
+      <!-- 保存预设：把「已选」这一整套（标签 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一份可复用预设。
+           落库走 preset 表（payload = { slots, genCount, fillMode }），存完即可在「预设中心」里看到。 -->
       <div v-if="presetDlg.open" class="edit-overlay" @click.self="closePresetDlg">
         <div class="edit-dialog preset-dialog">
-          <div class="title"><span class="title-text">保存方案</span></div>
+          <div class="title"><span class="title-text">保存预设</span></div>
           <div class="edit-body">
             <div class="field">
-              <label>方案名</label>
+              <label>预设名</label>
               <input type="text" v-model="presetDlg.name" placeholder="如 卧室氛围 / 表情特写" spellcheck="false"
                      @keydown.enter="submitPresetSave">
             </div>
-            <!-- 同名会覆盖已存方案（后端按 kind+name 命中同一行），提前把话说明白 -->
+            <!-- 同名会覆盖已存预设（后端按 kind+name 命中同一行），提前把话说明白 -->
             <div class="preset-dup" v-if="presetDupName">
-              已有同名方案「{{ presetDupName }}」，保存会<b>覆盖</b>它原来的内容
+              已有同名预设「{{ presetDupName }}」，保存会<b>覆盖</b>它原来的内容
             </div>
             <div class="preset-sec-title">将要保存的内容</div>
             <div class="preset-list">
@@ -860,40 +860,40 @@ export default {
             </div>
             <div class="hint" style="margin-top:10px">
               存下来的是整套「已选」：位置顺序、每个池的抽取方式与参与率、锁定状态、次数与填充模式都会一起还原。
-              之后在 <b>🗂 方案中心</b> 里一键载入。
+              之后在 <b>🗂 预设中心</b> 里点「应用」一键装回。
             </div>
           </div>
           <div class="actions">
             <button class="btn" @click="closePresetDlg">取消</button>
             <button class="btn primary" :disabled="presetDlg.saving" @click="submitPresetSave">
-              {{ presetDlg.saving ? '保存中…' : '保存方案' }}
+              {{ presetDlg.saving ? '保存中…' : '保存预设' }}
             </button>
           </div>
         </div>
       </div>
 
-      <!-- 方案中心：已存方案的网格卡片。
-           卡片刻意只把「池标签」当主视觉——♾️ 遍历池 / 🎲 随机池 一眼认出这套方案挂了哪些池；
+      <!-- 预设中心：已存预设的网格卡片。
+           卡片主视觉给「完整的标签」——按出图顺序把每个标签与池子逐条铺开，
            提示词正文不进卡片（又长又没辨识度），只留条数。 -->
       <div v-if="presetCtr.open" class="pc-overlay" @click.self="closePresetCenter">
-        <div class="pc-panel">
+        <div class="pc-panel" :style="{ width: presetCtr.w + 'vw', height: presetCtr.h + 'vh' }">
           <div class="pc-head">
-            <span class="pc-title">🗂 方案中心
+            <span class="pc-title">🗂 预设中心
               <span class="pc-num">{{ presetCtr.list.length }}</span>
             </span>
             <div class="pc-head-r">
-              <input v-model="presetCtr.q" class="pc-search" placeholder="搜方案名 / 池标签" spellcheck="false">
+              <input v-model="presetCtr.q" class="pc-search" placeholder="搜预设名 / 标签 / 池名" spellcheck="false">
               <button class="btn" style="padding:4px 10px;font-size:12px;" @click="refreshPresetList"
-                      :disabled="presetCtr.loading" data-tip="重新读取方案列表">↻</button>
+                      :disabled="presetCtr.loading" data-tip="重新读取预设列表">↻</button>
               <button class="btn" style="padding:4px 10px;font-size:12px;" @click="openPresetDlgFromCenter"
-                      data-tip="把当前「已选」这一整套存成新方案">💾 存当前</button>
+                      data-tip="把当前「已选」这一整套存成新预设">💾 存当前</button>
               <button class="btn icon-btn" @click="closePresetCenter" data-tip="关闭">✕</button>
             </div>
           </div>
           <div v-if="presetCtr.loading && !presetCtr.list.length" class="pc-empty">读取中…</div>
           <div v-else-if="!presetFiltered.length" class="pc-empty">
-            <template v-if="presetCtr.list.length">没有匹配「{{ presetCtr.q }}」的方案</template>
-            <template v-else>还没有存过方案。先把提示词 / 池子选好，点右上「💾 存当前」把这一套存下来。</template>
+            <template v-if="presetCtr.list.length">没有匹配「{{ presetCtr.q }}」的预设</template>
+            <template v-else>还没有存过预设。先把标签 / 池子选好，点右上「💾 存当前」把这一套存下来。</template>
           </div>
           <div v-else class="pc-grid">
             <div v-for="p in presetFiltered" :key="p.id" class="pc-card">
@@ -904,28 +904,37 @@ export default {
                        @keydown.esc="cancelPresetRename" @blur="commitPresetRename(p)">
                 <span v-else class="pc-name" :title="p.name + '（双击改名）'"
                       @dblclick="startPresetRename(p)">{{ p.name }}</span>
-                <span class="pc-items">{{ p.items }} 条提示词</span>
+                <span class="pc-items">{{ p.items }} 标签</span>
               </div>
+              <!-- 完整标签 + 池子，按出图顺序铺开；标签（灰）与池（橙/紫）同层并列 -->
               <div class="pc-tags">
-                <span v-for="(pool, pi) in p.pools" :key="pi" class="pc-tag" :class="'pc-tag-' + pool.mode">
-                  <span class="pc-tag-badge">{{ pool.mode === 'traverse' ? '♾️' : '🎲' }}</span>
-                  <span class="pc-tag-label">{{ pool.label || '(未名池)' }}</span>
-                  <span v-if="pool.mode === 'random' && pool.chance < 100" class="pc-tag-chance">{{ pool.chance }}%</span>
-                  <span v-if="pool.lock" class="pc-tag-lock">🔒</span>
+                <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
+                      :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'">
+                  <span v-if="it.t === 'pool'" class="pc-tag-badge">{{ it.mode === 'traverse' ? '♾️' : '🎲' }}</span>
+                  <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
+                  <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
+                        class="pc-tag-chance">{{ it.chance }}%</span>
+                  <span v-if="it.lock" class="pc-tag-lock">🔒</span>
                 </span>
-                <span v-if="!p.pools.length" class="pc-tag-none">纯提示词，无池子</span>
+                <span v-if="!p.flow || !p.flow.length" class="pc-tag-none">空预设</span>
               </div>
               <div class="pc-foot">
                 <span class="pc-sub">次数 {{ p.genCount }}{{ p.fillMode ? ' · ⏩ 填充' : '' }}</span>
                 <div class="pc-ops">
-                  <button class="btn primary" @click="applyPreset(p)">载入</button>
+                  <button class="btn primary" @click="applyPreset(p)"
+                          data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">{{ pcBtnText(p, 'apply', '应用') }}</button>
                   <button class="btn" @click="overwritePreset(p)"
-                          data-tip="用当前「已选」整套覆盖这个方案（名字不变）">覆盖</button>
-                  <button class="btn danger" @click="deletePreset(p)">删</button>
+                          data-tip="用当前「已选」整套改写这份预设（名字不变，原内容被替换）">{{ pcBtnText(p, 'overwrite', '改写') }}</button>
+                  <button class="btn danger" @click="deletePreset(p)"
+                          data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">{{ pcBtnText(p, 'delete', '删除') }}</button>
                 </div>
               </div>
             </div>
           </div>
+          <!-- 拖拽调尺寸：右缘拖宽、下缘拖高、右下角同时拖（居中弹窗按 2 倍位移跟手） -->
+          <div class="pc-resizer-x" @mousedown.prevent="startPresetResize($event, 'x')"></div>
+          <div class="pc-resizer-y" @mousedown.prevent="startPresetResize($event, 'y')"></div>
+          <div class="pc-resizer-xy" @mousedown.prevent="startPresetResize($event, 'xy')"></div>
         </div>
       </div>
 
@@ -4715,13 +4724,64 @@ const submitAddTab = async () => {
       data.slots.splice(idx, 1);
       zhuleLog('removeSelected: 删除槽', s.t, s.t === 'pool' ? (s.display || s.tab) : s.name, 'idx=', idx, 'slots=', selSummary());
     };
-    // ============ 保存方案 / 方案中心：把「已选」整套存成可复用方案 ============
+    // ============ 保存预设 / 预设中心：把「已选」整套存成可复用预设 ============
     // 落库走 preset 表，payload = { slots, genCount, fillMode } 是黑盒：后端只把它原样存回，
     // 语义完全靠 serializeSlots / rebuildSlots 两端对齐（顺带把「池子与提示词同数组」的顺序一起带走）。
     const PRESET_KIND = 'bank';
     const presetDlg = reactive({ open: false, name: '', saving: false });
     // pending：载入 / 删除的内联二次确认（同一张卡再点一次才生效），不弹二层框打断浏览
-    const presetCtr = reactive({ open: false, list: [], loading: false, q: '', renaming: 0, renameText: '', pending: 0 });
+    const presetCtr = reactive({
+      open: false, list: [], loading: false, q: '', renaming: 0, renameText: '',
+      pending: 0, pendingKind: '',   // pending 只是「同一张卡再点一次」，必须带操作类型才不会串（点应用再点删除不算确认）
+      w: 72, h: 64,                  // 面板尺寸（vw / vh），右下握把可拖，尺寸持久化
+    });
+
+    // 预设中心尺寸：默认 72vw × 64vh，拖完记住；窗口缩放时按 vw/vh 等比，跟设置面板一个思路
+    const PC_SIZE_KEY = 'zhule_preset_size';
+    const PC_W_MIN = 40, PC_W_MAX = 96, PC_H_MIN = 32, PC_H_MAX = 92;
+    (() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem(PC_SIZE_KEY) || 'null');
+        if (!raw) return;
+        const w = Number(raw.w), h = Number(raw.h);
+        if (Number.isFinite(w)) presetCtr.w = Math.min(PC_W_MAX, Math.max(PC_W_MIN, w));
+        if (Number.isFinite(h)) presetCtr.h = Math.min(PC_H_MAX, Math.max(PC_H_MIN, h));
+      } catch (e) { /* 尺寸坏了就用默认值，不影响打开 */ }
+    })();
+
+    // 拖拽调尺寸：弹窗在遮罩里居中，单侧边缘位移只有尺寸增量的一半，故按 2 倍跟手
+    let pcResize = null;
+    const onPresetResizeMove = (ev) => {
+      if (!pcResize) return;
+      const dw = ((ev.clientX - pcResize.x) * 2 * 100) / (window.innerWidth || 1280);
+      const dh = ((ev.clientY - pcResize.y) * 2 * 100) / (window.innerHeight || 800);
+      if (pcResize.axis !== 'y') {
+        presetCtr.w = Math.round(Math.min(PC_W_MAX, Math.max(PC_W_MIN, pcResize.w + dw)) * 10) / 10;
+      }
+      if (pcResize.axis !== 'x') {
+        presetCtr.h = Math.round(Math.min(PC_H_MAX, Math.max(PC_H_MIN, pcResize.h + dh)) * 10) / 10;
+      }
+    };
+    const onPresetResizeUp = () => {
+      if (!pcResize) return;
+      pcResize = null;
+      document.removeEventListener('mousemove', onPresetResizeMove);
+      document.removeEventListener('mouseup', onPresetResizeUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      try { localStorage.setItem(PC_SIZE_KEY, JSON.stringify({ w: presetCtr.w, h: presetCtr.h })); } catch (e) { /* 存不下就算了 */ }
+    };
+    const startPresetResize = (ev, axis) => {
+      if (ev.button !== 0) return;
+      pcResize = { axis: axis || 'xy', x: ev.clientX, y: ev.clientY, w: presetCtr.w, h: presetCtr.h };
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = axis === 'x' ? 'col-resize' : axis === 'y' ? 'row-resize' : 'nwse-resize';
+      document.addEventListener('mousemove', onPresetResizeMove);
+      document.addEventListener('mouseup', onPresetResizeUp);
+    };
+
+    // 三种操作共用 pending：按钮文案按「操作类型 + 卡片 id」一起判定，点应用不再是删除的确认
+    const pcBtnText = (p, kind, base) => (presetCtr.pending === p.id && presetCtr.pendingKind === kind ? '确认' + base : base);
 
     const presetSummary = computed(() => {
       const slots = data.slots || [];
@@ -4739,7 +4799,7 @@ const submitAddTab = async () => {
     const presetDefaultName = () => {
       const d = new Date();
       const p2 = (n) => String(n).padStart(2, '0');
-      return '方案 ' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+      return '预设 ' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
     };
 
     // 同名覆盖预警：后端按 kind+name 命中同一行做更新，所以先把「会覆盖谁」摆在眼前
@@ -4750,19 +4810,19 @@ const submitAddTab = async () => {
       return hit ? hit.name : '';
     });
 
-    // 方案中心列表：只带卡片摘要（池标签 + 提示词条数），不带整份 payload
+    // 预设中心列表：只带卡片摘要（完整标签 + 池子 + 条数），不带整份 payload
     const refreshPresetList = async () => {
       presetCtr.loading = true;
       try {
         const resp = await fetch('/zhule_studio/api/preset?kind=' + encodeURIComponent(PRESET_KIND));
         const json = await resp.json();
         if (!resp.ok || json.error) {
-          showToast(json.error || '方案列表读取失败', 'error');
+          showToast(json.error || '预设列表读取失败', 'error');
           return;
         }
         presetCtr.list = Array.isArray(json.presets) ? json.presets : [];
       } catch (e) {
-        showToast('方案列表读取失败：' + e.message, 'error');
+        showToast('预设列表读取失败：' + e.message, 'error');
       } finally {
         presetCtr.loading = false;
       }
@@ -4774,7 +4834,7 @@ const submitAddTab = async () => {
       if (!q) return list;
       return list.filter(p => {
         if (String(p.name || '').toLowerCase().includes(q)) return true;
-        return (p.pools || []).some(t => String(t.label || '').toLowerCase().includes(q));
+        return (p.flow || []).some(t => String(t.label || '').toLowerCase().includes(q));
       });
     });
 
@@ -4786,18 +4846,19 @@ const submitAddTab = async () => {
       presetCtr.open = false;
       presetCtr.renaming = 0;
       presetCtr.pending = 0;
+      presetCtr.pendingKind = '';
     };
 
     const openPresetDlg = () => {
       if (!data.slots.length) {
-        return showToast('还没有已选内容：先点卡片加提示词，或右键 tab / chip 加入池子再保存', 'warn', 3400);
+        return showToast('还没有已选内容：先点卡片加标签，或右键 tab / chip 加入池子再保存', 'warn', 3400);
       }
       presetDlg.name = presetDefaultName();
       presetDlg.saving = false;
       presetDlg.open = true;
       refreshPresetList();   // 顺带把同名检测所需的现有名单取回
     };
-    // 方案中心里「存当前」：先收起中心，弹回保存框（存完再回中心）
+    // 预设中心里「存当前」：先收起中心，弹回保存框（存完再回中心）
     const openPresetDlgFromCenter = () => {
       openPresetDlg();
     };
@@ -4811,7 +4872,7 @@ const submitAddTab = async () => {
 
     const submitPresetSave = async () => {
       const nm = (presetDlg.name || '').trim();
-      if (!nm) return showToast('请先给方案起个名字', 'warn', 2600);
+      if (!nm) return showToast('请先给预设起个名字', 'warn', 2600);
       if (presetDlg.saving) return;
       presetDlg.saving = true;
       const payload = presetPayloadNow();
@@ -4827,7 +4888,7 @@ const submitAddTab = async () => {
           return;
         }
         zhuleLog('submitPresetSave', 'id=', json.id, 'name=', nm, 'total=', payload.slots.length, 'genCount=', payload.genCount);
-        showToast('已保存方案「' + nm + '」（' + payload.slots.length + ' 项 / 次数 ' + payload.genCount + '）', 'success', 3600);
+        showToast('已保存预设「' + nm + '」（' + payload.slots.length + ' 项 / 次数 ' + payload.genCount + '）', 'success', 3600);
         presetDlg.open = false;
         refreshPresetList();
       } catch (e) {
@@ -4837,27 +4898,29 @@ const submitAddTab = async () => {
       }
     };
 
-    // 载入方案：payload.slots 走 rebuildSlots 还原（名字/正文按词库当前数据刷一遍）
+    // 应用预设：payload.slots 走 rebuildSlots 还原（名字/正文按词库当前数据刷一遍）
     const applyPreset = async (p) => {
       if (!p) return;
       // 当前已有已选内容时，先要一次内联确认，免得一键把人家辛苦搭的一套覆盖掉
-      if (data.slots && data.slots.length && presetCtr.pending !== p.id) {
+      if (data.slots && data.slots.length && !(presetCtr.pending === p.id && presetCtr.pendingKind === 'apply')) {
         presetCtr.pending = p.id;
-        showToast('再点一次「载入」就会替换当前已选的 ' + data.slots.length + ' 项', 'warn', 3200);
+        presetCtr.pendingKind = 'apply';
+        showToast('再点一次「应用」就会用「' + p.name + '」替换当前已选的 ' + data.slots.length + ' 项', 'warn', 3200);
         return;
       }
       presetCtr.pending = 0;
+      presetCtr.pendingKind = '';
       try {
         const resp = await fetch('/zhule_studio/api/preset/get?pid=' + encodeURIComponent(p.id));
         const json = await resp.json();
         if (!resp.ok || json.error) {
-          showToast(json.error || '载入失败', 'error');
+          showToast(json.error || '应用预设失败', 'error');
           return;
         }
         const payload = (json.preset && json.preset.payload) || {};
         const slots = rebuildSlots(payload.slots);
         if (!slots.length) {
-          showToast('这套方案里的词条在词库中已经找不到了，载入为空', 'warn', 3600);
+          showToast('这份预设里的标签在词库中已经找不到了，应用结果为空', 'warn', 3600);
           return;
         }
         data.slots = slots;
@@ -4868,22 +4931,24 @@ const submitAddTab = async () => {
         showToast('已载入「' + (p.name || '') + '」：' + slots.length + ' 项 / 次数 ' + pref.genCount, 'success', 3400);
         closePresetCenter();
       } catch (e) {
-        showToast('载入失败：' + e.message, 'error');
+        showToast('应用预设失败：' + e.message, 'error');
       }
     };
 
-    // 覆盖：用当前「已选」替换这个方案的内容，名字 / 图库关联都不动
+    // 改写：用当前「已选」替换这份预设的内容，名字 / 图库关联都不动
     const overwritePreset = async (p) => {
       if (!p) return;
       if (!data.slots || !data.slots.length) {
         return showToast('当前没有已选内容，没什么可覆盖的', 'warn', 2800);
       }
-      if (presetCtr.pending !== p.id) {
+      if (!(presetCtr.pending === p.id && presetCtr.pendingKind === 'overwrite')) {
         presetCtr.pending = p.id;
-        showToast('再点一次「覆盖」就用当前已选（' + data.slots.length + ' 项）替换「' + p.name + '」', 'warn', 3400);
+        presetCtr.pendingKind = 'overwrite';
+        showToast('再点一次「改写」就用当前已选（' + data.slots.length + ' 项）替换「' + p.name + '」原来的内容', 'warn', 3400);
         return;
       }
       presetCtr.pending = 0;
+      presetCtr.pendingKind = '';
       try {
         const resp = await fetch('/zhule_studio/api/preset/save', {
           method: 'POST',
@@ -4893,13 +4958,13 @@ const submitAddTab = async () => {
         });
         const json = await resp.json();
         if (!resp.ok || json.error) {
-          showToast(json.error || '覆盖失败', 'error');
+          showToast(json.error || '改写失败', 'error');
           return;
         }
-        showToast('已用当前已选覆盖「' + p.name + '」', 'success', 3200);
+        showToast('已用当前已选改写「' + p.name + '」', 'success', 3200);
         refreshPresetList();
       } catch (e) {
-        showToast('覆盖失败：' + e.message, 'error');
+        showToast('改写失败：' + e.message, 'error');
       }
     };
 
@@ -4931,15 +4996,17 @@ const submitAddTab = async () => {
       }
     };
 
-    // 删除方案：同样两道点击。只删方案记录，词库 / 图库里的东西一个不碰
+    // 删除预设：同样两道点击。只删预设记录，词库 / 图库里的东西一个不碰
     const deletePreset = async (p) => {
       if (!p) return;
-      if (presetCtr.pending !== p.id) {
+      if (!(presetCtr.pending === p.id && presetCtr.pendingKind === 'delete')) {
         presetCtr.pending = p.id;
-        showToast('再点一次「删」就删除方案「' + p.name + '」（只删方案，不动词库）', 'warn', 3400);
+        presetCtr.pendingKind = 'delete';
+        showToast('再点一次「删除」就删掉预设「' + p.name + '」（只删预设记录，不动词库）', 'warn', 3400);
         return;
       }
       presetCtr.pending = 0;
+      presetCtr.pendingKind = '';
       try {
         const resp = await fetch('/zhule_studio/api/preset/delete', {
           method: 'POST',
@@ -4952,7 +5019,7 @@ const submitAddTab = async () => {
           return;
         }
         presetCtr.list = (presetCtr.list || []).filter(x => x.id !== p.id);
-        showToast('已删除方案「' + p.name + '」', 'success', 2800);
+        showToast('已删除预设「' + p.name + '」', 'success', 2800);
       } catch (e) {
         showToast('删除失败：' + e.message, 'error');
       }
@@ -5985,6 +6052,9 @@ const submitAddTab = async () => {
       window.removeEventListener('paste', onUploadRefPaste);
       window.removeEventListener('dragover', preventDropDefault);
       window.removeEventListener('drop', preventDropDefault);
+      // 预设中心拖尺寸中途切走页面时，别把全局 mousemove / mouseup 留在 document 上
+      document.removeEventListener('mousemove', onPresetResizeMove);
+      document.removeEventListener('mouseup', onPresetResizeUp);
     });
 
     return {
@@ -6051,7 +6121,7 @@ const submitAddTab = async () => {
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
       openPresetDlgFromCenter, applyPreset, overwritePreset, deletePreset,
-      startPresetRename, cancelPresetRename, commitPresetRename,
+      startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize, pcBtnText,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,
       onChipDragStart, onChipDragOver, onChipDragEnd,

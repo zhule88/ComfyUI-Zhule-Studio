@@ -1090,13 +1090,14 @@ PRESET_KIND_DEFAULT = "bank"
 
 
 def _preset_card_brief(payload):
-    """从 payload.slots 摘卡片摘要：池标签为主，提示词只给数量（不给正文）。
+    """从 payload.slots 摘卡片摘要：标签与池子按出图顺序铺开，只给名字不给提示词正文。
 
-    slots 顺序即方案顺序，池项 serialize 时带了 display（池名快照），
-    所以列表页无须回查词库节点即可渲染 ♾️/🎲 徽标。
+    slots 顺序即方案顺序，所以 flow 就是「这套预设会长什么样」的目录；
+    池项的 display / 标签项的 name 都是 serialize 时的快照，列表页无须回查词库节点。
     """
     slots = payload.get("slots") if isinstance(payload, dict) else None
     slots = slots if isinstance(slots, list) else []
+    flow = []
     pools = []
     items = 0
     for s in slots:
@@ -1104,21 +1105,36 @@ def _preset_card_brief(payload):
             continue
         if s.get("t") == "pool":
             traverse = bool(s.get("traverse"))
-            label = (s.get("display") or "").strip()
+            label = str(s.get("display") or "").strip()
             if not label:
-                label = s.get("tab") or s.get("poolId") or ""
-            pools.append({
+                label = str(s.get("tab") or s.get("poolId") or "")
+            info = {
                 "mode": "traverse" if traverse else "random",
-                "label": str(label),
+                "label": label,
                 "kind": s.get("kind") or "tab",
                 "chance": 100 if traverse else int(s.get("chance") or 100),
                 "lock": bool(s.get("lock")),
-            })
+            }
+            pools.append(info)
+            flow.append(dict(info, t="pool"))
         elif s.get("t") == "item":
             items += 1
+            # 标签名优先用 name；旧数据没有 name 时退回正文首个片段，别让卡片出现空标签
+            label = str(s.get("name") or "").strip()
+            if not label:
+                # 老数据没有 name：取正文首段当标签，长正文不整条塞进卡片
+                body = str(s.get("content") or s.get("content_cn") or "").strip()
+                label = body.split(",")[0].strip()[:24]
+            flow.append({
+                "t": "tag",
+                "label": label,
+                "chance": int(s.get("chance") or 100),
+                "lock": bool(s.get("lock")),
+            })
     return {
         "items": items,
         "pools": pools,
+        "flow": flow,
         "genCount": int(payload.get("genCount") or 1),
         "fillMode": bool(payload.get("fillMode")),
     }
