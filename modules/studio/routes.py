@@ -34,6 +34,13 @@ def register_routes():
     routes.post("/zhule_studio/api/wordbank/sort-save")(api.post_wordbank_sort_save)
     routes.post("/zhule_studio/api/debug_log")(api.post_debug_log)
 
+    # 方案保存（preset 表）：保存 / 列表 / 详情 / 改名 / 删除
+    routes.get("/zhule_studio/api/preset")(api.get_preset_rows)
+    routes.get("/zhule_studio/api/preset/get")(api.get_preset_get)
+    routes.post("/zhule_studio/api/preset/save")(api.post_preset_save)
+    routes.post("/zhule_studio/api/preset/delete")(api.post_preset_delete)
+    routes.post("/zhule_studio/api/preset/rename")(api.post_preset_rename)
+
     # 图库 API
     routes.get("/zhule_studio/api/gallery")(gallery.get_gallery)
     routes.get("/zhule_studio/api/gallery/meta")(gallery.get_gallery_meta)

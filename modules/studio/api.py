@@ -1080,6 +1080,137 @@ async def post_wordbank_sort_save(request):
     return web.json_response({"ok": True, "layers": layers, "total": total, "renamed": total,
                               "errors": errors})
 
+# ---------------------------------------------------------------- 方案保存（preset）
+# 前端「保存方案」/「方案中心」用的四个接口，数据层见 db.preset_*。
+# payload 是黑盒 JSON（{ slots, genCount, fillMode }），后端不解构它的语义，
+# 只做一件事：把 slots 里的「池标签」摘出来给方案中心的卡片当主视觉——
+# 卡片要立刻能认出「这套方案挂了哪些池」，总不能为了列表去反序列化整棵词库树。
+
+PRESET_KIND_DEFAULT = "bank"
+
+
+def _preset_card_brief(payload):
+    """从 payload.slots 摘卡片摘要：池标签为主，提示词只给数量（不给正文）。
+
+    slots 顺序即方案顺序，池项 serialize 时带了 display（池名快照），
+    所以列表页无须回查词库节点即可渲染 ♾️/🎲 徽标。
+    """
+    slots = payload.get("slots") if isinstance(payload, dict) else None
+    slots = slots if isinstance(slots, list) else []
+    pools = []
+    items = 0
+    for s in slots:
+        if not isinstance(s, dict):
+            continue
+        if s.get("t") == "pool":
+            traverse = bool(s.get("traverse"))
+            label = (s.get("display") or "").strip()
+            if not label:
+                label = s.get("tab") or s.get("poolId") or ""
+            pools.append({
+                "mode": "traverse" if traverse else "random",
+                "label": str(label),
+                "kind": s.get("kind") or "tab",
+                "chance": 100 if traverse else int(s.get("chance") or 100),
+                "lock": bool(s.get("lock")),
+            })
+        elif s.get("t") == "item":
+            items += 1
+    return {
+        "items": items,
+        "pools": pools,
+        "genCount": int(payload.get("genCount") or 1),
+        "fillMode": bool(payload.get("fillMode")),
+    }
+
+
+async def get_preset_rows(request):
+    """GET /zhule_studio/api/preset?kind=bank —— 方案中心列表（含卡片摘要）。
+
+    列表必须能直接渲染卡片，所以顺带把 payload 里的池标签摘出来一起返回；
+    方案数量是「人手工攒的」，几十条量级，逐条 preset_get 的成本可以忽略。
+    """
+    kind = (request.query.get("kind") or "").strip()
+    rows = db.preset_rows(kind or None)
+    out = []
+    for r in rows:
+        rec = db.preset_get(r.get("id"))
+        if not rec:
+            continue
+        brief = _preset_card_brief(rec.get("payload") or {})
+        out.append({
+            "id": rec.get("id"),
+            "kind": rec.get("kind"),
+            "name": rec.get("name"),
+            "gallery_id": rec.get("gallery_id"),
+            "gallery_name": rec.get("gallery_name"),
+            **brief,
+        })
+    return web.json_response({"ok": True, "presets": out})
+
+
+async def get_preset_get(request):
+    """GET /zhule_studio/api/preset/get?pid= —— 单个方案完整内容（载入用）。"""
+    pid = request.query.get("pid")
+    rec = db.preset_get(pid)
+    if not rec:
+        return web.json_response({"error": "方案不存在"}, status=404)
+    return web.json_response({"ok": True, "preset": rec})
+
+
+async def post_preset_save(request):
+    """POST /zhule_studio/api/preset/save —— 保存 / 覆盖。
+
+    body: { kind?, name, payload:{slots,genCount,fillMode}, gallery_id?, pid? }
+    - 有 pid：按 id 覆盖（方案中心里「用当前已选覆盖它」）
+    - 无 pid：按 (kind, name) 命中同名就更新，不重复建行（db.preset_save 内部规则）
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    name = (body.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "方案名不能为空"}, status=400)
+    payload = body.get("payload")
+    if not isinstance(payload, dict) or not isinstance(payload.get("slots"), list):
+        return web.json_response({"error": "payload.slots 必须是数组"}, status=400)
+    kind = (body.get("kind") or PRESET_KIND_DEFAULT).strip() or PRESET_KIND_DEFAULT
+    pid = db.preset_save(kind, name, payload, body.get("gallery_id"), body.get("pid"))
+    if pid is None:
+        return web.json_response({"error": "保存失败"}, status=500)
+    rec = db.preset_get(pid) or {}
+    return web.json_response({
+        "ok": True, "id": pid, "name": name, "kind": kind,
+        "brief": _preset_card_brief(rec.get("payload") or {}),
+    })
+
+
+async def post_preset_delete(request):
+    """POST /zhule_studio/api/preset/delete —— body: { pid }"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    if not db.preset_delete(body.get("pid")):
+        return web.json_response({"error": "删除失败或方案不存在"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def post_preset_rename(request):
+    """POST /zhule_studio/api/preset/rename —— body: { pid, name }"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    name = (body.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "名字不能为空"}, status=400)
+    if not db.preset_rename(body.get("pid"), name):
+        return web.json_response({"error": "改名失败或方案不存在"}, status=404)
+    return web.json_response({"ok": True, "name": name})
+
+
 async def get_index(request):
     index = os.path.join(WEB_DIR, "index.html")
     if not os.path.isfile(index):
