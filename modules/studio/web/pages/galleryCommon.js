@@ -292,9 +292,7 @@ const DEFAULT_PREF = {
     // timeFmt：按时间命名时的目录名格式（预设键，见 LINK_TIME_PRESETS）
     // sep 标签隔离符号 / custom 分层模板（{type:'tag'|'text', value, rel, cat}，cat=整类分类层）
     // hideGear：隐藏图库页「自定义分层」呼出齿轮（别人用图库时不必看到这个入口）
-    // scope：标签选择范围——active（默认，只列当前启用的标签）/ all（全库标签都能选，
-    //        选到未启用的会落成固定目录名，不再受「标签被停用」拦导出）
-    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false, scope: 'active' },
+    link: { dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
   },
   common: {
     noDeleteConfirm: false,
@@ -342,7 +340,7 @@ export function linkTimeName(key, d) {
 
 // 链接配置归一化：设置面板写盘的结构在旧存档里可能缺失，这里补齐默认值
 function normalizeLink(lk) {
-  const out = Object.assign({ dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false, scope: 'active' },
+  const out = Object.assign({ dir: '', nameMode: 'time', timeFmt: 'ymd_hms', sep: '@', custom: [], hideGear: false },
     (lk && typeof lk === 'object') ? lk : {});
   if (typeof out.dir !== 'string') out.dir = '';
   if (!['time', 'tags', 'custom'].includes(out.nameMode)) out.nameMode = 'time';
@@ -350,8 +348,8 @@ function normalizeLink(lk) {
   if (typeof out.sep !== 'string' || !out.sep) out.sep = '@';
   if (!Array.isArray(out.custom)) out.custom = [];
   out.hideGear = out.hideGear === true;
-  // 标签选择范围：只有显式选了全库才是 all，其它（含老存档没这个字段）一律回落「仅启用」
-  out.scope = out.scope === 'all' ? 'all' : 'active';
+  // 老存档残留的 scope（全库范围）字段直接丢弃：选择范围固定只列已启用标签
+  delete out.scope;
   return out;
 }
 
@@ -2154,23 +2152,14 @@ export function useGalleryCommon(opts = {}) {
       return known.includes(v) && !act.includes(v);
     }).length;
   });
-  // 图库页是否隐藏「自定义分层」呼出齿轮：别人借用图库时不希望工具栏多这个入口，可在设置里关掉
-  const hideLinkGear = computed(() => !!((pref.gallery && pref.gallery.link) || {}).hideGear);
-  // 标签选择范围：active = 只列当前启用的过滤标签（默认）；all = 全库标签都能选。
-  // 弹框里改这一项会即时写盘并广播，设置页与图库页两侧显示的开关始终一致。
-  const linkScope = computed(() => (((pref.gallery && pref.gallery.link) || {}).scope === 'all' ? 'all' : 'active'));
-  function setLinkScope(v) {
-    const lk = pref.gallery.link;
-    lk.scope = v === 'all' ? 'all' : 'active';
-    try {
-      localStorage.setItem('zhule_ui_pref', JSON.stringify(pref));
-    } catch (e) {
-      showToast('保存标签选择范围失败：' + (e.message || ''), 'error');
-      return;
-    }
-    window.dispatchEvent(new CustomEvent('zhule-pref-changed', { detail: JSON.parse(JSON.stringify(pref)) }));
-    showToast(lk.scope === 'all' ? '标签选择范围：全库标签' : '标签选择范围：仅启用标签', 'success');
-  }
+  // 图库页是否显示「自定义分层」呼出齿轮：齿轮是自定义分层独有的入口，
+  // 按时间 / 按过滤标签这两种命名方式压根不用分层，工具栏就不该出现它；
+  // hideGear 只是自定义模式下的开关；分层里有标签失效时仍然强制亮出来，否则出问题却没有修的地方。
+  const linkGearShow = computed(() => {
+    const lk = (pref.gallery && pref.gallery.link) || {};
+    if (lk.nameMode !== 'custom') return false;
+    return lk.hideGear !== true || linkPending.value > 0;
+  });
   async function openLinkDialog(mode) {
     linkDlgMode.value = mode === 'export' ? 'export' : 'cfg';
     linkDlgOpen.value = true;
@@ -2320,7 +2309,7 @@ export function useGalleryCommon(opts = {}) {
     selected, selCount, isSel, onPointerDown, onCardClick,
     askBatchDelete, batchLink,
     linkDlgOpen, linkDlgMode, activeTags, knownTagNames, linkPending,
-    tagTreeRoots, hideLinkGear, linkScope, setLinkScope,
+    tagTreeRoots, linkGearShow,
     openLinkDialog, closeLinkDialog, onLinkSaved,
   };
 }
@@ -2344,10 +2333,8 @@ export const LinkDialog = {
     // 标签树（整棵，从 tagtree 接口瘦身而来）：浮层选择器靠它钻取分类 / 选整类
     tree: { type: Array, default: () => [] },
     link: { type: Object, default: () => ({}) },
-    // 标签选择范围：active（默认，只列已启用的标签）/ all（全库标签都能选）
-    scope: { type: String, default: 'active' },
   },
-  emits: ['close', 'saved', 'export', 'scope'],
+  emits: ['close', 'saved', 'export'],
   setup(props, { emit }) {
     const draft = reactive({ custom: [] });
     const err = ref('');
@@ -2357,11 +2344,12 @@ export const LinkDialog = {
 
     // ── 浮层选择器状态 ──────────────────────────────────────────────────────
     const popRef = ref(null);
-    const pk = reactive({ open: false, idx: -1, q: '', hi: 0, top: 0, left: 0, crumbs: [], closedAt: 0 });
+    // 树形一次铺开：缩进表达层级，行点一下就选中它，不再靠「钻进去 / 往上走」换视图。
+    // fold 只记被手动折叠起来的分类（key = rel），默认全展开。
+    const pk = reactive({ open: false, idx: -1, q: '', hi: 0, top: 0, left: 0, fold: {}, closedAt: 0 });
 
-    // 标签选择范围：all = 整棵树原样给；active = 只留自己启用的标签，
-    // 外加「自身没启用、但子树里有启用标签」的祖先分类壳（不然钻不到那些标签）。
-    const scopeAll = computed(() => props.scope === 'all');
+    // 只列当前启用的标签，外加「自身没启用、但子树里有启用标签」的祖先分类壳
+    // （不然钻不到那些标签）；选择范围固定如此，不再提供全库开关。
     const activeSet = computed(() => {
       const s = new Set();
       for (const n of props.activeTags || []) {
@@ -2384,7 +2372,7 @@ export const LinkDialog = {
     // 树叶兜底：万一树没拉到（首次进图库直接点齿轮），用当前启用标签铺一层，至少能选
     const roots = computed(() => {
       const t = Array.isArray(props.tree) ? props.tree : [];
-      const src = scopeAll.value ? t : pruneActive(t);
+      const src = pruneActive(t);
       if (src.length) return src;
       if (!props.activeTags.length) return [];
       return [{
@@ -2392,16 +2380,6 @@ export const LinkDialog = {
         children: props.activeTags.map((n) => ({ name: n, rel: n, count: null, children: [] })),
       }];
     });
-    function nodeOf(crumbs) {
-      let list = roots.value;
-      let cur = null;
-      for (const c of crumbs) {
-        cur = (list || []).find((n) => (n.rel || n.name) === (c.rel || c.name)) || null;
-        if (!cur) return null;
-        list = cur.children || [];
-      }
-      return cur;
-    }
     // 搜索：整树拍平后按名字/路径模糊匹配，最多 50 条
     function flatMatch(q) {
       const lq = String(q).toLowerCase();
@@ -2415,21 +2393,53 @@ export const LinkDialog = {
       })(roots.value);
       return out.slice(0, 50);
     }
-    const pkKids = computed(() => {
-      if (String(pk.q || '').trim()) return flatMatch(pk.q.trim());
-      const cur = nodeOf(pk.crumbs);
-      return cur ? (cur.children || []) : roots.value;
+    // 树形行：整棵树默认全部展开，父子靠缩进表达，一屏从上到下一眼看完整结构。
+    // 列表里每一行都是一个可以直接点的选项：叶子行 = 那个标签，分类行 = 整类。
+    const pkRows = computed(() => {
+      const out = [];
+      (function walk(ns, depth) {
+        for (const n of ns || []) {
+          const kids = n.children || [];
+          const key = n.rel || n.name;
+          const hasKids = kids.length > 0;
+          const open = !hasKids || !pk.fold[key];
+          out.push({
+            key, name: n.name, rel: key, count: n.count, node: n,
+            depth, hasKids, open, found: false,
+          });
+          if (hasKids && open) walk(kids, depth + 1);
+        }
+      })(roots.value, 0);
+      return out;
     });
-    const pkCurName = computed(() => {
-      const last = pk.crumbs[pk.crumbs.length - 1];
-      return last ? last.name : '';
+    // 搜索模式：整树拍平匹配，平铺显示并标出完整路径，命中即可点选
+    const pkFlat = computed(() => {
+      const q = String(pk.q || '').trim();
+      if (!q) return [];
+      return flatMatch(q).map((n) => ({
+        key: n.rel || n.name, name: n.name, rel: n.rel || n.name, count: n.count, node: n,
+        depth: 0, hasKids: !!(n.children && n.children.length), open: false, found: true,
+      }));
+    });
+    const pkView = computed(() => (String(pk.q || '').trim() ? pkFlat.value : pkRows.value));
+    // 这一层当前已选中的 rel：打开时高亮它并滚到它跟前，省得自己翻
+    const pkSelRel = computed(() => {
+      const it = draft.custom[pk.idx];
+      if (!it || it.type !== 'tag') return '';
+      return String(it.rel || it.value || '');
     });
     function closePicker() {
       pk.open = false;
       pk.idx = -1;
       pk.q = '';
       pk.hi = 0;
-      pk.crumbs = [];
+      pk.fold = {};
+    }
+    // 折叠 / 展开一个分类：只影响显示，不改变选择，随便点都不会选错
+    function toggleFold(row) {
+      if (!row || !row.hasKids) return;
+      if (pk.fold[row.key]) delete pk.fold[row.key];
+      else pk.fold[row.key] = true;
     }
     // 打开浮层：定位到当前行 chip 的正下方；下方放不下就翻到上方
     function openPicker(i, ev) {
@@ -2438,21 +2448,13 @@ export const LinkDialog = {
       pk.open = true;
       pk.q = '';
       pk.hi = 0;
-      pk.crumbs = [];
+      pk.fold = {};
+      // 该层已经选过：把光标停在它身上并滚到眼前，改的话直接点附近的行
       const it = draft.custom[i];
-      // 该层已经选过：把面包屑还原到它的父级，方便顺着原路径改
-      if (it && it.type === 'tag' && it.rel) {
-        const segs = String(it.rel).split('/').filter(Boolean);
-        let list = roots.value;
-        const acc = [];
-        for (let k = 0; k < segs.length - 1; k++) {
-          const hit = (list || []).find((n) => n.name === segs[k]);
-          if (!hit) break;
-          acc.push({ name: hit.name, rel: hit.rel || hit.name });
-          list = hit.children || [];
-        }
-        pk.crumbs = acc;
-      }
+      const selRel = it && it.type === 'tag' ? String(it.rel || it.value || '') : '';
+      const rows = pkRows.value;
+      const hit = selRel ? rows.findIndex((r) => r.rel === selRel) : -1;
+      if (hit >= 0) pk.hi = hit;
       const el = ev && (ev.currentTarget || ev.target);
       if (el && el.getBoundingClientRect) {
         const r = el.getBoundingClientRect();
@@ -2463,6 +2465,7 @@ export const LinkDialog = {
         if (top + H > window.innerHeight - 12) top = Math.max(12, r.top - H - 6);
         pk.top = top;
       }
+      if (hit >= 0) scrollHi();
     }
     // 选中一项：有子节点 = 分类，落成「整类层」（目录名就是这个分类名）
     function applyPick(node) {
@@ -2475,13 +2478,6 @@ export const LinkDialog = {
         it.cat = !!(node.children && node.children.length);
       }
       closePicker();
-    }
-    function applyWhole() { applyPick(nodeOf(pk.crumbs)); }
-    function enterNode(node) {
-      if (!node || !(node.children && node.children.length)) return;
-      pk.crumbs = pk.crumbs.concat([{ name: node.name, rel: node.rel || node.name }]);
-      pk.q = '';
-      pk.hi = 0;
     }
     function scrollHi() {
       nextTick(() => {
@@ -2504,11 +2500,19 @@ export const LinkDialog = {
     function onDocKey(e) {
       if (!pk.open) return;
       if (e.key === 'Escape') { e.stopPropagation(); closePicker(); return; }
-      const n = pkKids.value.length;
+      const rows = pkView.value;
+      const n = rows.length;
       if (e.key === 'ArrowDown') { e.preventDefault(); pk.hi = n ? (pk.hi + 1) % n : 0; scrollHi(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); pk.hi = n ? (pk.hi - 1 + n) % n : 0; scrollHi(); }
-      else if (e.key === 'Enter') { e.preventDefault(); applyPick(pkKids.value[pk.hi]); }
-      else if (e.key === 'Backspace' && !pk.q && pk.crumbs.length) { e.preventDefault(); pk.crumbs.pop(); }
+      else if (e.key === 'Enter') { e.preventDefault(); applyPick(rows[pk.hi] && rows[pk.hi].node); }
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const r = rows[pk.hi];
+        if (r && r.hasKids) {
+          if (e.key === 'ArrowLeft') pk.fold[r.key] = true;
+          else delete pk.fold[r.key];
+        }
+      }
     }
     onMounted(() => {
       document.addEventListener('mousedown', onDocDown, true);
@@ -2540,8 +2544,6 @@ export const LinkDialog = {
     // 手输一个库里没有的名字也不算失效，保存时会被规范化成文字层，当固定目录名用。
     function isBad(it) {
       if (!it || it.type !== 'tag' || it.cat) return false;
-      // 全库范围：用户已经明确允许选库里任何标签，选到没启用的不算「失效」，保存时落成固定目录名
-      if (scopeAll.value) return false;
       const v = String(it.value || '').trim();
       if (!v) return false;
       return props.knownTags.includes(v) && !props.activeTags.includes(v);
@@ -2612,9 +2614,6 @@ export const LinkDialog = {
             if (it.cat) cat = true;
             // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
             else if (!props.activeTags.includes(value) && !props.knownTags.includes(value)) type = 'text';
-            // 全库范围下选到「库里存在、但当前没启用」的标签：同样落成固定目录名，
-            // 否则下次导出又会被「标签已停用」拦下，等于白选
-            else if (scopeAll.value && !props.activeTags.includes(value)) type = 'text';
           }
           return { type, value, rel: cat || type === 'tag' ? String(it.rel || '') : '', cat };
         })
@@ -2643,13 +2642,13 @@ export const LinkDialog = {
       if (pk.closedAt && now - pk.closedAt < 120) { pk.closedAt = 0; return; }
       emit('close');
     }
-    // 切换标签选择范围后，浮层里的候选列表整个变了，直接收起来让用户重新点开
-    watch(() => props.scope, () => { if (pk.open) closePicker(); });
+    // 切换标签启用状态后候选列表整个变了，直接收起来让用户重新点开
+    watch(() => props.activeTags, () => { if (pk.open) closePicker(); });
 
     return {
-      draft, err, dragFrom, dragTo, badCount, preview, pk, popRef, pkKids, pkCurName,
-      isBad, addLayer, removeLayer, toggleType, openPicker, closePicker,
-      applyPick, applyWhole, enterNode, save, scopeAll, roots, onMaskDown,
+      draft, err, dragFrom, dragTo, badCount, preview, pk, popRef, pkView, pkRows, pkSelRel,
+      isBad, addLayer, removeLayer, toggleType, openPicker, closePicker, toggleFold,
+      applyPick, save, roots, onMaskDown,
       onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
     };
   },
@@ -2661,18 +2660,6 @@ export const LinkDialog = {
           <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')">✕</button>
         </div>
         <div class="zhg-lkd-body">
-          <div class="zhg-lkd-scope">
-            <span class="zhg-lkd-k">标签选择范围</span>
-            <div class="zhg-lkd-seg">
-              <button class="zhg-lkd-seg-btn" :class="{ on: !scopeAll }"
-                      data-tip="只列出当前已在筛选区启用的标签（默认）"
-                      @click="$emit('scope', 'active')">仅启用</button>
-              <button class="zhg-lkd-seg-btn" :class="{ on: scopeAll }"
-                      data-tip="全库标签都能选；选到没启用的标签会当成固定目录名用，不会被「标签已停用」拦下"
-                      @click="$emit('scope', 'all')">全库</button>
-            </div>
-            <span class="zhg-lkd-note">{{ scopeAll ? '全库可选：没启用的标签按固定目录名落盘' : '只列已启用的过滤标签' }}</span>
-          </div>
           <div class="zhg-lkd-lh">分层顺序（从上到下 = 由外到内，按住 ⠿ 拖动换顺序）</div>
           <div class="zhg-lkd-layers">
             <div v-for="(it, i) in draft.custom" :key="it.uid" class="zhg-lkd-layer"
@@ -2686,7 +2673,7 @@ export const LinkDialog = {
                       data-tip="点击切换：标签层跟着启用的过滤标签走 / 文字层就是固定目录名"
                       @click="toggleType(i)">{{ it.type === 'tag' ? '标签' : '文字' }}</button>
               <button v-if="it.type === 'tag'" class="zhg-lkd-chip" :class="{ empty: !it.value }"
-                      data-tip="点击选标签或整类分类（可逐级钻取、可搜索）" @click="openPicker(i, $event)">
+                      data-tip="点击选标签或整类分类（整棵树一次铺开、可搜索）" @click="openPicker(i, $event)">
                 <span class="zhg-lkd-chip-nm">{{ it.value || '点这里选标签 / 整类…' }}</span>
                 <span v-if="it.cat" class="zhg-lkd-chip-tag">整类</span>
                 <span class="zhg-lkd-chip-cv">▾</span>
@@ -2724,34 +2711,31 @@ export const LinkDialog = {
           <span class="zhg-lkd-pop-esc">Esc</span>
         </div>
         <div v-if="!pk.q" class="zhg-lkd-pop-crumbs">
-          <button class="zhg-lkd-crumb" @click="pk.crumbs = []">全部</button>
-          <template v-for="(c, ci) in pk.crumbs" :key="c.rel + '_' + ci">
-            <span class="zhg-lkd-crumbsep">/</span>
-            <button class="zhg-lkd-crumb" :class="{ cur: ci === pk.crumbs.length - 1 }"
-                    @click="pk.crumbs = pk.crumbs.slice(0, ci + 1)">{{ c.name }}</button>
-          </template>
-        </div>
-        <div v-if="!pk.q && pk.crumbs.length" class="zhg-lkd-pop-whole" @click="applyWhole">
-          <span class="ok">✓</span> 就用这一层：<b>{{ pkCurName }}</b>
-          <span class="hint">整类（子分类全算进来）</span>
+          <span class="zhg-lkd-pop-tip">整棵树一次铺开，缩进就是层级；点哪一行就是选它</span>
         </div>
         <div class="zhg-lkd-pop-list">
-          <div v-for="(n, ni) in pkKids" :key="(n.rel || n.name) + '_' + ni" class="zhg-lkd-pop-item"
-               :class="{ hi: ni === pk.hi }" @mouseenter="pk.hi = ni" @click="applyPick(n)">
-            <span class="ic">{{ n.children && n.children.length ? '▸' : '·' }}</span>
+          <div v-for="(n, ni) in pkView" :key="n.key + '_' + ni" class="zhg-lkd-pop-item"
+               :class="{ hi: ni === pk.hi, cur: !n.found && n.rel === pkSelRel, cat: n.hasKids }"
+               :style="{ paddingLeft: (7 + n.depth * 16) + 'px' }"
+               @mouseenter="pk.hi = ni" @click="applyPick(n.node)">
+            <button v-if="n.hasKids" class="fold" :class="{ closed: !n.open }"
+                    data-tip="折叠 / 展开这个分类（只影响显示，不会选中）"
+                    @click.stop="toggleFold(n)">{{ n.open ? '▾' : '▸' }}</button>
+            <span v-else class="ic">·</span>
             <span class="nm">
               <b>{{ n.name }}</b>
-              <i v-if="n.children && n.children.length">{{ n.children.length }} 个子分类</i>
+              <i v-if="n.hasKids && !n.open">已折叠</i>
+              <i v-else-if="n.found" class="path">{{ n.rel }}</i>
             </span>
+            <span v-if="n.hasKids" class="whole">整类</span>
             <span v-if="n.count !== null && n.count !== undefined" class="cnt">{{ n.count }}</span>
-            <button v-if="n.children && n.children.length" class="enter" data-tip="往下钻一层"
-                    @click.stop="enterNode(n)">›</button>
+            <span v-if="!n.found && n.rel === pkSelRel" class="picked">当前</span>
           </div>
-          <div v-if="!pkKids.length" class="zhg-lkd-pop-empty">没有匹配的标签 / 分类</div>
+          <div v-if="!pkView.length" class="zhg-lkd-pop-empty">没有匹配的标签 / 分类</div>
         </div>
         <div class="zhg-lkd-pop-foot">
-          <span>点整行 = 直接选这一项</span>
-          <span>行右侧 › = 往下钻</span>
+          <span>点任意一行 = 直接选它</span>
+          <span>▾ / ▸ = 折叠展开，「整类」行 = 整类目录</span>
         </div>
       </div>
     </div>

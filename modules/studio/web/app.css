@@ -2407,22 +2407,42 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .zhg-lkd-pop-item .nm i { font-style: normal; font-size: 10px; color: #7f8b9e; }
 .zhg-lkd-pop-item .cnt { flex-shrink: 0; font-size: 10px; color: #7f8b9e; font-variant-numeric: tabular-nums; }
-.zhg-lkd-pop-item .enter { flex-shrink: 0; width: 18px; height: 18px; line-height: 1; border-radius: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.06); color: #9aa7bd;
-  font-size: 11px; cursor: pointer; font-family: inherit; }
-.zhg-lkd-pop-item .enter:hover { color: #fff; background: rgba(79, 140, 255, 0.28); }
+/* 行右侧的钻进 / 上跳按钮：往下钻是 ›，往上走是 ↑，都比正文大一档才好点 */
+.zhg-lkd-pop-item .enter { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.07); color: #a9b6ca;
+  font-size: 18px; font-weight: 600; line-height: 1; cursor: pointer; font-family: inherit;
+  transition: all 0.12s; }
+.zhg-lkd-pop-item .enter:hover { color: #fff; background: rgba(79, 140, 255, 0.34);
+  border-color: rgba(79, 140, 255, 0.6); }
+.zhg-lkd-pop-item .enter.up { font-size: 16px; color: #ffd08a; border-color: rgba(255, 176, 32, 0.34);
+  background: rgba(255, 176, 32, 0.12); }
+.zhg-lkd-pop-item .enter.up:hover { color: #2a1c00; background: #ffc466; border-color: #ffc466; }
 .zhg-lkd-pop-empty { padding: 16px; text-align: center; font-size: 11.5px; color: #7f8b9e; }
 .zhg-lkd-pop-foot { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 10.5px; color: #7f8b9e; }
-/* 标签选择范围（仅启用 / 全库）：放在分层列表上方一行 */
-.zhg-lkd-scope { display: flex; align-items: center; gap: 8px; margin: 0 0 2px; }
-.zhg-lkd-scope .zhg-lkd-k { width: auto; flex-shrink: 0; }
-.zhg-lkd-seg { display: inline-flex; flex-shrink: 0; padding: 2px; border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.10); background: rgba(0, 0, 0, 0.30); }
-.zhg-lkd-seg-btn { border: none; background: transparent; color: #9aa7bd; font-size: 11px; cursor: pointer;
-  padding: 2px 9px; border-radius: 6px; font-family: inherit; transition: all 0.12s; }
-.zhg-lkd-seg-btn:hover { color: #fff; }
-.zhg-lkd-seg-btn.on { background: rgba(79, 140, 255, 0.26); color: #d9e8ff; }
+/* 叶子视图里行尾那个灰色父路径：点 ↑ 就是回到它 */
+.zhg-lkd-pop-item .nm .path { color: #6f7b8e; }
+.zhg-lkd-cnthint { margin-left: auto; font-size: 10px; color: #7f8b9e; }
+/* ── 树形选择视图：缩进表达层级，一行就是一项，点行即选 ──────────────────────
+   fold 箭头只管折叠展开（不触发选中），分类行右侧挂「整类」小标表示它是整类目录，
+   cur = 这一层当前已选中的项，打开浮层时高亮并自动滚到跟前。 */
+.zhg-lkd-pop-item .fold { flex-shrink: 0; width: 18px; height: 18px; padding: 0; display: inline-flex;
+  align-items: center; justify-content: center; border: none; border-radius: 5px; background: transparent;
+  color: #9aa7bd; font-size: 10px; line-height: 1; cursor: pointer; font-family: inherit;
+  transition: color 0.12s, background 0.12s; }
+.zhg-lkd-pop-item .fold:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
+.zhg-lkd-pop-item .fold.closed { color: #ffd08a; }
+.zhg-lkd-pop-item.cat .nm b { color: #eef3ff; font-weight: 600; }
+.zhg-lkd-pop-item .whole { flex-shrink: 0; height: 18px; padding: 0 6px; display: inline-flex;
+  align-items: center; border-radius: 5px; font-size: 10px; color: #b9d4ff;
+  background: rgba(79, 140, 255, 0.20); border: 1px solid rgba(79, 140, 255, 0.36); }
+.zhg-lkd-pop-item .picked { flex-shrink: 0; height: 18px; padding: 0 6px; display: inline-flex;
+  align-items: center; border-radius: 5px; font-size: 10px; font-weight: 600;
+  color: #0f1622; background: #5ad18a; }
+.zhg-lkd-pop-item.cur { background: rgba(90, 209, 138, 0.14); box-shadow: inset 2px 0 0 #5ad18a; }
+.zhg-lkd-pop-item.cur.hi { background: rgba(79, 140, 255, 0.24); }
+.zhg-lkd-pop-tip { font-size: 10.5px; color: #8b97ab; }
 /* 导出配置按钮：与快捷导出按钮并排，失效层存在时变琥珀色提示 */
 .zhg-link-cfg-btn { display: inline-flex; align-items: center; justify-content: center; transition: all 0.12s; }
 .zhg-link-cfg-btn svg { display: block; }
