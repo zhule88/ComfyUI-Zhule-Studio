@@ -144,7 +144,7 @@ export default {
                        :src="defaultImageUrl"
                        alt="">
                 </div>
-                <div class="thumb-enter" v-if="!hideCardIcons" data-tip="进入详情页" @click.stop="goToGallery(file)">→</div>
+                <div class="thumb-enter" v-if="!hideCardIcons" data-tip="跳转图库（按当前 tag 筛选）" @click.stop="goToGallery(file)">→</div>
                 <div class="thumb-zoom" v-if="!hideCardIcons" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
                 <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="!hideCardIcons && file.images && file.images.length">🗑</div>
                 <!-- 参考图翻页条：默认压在最下面的 42px。
@@ -448,7 +448,8 @@ export default {
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
           <div class="ctx-sep"></div>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 进入详情页</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail">🖼 查看当前图片详情</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 跳转图库（按当前 tag）</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
           <button type="button" class="ctx-item danger" v-if="cardMenu.hasImages"
                   @pointerdown.stop @click="onCardDeleteRef">🗑 删除当前参考图</button>
@@ -924,6 +925,8 @@ export default {
                 <div class="pc-ops">
                   <button class="btn primary" @click="applyPreset(p)"
                           data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">应用</button>
+                  <button class="btn" @click="presetToGallery(p)"
+                          data-tip="拿这份预设里的普通标签（池子忽略）直接跳图库筛选">跳图库</button>
                   <button class="btn danger" @click="deletePreset(p)"
                           data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">删除</button>
                 </div>
@@ -3868,6 +3871,9 @@ const submitAddTab = async () => {
     const onCardUpload = () => { const f = cardMenu.file; closeCardMenu(); if (f) openUploadRef(f); };
     const onCardDeleteWord = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteWord(f); };
     const onCardGallery = () => { const f = cardMenu.file; closeCardMenu(); if (f) goToGallery(f); };
+    // 右键「查看当前图片详情」：直接在本页摊开该词条的详情弹层（当前那张参考图 + 正文），
+    // 不再跳图库。原来的「进入详情页」实质是拿词条 id 当 tag 跳图库，已改名为「跳转图库」。
+    const onCardDetail = () => { const f = cardMenu.file; closeCardMenu(); if (f) openCardViewer(f); };
     const onCardZoom = () => { const f = cardMenu.file; closeCardMenu(); if (f) zoomCardImage(f); };
     const onCardDeleteRef = () => { const f = cardMenu.file; closeCardMenu(); if (f) askDeleteRef(f); };
     const onCardVgStrip = () => { const f = cardMenu.file; closeCardMenu(); if (f) openVgStrip(f); };
@@ -4624,6 +4630,16 @@ const submitAddTab = async () => {
       window.open(url, '_blank');
     };
     const closeViewer = () => { viewer.open = false; viewer.file = null; };
+    // 打开详情弹层：定位到该词条「当前正在展示」的那张参考图（多图卡片翻到哪张就开哪张），
+    // 无参考图时 idx 归 0，弹层只渲染正文——不新增接口、不跳页，纯本页交互。
+    const openCardViewer = (file) => {
+      if (!file) return;
+      const n = (file.images && file.images.length) || 0;
+      const cur = Number(getImgIdx(file)) || 0;
+      viewer.file = file;
+      viewer.idx = n ? Math.min(Math.max(cur, 0), n - 1) : 0;
+      viewer.open = true;
+    };
 
     // ============ 全屏查看器（公共模块，命令式，非响应式） ============
     let fullViewer = null;
@@ -4979,6 +4995,16 @@ const submitAddTab = async () => {
     // 现在一律按设置里的「删除免确认」（zhule_ui_pref.common.noDeleteConfirm）：
     //   开 = 点一下就删（不弹框）；关 = 弹统一的确认框，确认后才删。
     // 只删预设记录，词库词条与图库图片一个都不碰。
+    // 预设中心「跳图库」：只拿这份预设里的普通标签（池子整项忽略，不展开池内容），
+    // 按标签 id 用逗号串起来传给图库 tags（图库按 promptIds 匹配），词条改名后也照样命中。
+    const presetToGallery = (p) => {
+      const ids = ((p && p.flow) || [])
+        .filter((it) => it && it.t !== 'pool' && it.id != null && it.id !== '')
+        .map((it) => String(it.id));
+      const uniq = [...new Set(ids)];
+      if (!uniq.length) { showToast('这份预设里没有普通标签（只有池子或空预设），跳不了图库', 'warn'); return; }
+      window.open('/zhule_studio#/gallery?tags=' + encodeURIComponent(uniq.join(',')), '_blank');
+    };
     const deletePreset = async (p) => {
       if (!p) return;
       await del.ask({
@@ -6150,7 +6176,7 @@ const submitAddTab = async () => {
     isCatMuted, toggleCatMute,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,
-      onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardZoom, onCardDeleteRef, onCardToCategory,
+      onCardEdit, onCardMute, onCardUpload, onCardDeleteWord, onCardGallery, onCardDetail, onCardZoom, onCardDeleteRef, onCardToCategory,
       catEdit, catSaving, openCatEdit, closeCatEdit, submitCatEdit,
       toggleNegPreview, bankNodes, nodeOfCat,
       canAddChip, chipParentLabel, addCardIsTxt,
@@ -6167,11 +6193,11 @@ const submitAddTab = async () => {
       openVgRename, closeVgRename, submitVgRename,
       toggleTranslate, changeColumns, changeCount, onCountInput, fixCount,
       prevImage, nextImage, randomImage, goToGallery,
-      viewer, closeViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
+      viewer, closeViewer, openCardViewer, viewerPrev, viewerNext, viewerRandom, zoomView, zoomCardImage,
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      applyPreset, deletePreset,
+      applyPreset, presetToGallery, deletePreset,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

@@ -202,7 +202,7 @@ export const CardCtxMenu = {
     // { open, x, y, title, picked, selCount }
     state: { type: Object, required: true },
   },
-  emits: ['close', 'sel', 'zoom', 'detail', 'copylink', 'del', 'batch-del'],
+  emits: ['close', 'sel', 'zoom', 'detail', 'copylink', 'download', 'del', 'batch-del'],
   // 模板里不能直接写 emit('x')：Vue 3 模板上下文不暴露 emit 标识符，运行时为 undefined，
   // 每次点击都会抛「TypeError: emit is not a function」——事件处理器中断导致 state.open 卡在 true，
   // 全屏透明 .ctx-layer 永不消失，整页点击/滚轮全被它吃掉（表现为「页面卡死，只能刷新」）。
@@ -213,6 +213,7 @@ export const CardCtxMenu = {
     const onZoom = () => emit('zoom');
     const onDetail = () => emit('detail');
     const onCopyLink = () => emit('copylink');
+    const onDownload = () => emit('download');
     const onDel = () => emit('del');
     const onBatchDel = () => emit('batch-del');
     // Esc 兜底：即使某个动作抛错导致遮罩残留，也能一键救回（与词库右键菜单行为一致）
@@ -223,7 +224,7 @@ export const CardCtxMenu = {
     // 未注册时「复制图片硬链接」整项不渲染
     watch(() => props.state && props.state.open, (open) => { if (open) refreshLinkMenuReady(); });
     onMounted(() => { refreshLinkMenuReady(); });
-    return { onClose, onSel, onZoom, onDetail, onCopyLink, onDel, onBatchDel, linkMenuReady };
+    return { onClose, onSel, onZoom, onDetail, onCopyLink, onDownload, onDel, onBatchDel, linkMenuReady };
   },
   template: `
     <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
@@ -239,7 +240,10 @@ export const CardCtxMenu = {
                   @click="onCopyLink">🔗 {{ state.picked && state.selCount > 1 ? ('复制选中的 ' + state.selCount + ' 张硬链接') : '复制图片硬链接' }}</button>
         </template>
         <div class="ctx-sep"></div>
-        <button type="button" class="ctx-item danger" @click="onDel">🗑 删除这张图</button>
+        <!-- 下载：图标之外的第二个入口，多选时整批下载（右键 = 下载 + 删除，不必再去找图标） -->
+        <button type="button" class="ctx-item" @click="onDownload">⬇ {{ state.picked && state.selCount > 1 ? ('下载选中的 ' + state.selCount + ' 张') : '下载图片' }}</button>
+        <!-- 多选时只保留「删除选中的 N 张」，「删除这张图」隐去，避免误删当前这一张之外的语义混乱 -->
+        <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel">🗑 删除这张图</button>
         <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel">🗑 删除选中的 {{ state.selCount }} 张</button>
       </div>
     </div>
@@ -1024,7 +1028,7 @@ export function useGalleryCommon(opts = {}) {
     cardCtx.selCount = selected.size;
     // 贴边翻转，避免菜单跑出窗口（宽约 210 / 高约 300，含「复制图片硬链接」一行）
     cardCtx.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 220));
-    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 300));
+    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 340));
     cardCtx.open = true;
   };
   // 菜单项统一「先收菜单再执行」，避免遮罩层挡住后续弹窗与框选
@@ -1056,6 +1060,34 @@ export function useGalleryCommon(opts = {}) {
     } catch (e) {
       showToast('复制硬链接失败：' + (e.message || ''), 'error');
     }
+  };
+  // 右键「下载」：把原图交给浏览器存到下载目录（不动硬链接、不改库，图标之外的另一条路）。
+  // 该卡片已选中且选中数 > 1 时整批下载：逐张触发、间隔 400ms，避免浏览器把并发下载当弹窗拦掉。
+  const onCtxDownload = async () => {
+    const it = cardCtx.item;
+    const multi = !!(it && isSel(it.key) && selected.size > 1);
+    closeCardCtx();
+    if (!it) return;
+    const keys = multi ? [...selected] : [it.key];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const target = items.value.find((x) => x.key === k);
+      // 优先用列表项的 mtime（缓存破坏参数），批量下载跨页取不到时留空也不影响下载
+      const t = (target && target.mtime) || (k === it.key ? it.mtime : '') || '';
+      const url = imgUrl(k, t);
+      // 文件名直接用图库相对路径的末段（本身就是 xxx.png），缺失才兜底补扩展名
+      let name = String(k).split('/').pop() || ('zhule_image_' + (i + 1));
+      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += '.png';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      if (i < keys.length - 1) await new Promise((r) => setTimeout(r, 400));
+    }
+    showToast(keys.length > 1 ? ('已开始下载 ' + keys.length + ' 张图片') : ('已开始下载：' + (it.name || '图片')), 'success');
   };
   const onCtxDel = () => { const it = cardCtx.item; closeCardCtx(); if (it) askDelete(it); };
   const onCtxBatchDel = () => { closeCardCtx(); askBatchDelete(); };
@@ -2399,7 +2431,7 @@ export function useGalleryCommon(opts = {}) {
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     hideCardIcons, cardCtx, openCardCtx, closeCardCtx,
-    onCtxSel, onCtxZoom, onCtxDetail, onCtxCopyLink, onCtxDel, onCtxBatchDel,
+    onCtxSel, onCtxZoom, onCtxDetail, onCtxCopyLink, onCtxDownload, onCtxDel, onCtxBatchDel,
     cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

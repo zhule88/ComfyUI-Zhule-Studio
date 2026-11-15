@@ -272,7 +272,7 @@ export default {
     <!-- 图库卡片右键菜单：卡片图标操作 + 进入详情的统一入口（隐藏图标后为唯一入口） -->
     <card-ctx-menu :state="cardCtx" @close="closeCardCtx"
                    @sel="onCtxSel" @zoom="onCtxZoom" @detail="onCtxDetail"
-                   @copylink="onCtxCopyLink"
+                   @copylink="onCtxCopyLink" @download="onCtxDownload"
                    @del="onCtxDel" @batch-del="onCtxBatchDel"></card-ctx-menu>
 
     <!-- 全站唯一删除确认弹框：图片/批量/标签/词条共用，设置里开启「删除免确认」则不弹 -->
