@@ -1,10 +1,11 @@
 import { reactive, computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
+import { GalleryDetailModal, createDetailHost } from './galleryDetail.js';
 import { useDeleteConfirm, DeleteDialog } from './deleteConfirm.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
 
 export default {
   name: 'Wordbank',
-  components: { DeleteDialog },
+  components: { DeleteDialog, GalleryDetailModal },
   template: `
     <div class="page active">
       <div v-if="error" class="empty" style="padding:60px;text-align:center;color:#ff8fa8;">
@@ -25,10 +26,14 @@ export default {
         </div>
 
         <div class="bank-tabs-row">
-        <div class="tabs">
+        <div class="tabs" ref="tabsBox">
           <!-- 新建大类统一走右键菜单；仅在没有大类时留一个兜底占位，避免无处右键 -->
           <div v-if="!tabs.length" class="tab tab-void"
                data-tip="还没有大类，右键新建" @contextmenu.prevent="openAddTab">（无大类）右键新建</div>
+          <!-- 大类同样走液态分段：滑块由 syncChipGliders 统一驱动；大类比小类更「重」
+               —— 字号更大、滑块带外发光、选中项左侧多一道竖条，一眼分出层级 -->
+          <div v-else class="seg seg-tab">
+            <div class="glider"></div>
           <div v-for="name in tabs" :key="name"
                class="tab"
                :class="{active: data.activeTab === name, 'in-pool': isTabTraversePool(name), 'in-pool-random': isTabInPool(name) && !isTabTraversePool(name), 'cat-picked': isTabCatPicked(name), 'has-selected': tabHasSelected(name)}"
@@ -40,7 +45,12 @@ export default {
                @dragover="onTabDragOver($event, name)"
                @drop.prevent="onTabDrop"
                @dragend="onTabDragEnd">{{ tabLabel(name) }}<span v-if="isCatMuted('tab', name)" class="chip-mute">🔇</span></div>
+          </div>
         </div>
+          <!-- 数量徽章：原先挤在「筛选分类 ⏶收起 数量43」那行右侧，那行整块去掉后数量挪到这儿，
+               就贴在搜索放大镜左边，不额外占高度 -->
+          <span class="wb-count" :class="{ 'is-search': searching }"
+                :data-tip="searching ? '当前搜索命中的词条数' : '当前列表词条数'">{{ listFiles.length }}<i>{{ searching ? ' 命中' : ' 词' }}</i></span>
           <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
           <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
             <button v-if="!searchOpen" class="wb-search-trigger" :data-tip="searchTip"
@@ -63,21 +73,16 @@ export default {
 
         <div class="bank-body">
         <div class="chips-wrap">
-          <div class="chips-head">
-            <span class="chips-title">筛选分类</span>
-            <button class="chips-toggle" @click="toggleChips"
-                    :data-tip="chipsCollapsed ? '展开分类区' : '收起分类区'">
-              {{ chipsCollapsed ? '⏷ 展开' : '⏶ 收起' }}
-            </button>
-            <span class="chips-count">{{ listCountLabel }}</span>
-          </div>
-          <div class="chips-container" :style="{ height: chipsHeightCss }">
+          <div class="chips-container" ref="chipsBox" :style="{ height: chipsHeightCss }">
             <div v-for="(line, depth) in chipLines" :key="depth" class="chips-line">
-              <div class="chip-depth" :data-tip="depth === 0 ? '一级分类（右键分类可新建 / 编辑）' : '第 ' + (depth + 1) + ' 级分类'">{{ depth === 0 ? '大类' : (depth + 1) + '级' }}</div>
-              <div v-if="line.length" class="chip clear" :class="{active: !getSelections()[depth].length}"
-                   @click="clearChip(depth)">全部</div>
               <!-- 分类 chip 自带 { id, parentId, name }：选中/拖拽/池/右键全按节点 id，不再有路径 key -->
-              <div v-for="chip in line" :key="chip.id"
+              <!-- 液态分段：同一层的分类连成一条 .seg，选中项由 .glider 滑块承载（位宽由 syncChipGliders 按真实 DOM 量出）；
+                   「全部」作为分段首项进同一个 .seg，与其他分类同级，选中它时同样由滑块承载 -->
+              <div v-if="line.length" class="seg">
+                <div class="glider"></div>
+                <div class="chip clear" :class="{active: !getSelections()[depth].length}"
+                     @click="clearChip(depth)">全部</div>
+                <div v-for="chip in line" :key="chip.id"
                    class="chip"
                    :class="[chipThemeClass, {active: getSelections()[depth].includes(chip.id), 'in-pool': isChipTraversePool(chip), 'in-pool-random': isChipInPool(chip) && !isChipTraversePool(chip), 'cat-picked': isChipCatPicked(chip)}]"
                    :style="chipStyle(chip.name)"
@@ -89,9 +94,10 @@ export default {
                    @dragover="onChipDragOver($event, depth, chip)"
                    @drop.prevent
                    @dragend="onChipDragEnd">{{ chip.name }}<span v-if="isCatMuted('chip', chip.id)" class="chip-mute">🔇</span></div>
+              </div>
             </div>
           </div>
-          <div v-show="!chipsCollapsed" class="chips-resize" data-tip="拖拽调整高度"
+          <div class="chips-resize" data-tip="拖拽调整高度"
                @pointerdown="onChipsResizeDown"></div>
         </div>
 
@@ -336,8 +342,9 @@ export default {
             <span class="ctx-count empty" v-else>未加载</span>
           </div>
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCtxEditCategory">✎ 编辑分类</button>
-          <button type="button" class="ctx-item" :class="{ on: catMenu.muted }" @pointerdown.stop @click="toggleCatMute">
-            {{ catMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（含其下全部词条）' }}
+          <button type="button" class="ctx-item" :class="{ on: catMenu.muted }" @pointerdown.stop @click="toggleCatMute"
+                  :data-tip="catMenu.muted ? '恢复该分类参与自动选词' : '静音后该分类及其下全部词条都不参与自动选词'">
+            {{ catMenu.muted ? '🔊 取消静音' : '🔇 静音' }}
           </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'all' }"
@@ -365,7 +372,7 @@ export default {
                     ? '把该分类（含全部子分类）从已选集合里整类剔除，与 Ctrl/⌘+左键再点一次等价'
                     : '等价于按住 Ctrl/⌘ 左键点这个分类：把它连同所有子分类的词条整批加入已选，之后还能继续多选别的分类，最后统一凝结'"
                   @pointerdown.stop @click="onCtxCatPick">
-            {{ catMenu.catPicked ? '☑ 取消选中' : '☑ 选中' }}
+            {{ catMenu.catPicked ? '☑ 取消选中分类' : '☑ 选中分类' }}
           </button>
           <div class="ctx-sep"></div>
           <!-- 分类 ⇄ 分支 互转：两者本质同构，只差 type 一位。
@@ -375,7 +382,7 @@ export default {
                   :disabled="!catMenu.canToVg"
                   :data-tip="catMenu.canToVg ? ('把「' + catMenu.name + '」整个分类聚拢成一张分支卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各分支（之后可在卡片右键原路拆回分类）') : catMenu.toVgWhy"
                   @pointerdown.stop @click="catMenu.canToVg && onCtxToVg()">
-            🗂 聚拢成分支卡（分类 → 分支）
+            🗂 聚拢为分支组
           </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
@@ -387,7 +394,7 @@ export default {
           <button type="button" class="ctx-item danger" :class="{ disabled: catMenu.kind === 'tab' }"
                   :disabled="catMenu.kind === 'tab'"
                   :data-tip="catMenu.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'"
-                  @pointerdown.stop @click="onCtxDeleteCategory">🗑 删除该分类</button>
+                  @pointerdown.stop @click="onCtxDeleteCategory">🗑 删除分类</button>
         </div>
       </div>
 
@@ -402,24 +409,25 @@ export default {
           <!-- 分支组卡片：右键即可把该卡的全部分支摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
           <button type="button" class="ctx-item vg-strip-entry" v-if="cardMenu.vgCount > 1"
                   @pointerdown.stop @click="onCardVgStrip">
-            🎞 分支胶片条（{{ cardMenu.vgCount }} 版）
+            🎞 分支胶片条 · {{ cardMenu.vgCount }} 版
           </button>
           <!-- 分支组卡片：就地新建一个分支（落在同一分类下，自动成为组里的最新一版） -->
           <button type="button" class="ctx-item vg-add-entry" v-if="cardMenu.isVg"
                   @pointerdown.stop @click="onCardNewVersion">
-            ＋ 新建分支（并入本组）
+            ＋ 新建分支
           </button>
           <!-- 分支组卡片：改组名 = 改这个分支组节点自己的 name；各分支只存短名，显示前缀自动跟着变 -->
           <button type="button" class="ctx-item vg-rename-entry" v-if="cardMenu.isVg"
+                  :data-tip="'当前组名：' + (cardMenu.vgTitle || '本组')"
                   @pointerdown.stop @click="onCardVgRename">
-            ✎ 改分支组名（{{ cardMenu.vgTitle || '本组' }}）
+            ✎ 重命名分支组
           </button>
           <!-- 分支组 ⇄ 分类只差 type 一位：转过去后组名当分类名，各分支成为该分类下的独立卡片。
                各分支库里存的一直是短名，「组名#」前缀由渲染层拼，所以转换不需要动任何名字 -->
           <button type="button" class="ctx-item vg-to-cat-entry" v-if="cardMenu.canToCategory"
                   :data-tip="'把这张分支卡还原成分类：组名当分类名，组内各分支平铺成独立卡片（名字本来只存短名，无需摘前缀）'"
                   @pointerdown.stop @click="onCardToCategory">
-            🗂 转为分类（分支 → 分类）
+            🗂 转为分类
           </button>
           <div class="ctx-sep" v-if="cardMenu.vgCount > 1 || cardMenu.isVg"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
@@ -432,27 +440,28 @@ export default {
             </button>
             <!-- 多选态：新建一个分支组（独立组头），把这批提示词整批挂上去；父级不一致会被拦下 -->
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardVgJoin">
-              🗂 聚拢成分支组…
+              🗂 聚拢为分支组
             </button>
             <div class="ctx-sep"></div>
           </template>
           <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute">
-            {{ cardMenu.muted ? '🔊 恢复（取消静音）' : '🔇 静音（不参与自动选词）' }}
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute"
+                  :data-tip="cardMenu.muted ? '恢复该词条参与自动选词' : '静音后该词条不参与自动选词'">
+            {{ cardMenu.muted ? '🔊 取消静音' : '🔇 静音' }}
           </button>
           <!-- 提示词卡片：新建一个独立组头，再把自己挂到这个新组头下（不借用自己当组头）；多选时整批一起挂 -->
           <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg && !cardMenu.picked"
                   @pointerdown.stop @click="onCardVgJoin">
-            🗂 聚拢成分支组…（弹框输组名）
+            🗂 聚拢为分支组
           </button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图（优先展示）</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图</button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
           <div class="ctx-sep"></div>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail">🖼 查看当前图片详情</button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 跳转图库（按当前 tag）</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail">🖼 查看图片详情</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 跳转图库</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
           <button type="button" class="ctx-item danger" v-if="cardMenu.hasImages"
-                  @pointerdown.stop @click="onCardDeleteRef">🗑 删除当前参考图</button>
+                  @pointerdown.stop @click="onCardDeleteRef">🗑 删除参考图</button>
         </div>
       </div>
 
@@ -470,10 +479,10 @@ export default {
           <template v-if="tagMenu.isPool">
             <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'random', 'is-off': tagMenu.lock }"
                     :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxType('random')">🎲 随机池（每轮现抽 1 条）</button>
+                    @pointerdown.stop @click="onTagCtxType('random')">🎲 随机池</button>
             <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'traverse', 'is-off': tagMenu.lock }"
                     :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxType('traverse')">♾️ 遍历池（全词条穷举）</button>
+                    @pointerdown.stop @click="onTagCtxType('traverse')">♾️ 遍历池</button>
             <div class="ctx-sep"></div>
             <div class="ctx-chance" v-if="tagMenu.poolType === 'random'" :class="{ 'is-off': tagMenu.lock }">
               <span class="ctx-chance-label">参与率</span>
@@ -483,11 +492,11 @@ export default {
                       :data-tip="'每轮出图按 ' + c + '% 概率决定该池是否参与：没摇中本轮这个位置就不出词'"
                       @pointerdown.stop @click="onTagCtxChance(c)">{{ c }}%</button>
             </div>
-            <div class="ctx-chance-note" v-else :class="{ 'is-off': tagMenu.lock }">♾️ 遍历池穷举走遍，不设概率</div>
+            <div class="ctx-chance-note" v-else :class="{ 'is-off': tagMenu.lock }">遍历池逐条走遍，不设概率</div>
             <div class="ctx-sep"></div>
             <button type="button" class="ctx-item" v-if="tagMenu.poolType === 'random'"
                     :class="{ 'is-off': tagMenu.lock }" :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxReroll">🎲 重抽</button>
+                    @pointerdown.stop @click="onTagCtxReroll">🎲 重新抽取</button>
           </template>
           <template v-else>
             <!-- 普通手选词条也能设参与率：同样六档，没摇中本轮这个词就不出现在提示词里 -->
@@ -926,7 +935,10 @@ export default {
                   <button class="btn primary" @click="applyPreset(p)"
                           data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">应用</button>
                   <button class="btn" @click="presetToGallery(p)"
-                          data-tip="拿这份预设里的普通标签（池子忽略）直接跳图库筛选">跳图库</button>
+                          :disabled="!presetGalleryTagIds(p).length"
+                          :data-tip="presetGalleryTagIds(p).length
+                            ? ('按这份预设的 ' + presetGalleryTagIds(p).length + ' 个普通标签 id 跳图库筛选（池子只抽词，不参与筛选）')
+                            : '这份预设没有带 id 的普通标签（只有池子或空预设），跳不了图库'">跳图库</button>
                   <button class="btn danger" @click="deletePreset(p)"
                           data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">删除</button>
                 </div>
@@ -943,29 +955,8 @@ export default {
       <delete-dialog :state="del.state" @confirm="del.confirm" @cancel="del.cancel"></delete-dialog>
 
       <!-- 全屏查看 -->
-      <div v-if="viewer.open" class="viewer-overlay" @click.self="closeViewer">
-        <div class="viewer-dialog">
-          <div class="viewer-head">
-            <span class="viewer-title">{{ cardDisplayName(viewer.file) }}</span>
-            <button class="btn icon-btn danger" data-tip="删除词条" @click="askDeleteWord(viewer.file)">🗑</button>
-            <button class="btn icon-btn" @click="closeViewer" data-tip="关闭">✕</button>
-          </div>
-          <div v-if="viewer.file.images && viewer.file.images.length" class="viewer-media">
-            <img :src="imageUrl(viewer.file.images[viewer.idx])" :alt="viewer.file.name"
-                 @dblclick="zoomView(imageUrl(viewer.file.images[viewer.idx]), viewer.file.name || '', viewer.file)"
-                 data-tip="双击全屏缩放查看">
-            <div class="viewer-nav" v-if="viewer.file.images.length > 1">
-              <button @click="viewerPrev">‹</button>
-              <span class="viewer-count">{{ viewer.idx + 1 }}/{{ viewer.file.images.length }}</span>
-              <button class="dice" @click="viewerRandom">🎲</button>
-              <button @click="viewerNext">›</button>
-            </div>
-          </div>
-          <div class="viewer-body">
-            <textarea class="viewer-content" readonly spellcheck="false" :value="displayContent(viewer.file)"></textarea>
-          </div>
-        </div>
-      </div>
+      <!-- 图片详情：直接用图库那套详情弹层（galleryDetail.js 共用组件），本页不再另做界面 -->
+      <gallery-detail-modal :g="cardDetail" readonly :tag-edit="false" />
     </div>
     <transition name="toast">
       <div v-if="toast.show" class="zhule-toast" :class="'toast-' + toast.type" @click="dismissToast">
@@ -1374,7 +1365,6 @@ export default {
         slots: serializeSlots(),
         fillMode: data.fillMode,
         imgIndices: data.imgIndices,
-        chipsCollapsed: chipsCollapsed.value,
         chipsHeight: chipsHeight.value,
         selectedCollapsed: selectedCollapsed.value,
         tabOrder: [...tabOrder.value],
@@ -1463,7 +1453,8 @@ export default {
             });
           });
         }
-        if (typeof state.chipsCollapsed === 'boolean') chipsCollapsed.value = state.chipsCollapsed;
+        // 分类区不再有收起/展开这回事（整行「筛选分类 ⏶收起」已移除），历史存档里的
+        // chipsCollapsed 一律忽略，免得读档后高度被锁成 0 又找不到展开入口
         if (typeof state.chipsHeight === 'number') chipsHeight.value = Math.min(420, Math.max(40, state.chipsHeight));
         if (typeof state.selectedCollapsed === 'boolean') selectedCollapsed.value = state.selectedCollapsed;
         // 填充模式 ⏩ 照原样恢复；遍历恒为默认跑法，没有全局开关
@@ -1490,11 +1481,10 @@ export default {
       if (known.length) tabs.value = [...known, ...rest];
     };
 
-    // ============ 分类区折叠与高度 ============
-    const chipsCollapsed = ref(false);
+    // ============ 分类区高度 ============
+    // 收起/展开已整体移除（那一行「筛选分类 ⏶收起 数量43」用户判定无用），这里只剩可拖拽的高度
     const chipsHeight = ref(140);
-    const chipsHeightCss = computed(() => chipsCollapsed.value ? '0px' : chipsHeight.value + 'px');
-    const toggleChips = () => { chipsCollapsed.value = !chipsCollapsed.value; };
+    const chipsHeightCss = computed(() => chipsHeight.value + 'px');
 
     // ============ 已选区折叠 ============
     const selectedCollapsed = ref(true);
@@ -2261,19 +2251,31 @@ export default {
 
     // 慢操作节流日志：仅记录 >=30ms 的计算，同一标签 5 秒内最多一条，避免渲染期刷屏
 
-    const load = async (force, tabName) => {
+    const load = async (force, tabArg) => {
       try {
+        // tabName 允许传数组：已选里跨 tab 的词条原先每个 tab 各发一条补拉请求
+        // （首屏一次就多打 2~3 条），现在合并成一次 tab=a,b 拉取，返回的 data 逐个并入 bankData。
+        let tabList = tabArg ? (Array.isArray(tabArg) ? tabArg.slice() : [tabArg]) : [];
         // tab 参数归一化：旧版带编号目录名（"01_角色"）或旧 id → 当前纯显示名
-        if (tabName && tabs.value.length) {
-          if (!tabs.value.includes(tabName)) {
-            const byId = Object.entries(tabIds.value).find(([, id]) => id === tabName);
-            if (byId) tabName = byId[0];
-            else {
-              const pure = tabs.value.find(n => tabLabel(n) === tabLabel(tabName));
-              if (pure) tabName = pure;
+        if (tabList.length && tabs.value.length) {
+          tabList = tabList.map((t0) => {
+            let t = t0;
+            if (!tabs.value.includes(t)) {
+              const byId = Object.entries(tabIds.value).find(([, id]) => id === t);
+              if (byId) t = byId[0];
+              else {
+                const pure = tabs.value.find(n => tabLabel(n) === tabLabel(t));
+                if (pure) t = pure;
+              }
             }
-          }
+            return t;
+          });
+          // 归一化后只留真实存在的 tab，并按首次出现顺序去重
+          tabList = tabList.filter((t, i) => tabs.value.includes(t) && tabList.indexOf(t) === i);
         }
+        // partial：本次是局部拉取（切 tab / 跨 tab 补拉），只覆盖这些 tab 的数据
+        const partial = tabList.length > 0;
+        const tabName = partial ? tabList[0] : '';
         // 非强制刷新且未指定 tab：页面已初始化时只局部刷新当前 tab；首屏时优先只拉保存的 activeTab
         if (!force && !tabName) {
           if (tabs.value.length && data.activeTab) {
@@ -2290,7 +2292,7 @@ export default {
         }
         const params = [];
         if (force) params.push('refresh=1');
-        if (tabName) params.push('tab=' + encodeURIComponent(tabIds.value[tabName] || tabName));
+        if (partial) params.push('tab=' + tabList.map(t => encodeURIComponent(tabIds.value[t] || t)).join(','));
         const qs = params.length ? '?' + params.join('&') : '';
         const resp = await fetch('/zhule_studio/api/wordbank' + qs);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -2308,10 +2310,12 @@ export default {
           pendingChips.value = pendingChips.value.filter(p => !(p && p.id && bankNodes.value[String(p.id)]));
         }
         orderTabs();
-        if (tabName) {
-          // 局部加载：只替换该 tab 数据，保留其它已加载 tab（切 tab 懒加载路径）
-          bankData.value[tabName] = (json.data && json.data[tabName]) || [];
-          backfillSelected(tabName);
+        if (partial) {
+          // 局部加载：只替换本次拉取的 tab 数据，保留其它已加载 tab（切 tab / 跨 tab 补拉路径）
+          tabList.forEach((t) => {
+            bankData.value[t] = (json.data && json.data[t]) || [];
+            backfillSelected(t);
+          });
         } else {
           bankData.value = json.data || {};
           if (!force && !tabName) {
@@ -2341,9 +2345,12 @@ export default {
         inheritCategoryMute();
         loaded.value = true;
         // 已选列表中若含尚未加载的 tab，补拉数据以恢复完整内容（fire-and-forget）
-        const need = new Set();
-        data.slots.forEach(s => { if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) need.add(s.tab); });
-        need.forEach(t => load(false, t));
+        const need = [];
+        data.slots.forEach(s => {
+          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab) && !need.includes(s.tab)) need.push(s.tab);
+        });
+        // 多个 tab 合并成一条请求（fire-and-forget），避免首屏多打请求
+        if (need.length) load(false, need);
       } catch (e) {
         error.value = '加载词库失败：' + e.message;
         loaded.value = true;
@@ -4621,31 +4628,123 @@ const submitAddTab = async () => {
       if (file.images && file.images.length) zoomView(imageUrl(file.images[getImgIdx(file)]), file.name || '', file);
       else zoomView(defaultImageUrl, (file.name || '') + '（暂无参考图）', file);
     };
-    // 跳转图库：优先传词条 id（纯数字，服务端按 promptIds 匹配），词条改名后筛选不失效；
-    // 取不到 id（如散 txt 卡片未入库）时才退回名字
+    // ===== 跳图库：全站唯一出口，一律按 id 组装地址 =====
+    // 图库路由参数：tags=图库/词条 id 逗号串（服务端按 promptIds 匹配）、
+    //   mode=and|or（多标签与/或）、openId=进页面直接摊开的那张图的图库 id。
+    // 只接受纯数字 id：名字会随改名失效，且用户红线是不按名字反查，这里不给名字留任何口子。
+    const toIdList = (v) => {
+      const arr = Array.isArray(v) ? v : [v];
+      const out = arr
+        .map((x) => String(x == null ? '' : x).trim())
+        .filter((x) => /^\d+$/.test(x) && x !== '0')
+        .map((x) => String(Number(x)));
+      return [...new Set(out)].sort((a, b) => Number(a) - Number(b));
+    };
+    const buildGalleryUrl = (opts) => {
+      const o = opts || {};
+      const ids = toIdList(o.tagIds);
+      const q = [];
+      if (ids.length) q.push('tags=' + encodeURIComponent(ids.join(',')));
+      if (o.mode === 'and' || o.mode === 'or') q.push('mode=' + o.mode);
+      const oid = toIdList(o.openId)[0];
+      if (oid) q.push('openId=' + encodeURIComponent(oid));
+      return '/zhule_studio#/gallery' + (q.length ? '?' + q.join('&') : '');
+    };
+    const openGallery = (opts) => {
+      const w = window.open(buildGalleryUrl(opts), '_blank', 'noopener');
+      if (!w) showToast('浏览器拦了新窗口，请允许本站弹窗后再点一次', 'warn');
+    };
+    // 卡片箭头 / 右键菜单：按词条 id 筛图库（散 txt 卡片未入库没有 id，不退回名字，直接提示）
     const goToGallery = (file) => {
-      const tid = (file.id != null && file.id !== '') ? String(file.id) : '';
-      const tag = tid || file.name || file.rawName || '';
-      const url = '/zhule_studio#/gallery?tags=' + encodeURIComponent(tag);
-      window.open(url, '_blank');
+      const tid = toIdList(file && file.id)[0];
+      if (!tid) { showToast('这条卡片没有词条 id（未入库或散 txt），没法按 id 跳图库', 'warn'); return; }
+      openGallery({ tagIds: [tid] });
     };
     const closeViewer = () => { viewer.open = false; viewer.file = null; };
-    // 打开详情弹层：定位到该词条「当前正在展示」的那张参考图（多图卡片翻到哪张就开哪张），
-    // 无参考图时 idx 归 0，弹层只渲染正文——不新增接口、不跳页，纯本页交互。
+    // 图片详情：直接复用图库详情组件 + 图库详情接口。定位走 id：
+    // 卡片接口给的 imageGids 与 images 一一对应，取当前这张的下标拿到图库 id，
+    // 详情接口按 id 取，拿到就是图库那一份数据（时间/大小/模型/标签/提示词完全一致）。
+    // 只有「参考图还没进图库索引」这种拿不到 id 的情况，才用词条数据兜底渲染。
+    const buildWbDetail = (file, path) => {
+      const promptPreview = String(displayContent(file) || '');
+      return {
+        id: 0,
+        name: String(path).split(/[\\/]/).pop(),
+        path,
+        mtime: 0,
+        size: 0,
+        model: '',
+        loras: [],
+        tags: [],
+        hasWF: false,
+        workflowSize: 0,
+        hasPrompt: !!promptPreview,
+        promptPreview: promptPreview.slice(0, 800),
+      };
+    };
+    // 详情大图：图库索引里的相对名走 gallery/image（与图库页同一 URL），
+    // 带区前缀的参考图走通用 api/image，两条路都能出图。
+    const detailImgUrl = (path) => {
+      const p = String(path || '');
+      if (!p) return '';
+      if (p.indexOf('/') < 0 && p.indexOf('\\') < 0) return '/zhule_studio/api/gallery/image?path=' + encodeURIComponent(p);
+      return imageUrl(p);
+    };
+    // 详情里的 ‹ 🎲 › ：池子换成「该词条的参考图」，与图库同一套按钮、同一套行为语义
+    const wbDetailNav = (dir) => {
+      const file = zoomCtx.detailFile;
+      const n = (file && file.images && file.images.length) || 0;
+      if (!file || n < 2) return;
+      setImgIdx(file, (getImgIdx(file) + dir + n) % n);
+      openCardViewer(file);
+    };
+    const wbDetailNavRandom = () => {
+      const file = zoomCtx.detailFile;
+      const n = (file && file.images && file.images.length) || 0;
+      if (!file || n < 2) return;
+      const cur = getImgIdx(file);
+      let next = cur;
+      while (next === cur) next = Math.floor(Math.random() * n);
+      setImgIdx(file, next);
+      openCardViewer(file);
+    };
+    const cardDetail = createDetailHost({
+      onZoom: (url, caption) => zoomView(url, caption, zoomCtx.file),
+      onError: () => showToast('没能读到这张图的详情', 'warn'),
+      imgUrl: detailImgUrl,
+      onNav: wbDetailNav,
+      onNavRandom: wbDetailNavRandom,
+      onDelete: () => { const f = zoomCtx.detailFile; if (f) askDeleteRef(f); },
+      tips: {
+        pool: '该词条的参考图',
+        delete: '删除当前参考图（词条本身保留）',
+        rename: '词库页请在卡片菜单里改名',
+        emptyTag: '暂无标签',
+      },
+    });
+    // 打开详情：定位到该词条「当前正在展示」的那张参考图（多图卡片翻到哪张就开哪张）
     const openCardViewer = (file) => {
       if (!file) return;
       const n = (file.images && file.images.length) || 0;
       const cur = Number(getImgIdx(file)) || 0;
-      viewer.file = file;
-      viewer.idx = n ? Math.min(Math.max(cur, 0), n - 1) : 0;
-      viewer.open = true;
+      const idx = n ? Math.min(Math.max(cur, 0), n - 1) : 0;
+      const path = n ? file.images[idx] : '';
+      // 与 images 同下标的图库 id；拿不到（参考图未入索引）才退回路径入口 + 词条数据兜底
+      const gid = (n && Array.isArray(file.imageGids)) ? Number(file.imageGids[idx]) || 0 : 0;
+      zoomCtx.file = file;
+      zoomCtx.detailFile = file;
+      if (!path) { showToast('这条词条还没有参考图', 'warn'); return; }
+      cardDetail.hitTotal = n;
+      cardDetail.detailPos = idx + 1;
+      if (gid) cardDetail.openById(gid, () => buildWbDetail(file, path));
+      else cardDetail.openByPath(path, () => buildWbDetail(file, path));
     };
 
     // ============ 全屏查看器（公共模块，命令式，非响应式） ============
     let fullViewer = null;
     let createFullViewerFn = null;
-    // 放大查看器当前展示的词条（供底部按钮回调读取）
-    let zoomCtx = { file: null };
+    // 放大查看器当前展示的词条（供底部按钮回调读取）；detailFile 供详情弹层导航读取
+    let zoomCtx = { file: null, detailFile: null };
 
     // 全屏底部「删除」按钮：删的是当前正在看的那一张参考图，而不是整条词条。
     // 语义必须跟随所见图：全屏里只显示一张图，删它就该删这张图；
@@ -4946,12 +5045,13 @@ const submitAddTab = async () => {
         saveState();
         // 预设可能跨 tab：懒加载首屏只留当前 tab，其余 tab 的卡片不在本地，已选行会缺参考图/编号
         // 这类展示信息（正文已由后端按词条 id 一并给到，出图不受影响）。这里按需补拉，backfillSelected 回填。
-        const needTab = new Set();
+        const needTab = [];
         slots.forEach(s => {
           if (s.t !== 'item') return;
-          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) needTab.add(s.tab);
+          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab) && !needTab.includes(s.tab)) needTab.push(s.tab);
         });
-        needTab.forEach(t => load(false, t));
+        // 跨 tab 合并成一条请求：预设里涉及几个 tab 就只打一条
+        if (needTab.length) load(false, needTab);
         zhuleLog('applyPreset', 'id=', p.id, 'name=', p.name, 'slots=', slots.length, 'missing=', missing, 'genCount=', pref.genCount);
         showToast('已载入「' + (p.name || '') + '」：' + slots.length + ' 项 / 次数 ' + pref.genCount +
           (missing ? '（另有 ' + missing + ' 项的词条已不在词库，未载入）' : ''),
@@ -4995,15 +5095,18 @@ const submitAddTab = async () => {
     // 现在一律按设置里的「删除免确认」（zhule_ui_pref.common.noDeleteConfirm）：
     //   开 = 点一下就删（不弹框）；关 = 弹统一的确认框，确认后才删。
     // 只删预设记录，词库词条与图库图片一个都不碰。
-    // 预设中心「跳图库」：只拿这份预设里的普通标签（池子整项忽略，不展开池内容），
-    // 按标签 id 用逗号串起来传给图库 tags（图库按 promptIds 匹配），词条改名后也照样命中。
+    // 预设中心「跳图库」：只取这份预设里的普通标签 id（池子整项跳过，池子是抽词来源、没有固定标签），
+    // 去重升序后一次带入图库筛选（服务端按 promptIds 精确匹配）；没有任何可用 id 就明确提示。
+    const presetGalleryTagIds = (p) => toIdList(((p && p.flow) || [])
+      .filter((it) => it && it.t !== 'pool')
+      .map((it) => it.id));
     const presetToGallery = (p) => {
-      const ids = ((p && p.flow) || [])
-        .filter((it) => it && it.t !== 'pool' && it.id != null && it.id !== '')
-        .map((it) => String(it.id));
-      const uniq = [...new Set(ids)];
-      if (!uniq.length) { showToast('这份预设里没有普通标签（只有池子或空预设），跳不了图库', 'warn'); return; }
-      window.open('/zhule_studio#/gallery?tags=' + encodeURIComponent(uniq.join(',')), '_blank');
+      const ids = presetGalleryTagIds(p);
+      if (!ids.length) {
+        showToast('这份预设里没有带 id 的普通标签（只有池子或空预设），跳不了图库', 'warn');
+        return;
+      }
+      openGallery({ tagIds: ids });
     };
     const deletePreset = async (p) => {
       if (!p) return;
@@ -5282,8 +5385,8 @@ const submitAddTab = async () => {
       const missing = [...needTabs];
       zhuleLog('ensurePoolData: 池=', allPools.value.map(p => p.kind + ':' + (p.kind === 'list' ? (p.display + '(' + (p.items || []).length + ')') : p.tab + (p.chipId ? '/id:' + p.chipId : ''))), 'missing=', missing);
       if (missing.length) {
-        // 并行补拉缺失的 tab，补齐后再抽
-        await Promise.all(missing.map(tb => load(false, tb)));
+        // 合并成一条多 tab 请求，补齐后再抽
+        await load(false, missing);
       }
       // 补拉后把旧存档 chip 池补上 DB id，再统一判断是否真空
       // 补拉完仍为空 = 该 tab 真的没有词条；有词条但全被静音同样视为不可用（自动选词取不到）
@@ -6063,11 +6166,11 @@ const submitAddTab = async () => {
         selectedCollapsed.value = false; // 展开「已选」区，让新组合立即可见
         saveState(); // restoreState 已完成时才真正写盘（守卫在 saveState 内部判断），刷新后仍保留
         // 命中项若落在未加载的 tab，补拉一次，让左侧卡片能显示选中态（与 load 末尾同款逻辑，fire-and-forget）
-        const needTabs = new Set();
+        const needTabs = [];
         data.slots.forEach((s) => {
-          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) needTabs.add(s.tab);
+          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab) && !needTabs.includes(s.tab)) needTabs.push(s.tab);
         });
-        needTabs.forEach((t) => load(false, t));
+        if (needTabs.length) load(false, needTabs);
         showToast(
           `已用图库的 ${items.length} 个标签覆盖「已选」` +
           (oldCount ? `（原 ${oldCount} 项已替换）` : '') +
@@ -6078,8 +6181,55 @@ const submitAddTab = async () => {
       }
     };
 
+    // ============ 分类「液态分段」滑块 ============
+    // 小类不再是一排药丸，而是一条 .seg 分段控件；选中项由一枚 .glider 柔光滑块承载。
+    // 滑块宽度/位移只能按真实 DOM 量（分类名长短不一），所以选中变化、切 tab、改分区高度、
+    // 窗口缩放、字体就绪后统一重算一次；单行多选（整类多选）时滑块收起，交给角标表达。
+    // 大类（.tabs 里的 .seg.seg-tab）与小类共用同一套算法，所以两处根节点一起扫。
+    const chipsBox = ref(null);
+    const tabsBox = ref(null);
+    let chipGlideRaf = 0;
+    const syncChipGliders = () => {
+      if (chipGlideRaf) return;
+      chipGlideRaf = requestAnimationFrame(() => {
+        chipGlideRaf = 0;
+        const roots = [chipsBox.value, tabsBox.value].filter(Boolean);
+        if (!roots.length) return;
+        // 两阶段：先把所有 seg 的几何量完，再统一写 style。
+        // 原来每个 seg 内「读 offsetWidth/offsetLeft + 写 style」交替进行，每次读都强制重排，
+        // 分类多时实测 40~150ms；读写分离后整轮只触发一次 layout。
+        const jobs = [];
+        roots.forEach((box) => {
+          box.querySelectorAll('.seg').forEach((seg) => {
+            const glider = seg.querySelector('.glider');
+            if (!glider) return;
+            const acts = seg.querySelectorAll('.chip.active, .tab.active');
+            jobs.push({ glider, el: acts.length === 1 ? acts[0] : null });
+          });
+        });
+        const geom = jobs.map((j) => (j.el ? [j.el.offsetWidth, j.el.offsetLeft - 3] : null));
+        jobs.forEach((j, i) => {
+          const g = geom[i];
+          if (!g) {
+            j.glider.classList.add('off');
+            j.glider.style.width = '0px';
+            return;
+          }
+          j.glider.classList.remove('off');
+          j.glider.style.width = g[0] + 'px';
+          // offsetLeft 已含 .seg 的 3px 内边距，glider 定位基准也是 3px，故减掉它
+          j.glider.style.transform = 'translateX(' + g[1] + 'px)';
+        });
+      });
+    };
+    watch(
+      [chipLines, () => getSelections(), chipsHeight, tabs, () => data.activeTab],
+      () => { nextTick(syncChipGliders); },
+      { deep: true }
+    );
+
     // ============ 生命周期 ============
-    watch([data, pref, chipsCollapsed, chipsHeight, selectedCollapsed, tabOrder, chipOrder], saveState, { deep: true });
+    watch([data, pref, chipsHeight, selectedCollapsed, tabOrder, chipOrder], saveState, { deep: true });
     let clickBlocker;
     // 图库详情 tag 保存词条后触发，同步刷新词库卡片列表
     const onWordbankChanged = () => { load(false); };
@@ -6100,7 +6250,13 @@ const submitAddTab = async () => {
       window.addEventListener('resize', onBankDismiss);
       // 首屏数据就绪后再带入 URL 指定的标签：load 内部会执行 restoreState，
       // 早于它写入的槽位会被存档恢复覆盖，所以必须串在 load 之后
-      load().then(() => { if (linkParams.tags.length) applyUrlTags(); }); // 首屏加载数据（加载遮罩已移除）
+      load().then(() => { // 首屏加载数据（加载遮罩已移除）
+        if (linkParams.tags.length) applyUrlTags();
+      });
+      // 液态分段滑块：首屏、窗口缩放、字体就绪各量一次（分类名文字一变，滑块宽度就得重算）
+      nextTick(() => { syncChipGliders(); });
+      window.addEventListener('resize', syncChipGliders);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(syncChipGliders);
     });
     const onBankKeydown = (e) => {
       // Ctrl+F / Cmd+F：唤起词库搜索（页面不在前台时不抢键）
@@ -6122,6 +6278,7 @@ const submitAddTab = async () => {
     };
     onBeforeUnmount(() => {
       if (clickBlocker) document.removeEventListener('click', clickBlocker, true);
+      window.removeEventListener('resize', syncChipGliders);
       window.removeEventListener('zhule-wordbank-pref', onWordbankPref);
       window.removeEventListener('zhule-pref-changed', onGlobalPrefChanged);
       window.removeEventListener('zhule:wordbank-changed', onWordbankChanged);
@@ -6139,6 +6296,7 @@ const submitAddTab = async () => {
       editTarget, editName, editContent, editContentCn, editNeg, editOverride, editIsTxt, editing, acc, toggleAcc, allAccOpen, toggleAllAcc,
       openEdit, cancelEdit, submitEdit, toggleMute,
       del, askDeleteWord, askDeleteRef,
+      cardDetail, closeCardDetail: () => cardDetail.closeDetail(),
       uploadRefOpen, closeUploadRef, pickUploadRef, onUploadRefInput,
       onUploadRefDragEnter, onUploadRefDragLeave, onUploadRefDrop, onUploadRefPaste,
       uploadRefDrag, uploadRefPreview, uploadRefFileName, uploadRefBusy, submitUploadRef, openUploadRef,
@@ -6154,7 +6312,8 @@ const submitAddTab = async () => {
       getSelections,
       // 模板里做「有没有池子」的判定用（random-mode 样式开关），只读视图
       allPools,
-      chipsCollapsed, chipsHeightCss, toggleChips, onChipsResizeDown,
+      chipsHeightCss, onChipsResizeDown,
+      chipsBox, tabsBox, syncChipGliders,
       selectedCollapsed, toggleSelectedCollapsed,
       imageUrl, getImgIdx, displayContent, isFileSelected,
       // 卡片框选（右键长按）+ Ctrl 左键多选，凝结成池
@@ -6197,7 +6356,7 @@ const submitAddTab = async () => {
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      applyPreset, presetToGallery, deletePreset,
+      applyPreset, presetToGallery, presetGalleryTagIds, deletePreset,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

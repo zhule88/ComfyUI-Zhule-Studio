@@ -241,7 +241,7 @@ export const CardCtxMenu = {
         </template>
         <div class="ctx-sep"></div>
         <!-- 下载：图标之外的第二个入口，多选时整批下载（右键 = 下载 + 删除，不必再去找图标） -->
-        <button type="button" class="ctx-item" @click="onDownload">⬇ {{ state.picked && state.selCount > 1 ? ('下载选中的 ' + state.selCount + ' 张') : '下载图片' }}</button>
+        <button type="button" class="ctx-item" @click="onDownload">⬇ {{ state.picked && state.selCount > 1 ? ('导出选中的 ' + state.selCount + ' 张') : '导出图片' }}</button>
         <!-- 多选时只保留「删除选中的 N 张」，「删除这张图」隐去，避免误删当前这一张之外的语义混乱 -->
         <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel">🗑 删除这张图</button>
         <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel">🗑 删除选中的 {{ state.selCount }} 张</button>
@@ -1061,33 +1061,21 @@ export function useGalleryCommon(opts = {}) {
       showToast('复制硬链接失败：' + (e.message || ''), 'error');
     }
   };
-  // 右键「下载」：把原图交给浏览器存到下载目录（不动硬链接、不改库，图标之外的另一条路）。
-  // 该卡片已选中且选中数 > 1 时整批下载：逐张触发、间隔 400ms，避免浏览器把并发下载当弹窗拦掉。
+  // 右键「导出」：与工具栏下载图标同一功能（硬链接导出），不再走浏览器下载。
+  // 取路径规则：这张图未选中或只选了它 → 只导出它；已选中且多选 → 整批导出。
   const onCtxDownload = async () => {
     const it = cardCtx.item;
     const multi = !!(it && isSel(it.key) && selected.size > 1);
     closeCardCtx();
     if (!it) return;
     const keys = multi ? [...selected] : [it.key];
-    for (let i = 0; i < keys.length; i++) {
-      const k = keys[i];
+    const paths = keys.map((k) => {
       const target = items.value.find((x) => x.key === k);
-      // 优先用列表项的 mtime（缓存破坏参数），批量下载跨页取不到时留空也不影响下载
-      const t = (target && target.mtime) || (k === it.key ? it.mtime : '') || '';
-      const url = imgUrl(k, t);
-      // 文件名直接用图库相对路径的末段（本身就是 xxx.png），缺失才兜底补扩展名
-      let name = String(k).split('/').pop() || ('zhule_image_' + (i + 1));
-      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += '.png';
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      if (i < keys.length - 1) await new Promise((r) => setTimeout(r, 400));
-    }
-    showToast(keys.length > 1 ? ('已开始下载 ' + keys.length + ' 张图片') : ('已开始下载：' + (it.name || '图片')), 'success');
+      return target ? (target.path || target.key) : k;
+    });
+    const d = await exportPaths(paths);
+    // 单张导出后顺手取消选中，避免下一次误以为还选着一批
+    if (d && d.count && !multi) selected.delete(it.key);
   };
   const onCtxDel = () => { const it = cardCtx.item; closeCardCtx(); if (it) askDelete(it); };
   const onCtxBatchDel = () => { closeCardCtx(); askBatchDelete(); };
@@ -1454,12 +1442,32 @@ export function useGalleryCommon(opts = {}) {
   async function openDetail(item) {
     // 顺手预载命中池 ids（不阻塞详情打开），位置与导航后续即用
     ensureHitIds();
-    await openDetailByPath(item.key);
+    // 详情一律按图库 id 取（gallery_image 主键，唯一正式寻址方式）；
+    // 只有拿不到 id 的存量对象（仅存文件名的全屏上下文）才退回路径入口。
+    if (item && item.id != null && String(item.id) !== '') {
+      await openDetailById(item.id);
+      return;
+    }
+    await openDetailByPath(item && item.key);
   }
+  // 按图库 id 打开详情（词库参考图、预设跳转等外部模块统一走这里）
+  async function openDetailById(gid) {
+    if (gid == null || String(gid) === '') return;
+    await requestDetail({ id: String(gid) });
+  }
+  // 按图库相对路径打开详情（仅图库页自身存量数据使用，不做跨模块名字反查）
   async function openDetailByPath(path) {
+    if (!path) return;
+    await requestDetail({ path: String(path) });
+  }
+  // 详情请求唯一出口：带 id 走 ?id=，否则走 ?path=
+  async function requestDetail(q) {
+    const qs = (q && q.id)
+      ? '?id=' + encodeURIComponent(String(q.id))
+      : '?path=' + encodeURIComponent(String((q && q.path) || ''));
     const seq = ++_detailReqSeq;
     try {
-      const d = await jfetch(API.detail + '?path=' + encodeURIComponent(path));
+      const d = await jfetch(API.detail + qs);
       if (seq !== _detailReqSeq) {
         return; // 已有更新的点击，丢弃过期响应
       }
@@ -2305,14 +2313,10 @@ export function useGalleryCommon(opts = {}) {
     showToast('导出分层已保存', 'success');
   }
 
-  async function batchLink() {
-    const keys = [...selected];
-    if (!keys.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片', 'warn'); return; }
-    const paths = [];
-    for (const k of keys) {
-      const item = items.value.find((x) => x.key === k);
-      paths.push(item ? (item.path || item.key) : k);
-    }
+  // 导出（硬链接）：工具栏下载图标、卡片右键「导出」共用这一份实现，
+  // 两种入口只是取 paths 的方式不同，落地动作完全一致。
+  async function exportPaths(paths) {
+    if (!paths || !paths.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片', 'warn'); return; }
     const lk = (pref.gallery && pref.gallery.link) || {};
     // 判断是否需要拦之前，先确保全库标签集合可用（首次点击才拉树，之后走缓存）
     if (lk.nameMode === 'custom' && !Object.keys(tagKidMeta.value).length) {
@@ -2338,9 +2342,22 @@ export function useGalleryCommon(opts = {}) {
         : '没有可导出的图片', d.count ? 'success' : 'warn');
       // 导出完成后清空已选中，方便继续下一次挑选
       if (d.count) selected.clear();
+      return d;
     } catch (e) {
       showToast('批量导出失败：' + (e.message || ''), 'error');
+      return null;
     }
+  }
+  // 工具栏下载图标：导出当前选中的图片
+  async function batchLink() {
+    const keys = [...selected];
+    if (!keys.length) { showToast('请先框选或 Ctrl+点击 选中要导出的图片', 'warn'); return; }
+    const paths = [];
+    for (const k of keys) {
+      const item = items.value.find((x) => x.key === k);
+      paths.push(item ? (item.path || item.key) : k);
+    }
+    return exportPaths(paths);
   }
 
 
@@ -2393,10 +2410,12 @@ export function useGalleryCommon(opts = {}) {
     // 首次进入立即加载列表与元数据；不做自动探活/自动刷新，需要最新数据时手动刷新页面
     loadMeta();
     applyFilter();
-    // 预设中心「跳图库」带 ?open=<图库相对路径>：进来就把那张图的详情摊开，
-    // 不用再去网格里翻找（路径是图库定位字段，与详情接口 ?path= 一致）
+    // 外部模块跳进图库并直接摊开某张图：优先 ?openId=<图库 id>（正式寻址；
+    // 词库参考图、预设等一律按 id 传），?open=<相对路径> 仅保留给存量链接。
+    const openId = String(route.query.openId || '').trim();
     const openPath = String(route.query.open || '').trim();
-    if (openPath) openDetailByPath(openPath);
+    if (/^\d+$/.test(openId)) openDetailById(openId);
+    else if (openPath) openDetailByPath(openPath);
   });
   onBeforeUnmount(() => {
     window.removeEventListener('zhule-pref-changed', onPrefChanged);
@@ -2427,7 +2446,7 @@ export function useGalleryCommon(opts = {}) {
     addTagFilter, clearTagFilter, toggleTagMode, visibleTags,
     toggleTagActive, hideTag, expandedTags, treeKids, toggleTagExpand,
     isTagActive, inTagFilter, isTagHidden, nodeSelState,
-    openDetail, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
+    openDetail, openDetailById, openDetailByPath, closeDetail, zoomView, tagStyle, tagColorOf, editColorOf, showTagCount, tagCount,
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     hideCardIcons, cardCtx, openCardCtx, closeCardCtx,

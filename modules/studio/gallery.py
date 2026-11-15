@@ -1577,12 +1577,22 @@ async def get_gallery_detail(request):
     workflow 未落库，hasWF 恒 False（不展示 workflow 入口）；如需 workflow 原文，
     仍可走 get_gallery_workflow 的 PNG 兜底读取（按钮跳转场景）。
     """
+    gid = (request.query.get("id") or "").strip()
     rel = (request.query.get("path") or "").strip()
-    if not rel:
-        return web.json_response({"error": "文件不存在"}, status=404)
-    rec = db.gallery_get_by_name(rel)
+    if gid:
+        # 正式入口：按图库主键 id 查。词库/预设等外部引用一律传 id，
+        # 文件改名、挪目录都不影响命中，不依赖名字反查。
+        if not gid.isdigit():
+            return web.json_response({"error": "id 非法"}, status=400)
+        rec = db.gallery_get_by_id(int(gid))
+    elif rel:
+        # 兼容入口：图库页内部自身用相对路径（存量 PNG 仅存名字数据，属既有约定）
+        rec = db.gallery_get_by_name(rel)
+    else:
+        return web.json_response({"error": "缺少 id 或 path 参数"}, status=400)
     if rec is None:
         return web.json_response({"error": "文件不存在"}, status=404)
+    rel = rec.get("key") or rel
     # 词条标签（prompt 类）在前、自定义标签（custom 类）在后；名字均取 DB 当前值
     # 关联图数（count）：一次统计 gallery_tag 全量，按标签 id 命中；
     # 前端「标签关联数角标」开关关闭时不渲染，后端仍返回，切开关无需重新请求。

@@ -1,4 +1,4 @@
-﻿"""Zhule Studio 后端：词库读写、参考图管理、图片代理、Studio 页面静态服务。
+"""Zhule Studio 后端：词库读写、参考图管理、图片代理、Studio 页面静态服务。
 
 数据源（SQLite 单库 modules/studio/zhule.db，数据层见 db.py）：
   - 词库：表 prompt（父子层级树；entry 叶子为词条：en 英文提示词 / cn 中文 / sort_order 排序）
@@ -251,6 +251,26 @@ def _card_images(node, vg_group=""):
     return out
 
 
+def _card_image_gids(imgs):
+    """参考图路径 -> 图库 id 的并行数组（与 imgs 等长，无对应图库记录的位置填 0）。
+
+    图库 id 是详情接口的正式寻址方式：前端拿 id 直调 gallery_detail?id=，
+    不必再把带区前缀的路径交给后端做名字反查。
+    这里只在数据出口把存量文件名一次性映射成 id，业务侧此后全程按 id 定位。
+    """
+    if not imgs:
+        return []
+
+    def _base(p):
+        return os.path.basename(str(p or "").replace("\\", "/"))
+
+    try:
+        m = db.gallery_id_map([_base(p) for p in imgs])
+    except Exception:
+        return [0] * len(imgs)
+    return [int(m.get(_base(p), 0)) for p in imgs]
+
+
 def _node_raw_name(node):
     """还原节点原始目录名（与磁盘一致）。
 
@@ -296,7 +316,7 @@ def _wb_tab_name_by_id(tree, tab):
             return node.get("name") or tab
     return tab
 
-def _cards_from_tree(tree):
+def _cards_from_tree(tree, only_tab=None):
     """缓存树 → 与原扫描完全一致的 {tabs, data} 结构。
 
     每张卡片字段：id/name/number/rawName/relPath/chips/chipKeys/content/
@@ -375,6 +395,8 @@ def _cards_from_tree(tree):
                         break
                 end = entry_idx if entry_idx > 0 else len(parts) - 1
                 _chips, _ck, _ci = _chip_fields(end)
+                _imgs = _card_images(node, vg_group)
+                _img_gids = []  # 出口统一批量映射（见函数末尾回填）
                 out.append({
                     "name": stem_disp,
                     "id": node.get("id") or "",
@@ -389,7 +411,8 @@ def _cards_from_tree(tree):
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
                     "anc": list(anc),
-                    "images": _card_images(node, vg_group),
+                    "images": _imgs,
+                    "imageGids": _img_gids,
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
                 })
@@ -397,6 +420,8 @@ def _cards_from_tree(tree):
                 # 文件夹卡片（DB 中统一为 entry 节点）
                 # parts 不含卡片层，end=len(parts) 等价于原公式中的 len(parts)-1
                 _chips, _ck, _ci = _chip_fields(len(parts))
+                _imgs = _card_images(node, vg_group)
+                _img_gids = []  # 出口统一批量映射（见函数末尾回填）
                 out.append({
                     "name": parse_folder(raw)[1],
                     "id": node.get("id") or "",
@@ -411,7 +436,8 @@ def _cards_from_tree(tree):
                     "neg": node.get("neg") or "",
                     "override": node.get("override") or "",
                     "anc": list(anc),
-                    "images": _card_images(node, vg_group),
+                    "images": _imgs,
+                    "imageGids": _img_gids,
                     "mtime": node.get("updatedAt") or 0,
                     "mute": 1 if node.get("mute") else 0,
                 })
@@ -425,17 +451,42 @@ def _cards_from_tree(tree):
             collect(child, parts + [raw], ids + [nid], out, child_anc,
                     kinds + (ntype,), child_vg)
 
+    all_cards = []
     for tab_node in tree:
+        tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
+        tabs.append(tab_disp)
+        # 只构建请求的 tab：全量构建 13 个 tab 再裁剪，是切 tab 也要 15s 的直接原因。
+        # only_tab 可为单个显示名、名称集合/列表；None 表示全量。
+        if only_tab is not None:
+            _only = only_tab if isinstance(only_tab, (list, tuple, set, frozenset)) else (only_tab,)
+            if tab_disp not in _only:
+                continue
         cards = []
         # Tab 根的属性由 collect 自己在进入时累积（避免出现两次），这里传空链起点
         collect(tab_node, [], [], cards, ())
-        tab_disp = tab_node.get("name") or _node_raw_name(tab_node)
-        tabs.append(tab_disp)
         # 卡片自带所属 tab：relPath 从 tab 根开始、不含 tab 名，跨 tab 可能同名同路径；
         # 前端选词/全库搜索要靠它判定归属，不能再拿 activeTab 去推
         for _c in cards:
             _c["tab"] = tab_disp
         data[tab_disp] = cards
+        all_cards.extend(cards)
+    # 参考图路径 -> 图库 id：收集全部文件名后一次性批量映射。
+    # 逐卡调用会让每张卡各开一次 sqlite 连接并重跑 schema 检查，985 张卡实测 8.3s；
+    # 批量化为 1 次查询后约 20ms（同语义：未命中填 0，与 imgs 等长）。
+    if all_cards:
+        _names = set()
+        for _c in all_cards:
+            for _p in (_c.get("images") or []):
+                _b = os.path.basename(str(_p).replace("\\", "/"))
+                if _b:
+                    _names.add(_b)
+        try:
+            _gmap = db.gallery_id_map(sorted(_names)) if _names else {}
+        except Exception:
+            _gmap = {}
+        for _c in all_cards:
+            _c["imageGids"] = [int(_gmap.get(os.path.basename(str(_p).replace("\\", "/")), 0))
+                               for _p in (_c.get("images") or [])]
     return {"tabs": tabs, "data": data}
 
 
@@ -491,12 +542,31 @@ async def get_wordbank(request):
     except Exception:
         return web.json_response({"root": wb_root(), "tabs": [], "data": {},
                                   "error": "词库数据读取失败"})
-    payload = _cards_from_tree(tree)
+    # tab 支持多值（逗号分隔）：已选里跨 tab 的词条，前端原先每个 tab 各发一条补拉请求，
+    # 一次开页面就打出 3 条；这里一次返回所需的全部 tab，前端合并进 bankData。
+    _tab_names = []
+    if tab:
+        for _raw in str(tab).split(","):
+            _raw = _raw.strip()
+            if not _raw:
+                continue
+            _n = _wb_tab_name_by_id(tree, _raw)
+            if _n and _n not in _tab_names:
+                _tab_names.append(_n)
+    if not _tab_names:
+        _only_tab = None
+    elif len(_tab_names) == 1:
+        _only_tab = _tab_names[0]
+    else:
+        _only_tab = set(_tab_names)
+    payload = _cards_from_tree(tree, _only_tab)
+    _tab_ids = _wb_tab_ids(tree)
+    _nodes = _nodes_index(tree)
     result = {"root": wb_root(), "tabs": payload["tabs"], "data": {},
-              "tab_ids": _wb_tab_ids(tree), "nodes": _nodes_index(tree)}
-    tab = _wb_tab_name_by_id(tree, tab)
-    if tab is not None:
-        result["data"][tab] = payload["data"].get(tab, [])
+              "tab_ids": _tab_ids, "nodes": _nodes}
+    if _tab_names:
+        for _n in _tab_names:
+            result["data"][_n] = payload["data"].get(_n, [])
         return web.json_response(result)
     # 无指定 tab：返回全部 tab 数据。
     # 首屏场景前端 Wordbank.js 会自行裁剪只保留当前 tab（懒加载语义不变）；

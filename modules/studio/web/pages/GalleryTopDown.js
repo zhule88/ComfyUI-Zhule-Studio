@@ -1,10 +1,11 @@
-import { ref, reactive, nextTick } from 'vue';
+import { ref, reactive, nextTick, getCurrentInstance } from 'vue';
 import { useGalleryCommon, TagTreePanel, OutNode, DetailTagNode, CardCtxMenu, tagKey, LinkDialog } from './galleryCommon.js';
+import { GalleryDetailModal } from './galleryDetail.js';
 import { DeleteDialog } from './deleteConfirm.js';
 
 export default {
   name: 'GalleryTopDown',
-  components: { TagTreePanel, OutNode, DetailTagNode, CardCtxMenu, DeleteDialog, LinkDialog },
+  components: { TagTreePanel, OutNode, DetailTagNode, CardCtxMenu, DeleteDialog, LinkDialog, GalleryDetailModal },
   template: `
     <div class="page active gallery-page gallery-td-page">
     <div class="zhg-toolbar">
@@ -182,101 +183,8 @@ export default {
     </div>
 
     <!-- 详情弹层 -->
-    <div class="zhg-mask" v-if="detail" @click.self="closeDetail">
-      <div class="zhg-modal">
-        <div class="zhg-modal-head">
-          <span class="zhg-modal-title">{{ detail.name }}</span>
-          <button class="btn zhg-mini" @click="closeDetail">✕ 关闭</button>
-        </div>
-        <div class="zhg-modal-body">
-          <div class="zhg-modal-left">
-            <div class="zhg-modal-imgwrap">
-              <img class="zhg-modal-img" :src="imgUrl(detail.path, detail.mtime)" :alt="detail.name" @click="zoomView(imgUrl(detail.path, detail.mtime))">
-              <div class="zhg-modal-nav" v-if="detail">
-                <button class="zhg-nav-btn zhg-nav-prev" @click.stop="detailNav(-1)" data-tip="上一张：在当前命中池内向前翻">‹</button>
-                <div class="zhg-nav-mid">
-                  <button class="zhg-nav-btn zhg-nav-dice" @click.stop="detailNavRandom" :data-tip="'骰子：从当前命中池随机一张（共 ' + hitTotal + ' 张）'">🎲</button>
-                  <span class="zhg-nav-count" v-if="hitTotal">{{ detailPos > 0 ? detailPos : '—' }} / {{ hitTotal }}</span>
-                  <button class="zhg-nav-btn zhg-nav-del" data-tip="删除当前图片及其库内关联数据" @click.stop="askDelete(detail)">🗑</button>
-                </div>
-                <button class="zhg-nav-btn zhg-nav-next" @click.stop="detailNav(1)" data-tip="下一张：在当前命中池内向后翻">›</button>
-              </div>
-            </div>
-            <div class="zhg-modal-actions">
-              <button class="btn primary" :disabled="!detail.hasWF" @click="useWorkflow(detail)" :data-tip="detail.hasWF ? '跳转 ComfyUI 并导入该图工作流' : '该图片没有保存 workflow 元数据'">
-                ⚡ 在 ComfyUI 中使用工作流
-              </button>
-            </div>
-          </div>
-          <div class="zhg-modal-right">
-            <div class="zhg-detail-row"><span class="zhg-detail-k">文件</span><span class="zhg-detail-v zhg-file-cell" :data-tip="fileRenaming ? '' : '双击重命名（自动保留扩展名）'" @dblclick.stop="beginFileRename">
-                <template v-if="!fileRenaming">{{ fileDisplayName(detail) }}</template>
-                <input v-else class="zhg-file-input" ref="fileRenameInput" v-model="fileRenameVal"
-                       @keyup.enter="commitFileRename" @keyup.esc="cancelFileRename"
-                       @blur="commitFileRename" @click.stop @dblclick.stop>
-              </span></div>
-            <div class="zhg-detail-row"><span class="zhg-detail-k">时间</span><span class="zhg-detail-v">{{ fmtTime(detail.mtime) }}</span></div>
-            <div class="zhg-detail-row"><span class="zhg-detail-k">大小</span><span class="zhg-detail-v">{{ fmtSize(detail.size) }}</span></div>
-            <div class="zhg-detail-row"><span class="zhg-detail-k">模型</span>
-              <span class="zhg-detail-v" :data-tip="detail.model || ''">{{ detail.model ? fmtModel(detail.model) : '—' }}</span></div>
-            <div class="zhg-detail-row"><span class="zhg-detail-k">LoRA</span>
-              <div class="zhg-detail-v zhg-detail-tags">
-                <span class="zhg-lora" v-for="l in detail.loras" :key="'dl'+l">{{ l }}</span>
-                <span v-if="!detail.loras.length">—</span>
-              </div></div>
-
-            <div class="zhg-detail-section">
-              <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span>
-                <!-- 图库 → 词库：把这张图的提示词标签按 id 带过去填入「已选」，bind 沿用本页 URL 上的节点 ID -->
-                <button class="zhg-detail-btn" @click.stop="gotoWordbank"
-                        data-tip="把这张图的提示词标签带入词库「已选」（按词条 ID 定位，同标签页打开）">→ 词库</button>
-              </div>
-              <div class="zhg-detail-row">
-                <div class="zhg-detail-tags">
-                  <!-- 提示词标签（词库词条）在前：只读，左键放入筛选区并启用、右键编辑词条 -->
-                  <span class="zhg-tag readonly hl-prompt"
-                        :class="tagThemeClass"
-                        :style="tagStyle(t)"
-                        v-for="t in promptDetailTags" :key="'dtp'+t.name"
-                        @click.stop="addDetailTagToFilter(t)"
-                        @contextmenu.prevent="editDetailTag(t)"
-                        :data-tip="'提示词标签（运行时注入，只读）左键放入筛选区并启用，右键编辑词条'">
-                    {{ t.name }}
-                  </span>
-                  <!-- 自定义标签（平铺叶子）：只显示叶子名（如 '喜欢'），父级分组不出现在展示层；左键编辑词条、右键删除 -->
-                  <span class="zhg-tag hl-custom" :class="[tagThemeClass]"
-                        :style="t.style || {}"
-                        :data-tip="'自定义标签，左键编辑词条，右键删除'"
-                        v-for="t in customFlatTags" :key="'dtc' + tagKey(t)"
-                        @click.stop="editDetailTag(t)" @contextmenu.prevent="askDeleteTag(t)">
-                    {{ t.display }}
-                  </span>
-                  <span v-if="!promptDetailTags.length && !customFlatTags.length" class="zhg-none">暂无标签，点击下方 ＋ 添加</span>
-                </div>
-              </div>
-              <div class="zhg-detail-tag-add">
-                <span class="zhg-tag-add" v-if="!tagInputing" @click="startTagInput">＋ 添加标签</span>
-                <div class="zhg-new-row" v-else>
-                  <input class="zhg-input" v-model="quickTag" ref="tagInputEl" placeholder="输入标签后回车…"
-                         @keyup="onTagKeyup" @blur="onTagInputBlur">
-                  <button class="btn zhg-mini" @click="quickCreateTag">确定</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="zhg-detail-section" v-if="detail.hasPrompt">
-              <div class="zhg-detail-section-title">提示词 <span class="zhg-detail-hint">（英文）</span>
-                <button class="zhg-prompt-copy" @click="copyPrompt">复制</button>
-              </div>
-              <pre class="zhg-prompt"><template v-for="(s, i) in enSegments" :key="'en'+i"><span v-if="s.color" class="zhg-hl" :style="{ background: s.color }">{{ s.text }}</span><span v-else>{{ s.text }}</span></template></pre>
-              <div class="zhg-prompt-more" v-if="detail.promptPreview.length >= 790">…（已截断）</div>
-              <div class="zhg-detail-section-title zhg-cn-title">中文提示词 <span class="zhg-detail-hint">（由标签拼接）</span></div>
-              <pre class="zhg-prompt zhg-prompt-cn"><template v-for="(s, i) in cnSegments" :key="'cn'+i"><span v-if="s.color" class="zhg-hl" :style="{ background: s.color }">{{ s.text }}</span><span v-else>{{ s.text }}</span></template><template v-if="!cnSegments.length">暂无中文提示词</template></pre>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- 详情弹层：图库 / 词库共用同一组件（galleryDetail.js），成员全部取自本页 useGalleryCommon 实例 -->
+    <gallery-detail-modal :g="gself" />
 
     <!-- 全屏查看：由公共模块 modules/common/zhule_fullviewer.js 命令式接管（非响应式） -->
 
@@ -521,6 +429,8 @@ export default {
     return {
       ...gallery,
       blockStyle, startBlockDrag, startSideDragTD,
+      // 共用详情弹层吃整份实例（computed 自动解包），不必逐个搬运成员
+      gself: getCurrentInstance().proxy,
     };
   },
 };

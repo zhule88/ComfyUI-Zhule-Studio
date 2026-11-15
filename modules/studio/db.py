@@ -1,4 +1,4 @@
-﻿"""Zhule Studio 词库 SQLite 数据层（运行时唯一数据源）。
+"""Zhule Studio 词库 SQLite 数据层（运行时唯一数据源）。
 
 自 DB 迁移后，词库的增删改查全部走 zhule.db（表 prompt），
 代码不再扫描 / 读写 modules/studio/prompt 文件夹与 wordbank_index.json。
@@ -1700,8 +1700,17 @@ def gallery_get_by_name(key):
     if not records:
         return None
     rec = records[0]
-    # 自定义标签完整路径 -> id（gallery_load_records 未暴露该映射；custom_tag_id_index
-    # 的 key 是节点名即叶子名，故先取叶子再反查）
+    # 收尾统一走 _gallery_detail_record（补 customIds），保证与 gallery_get_by_id 同结构
+    return _gallery_detail_record(rec)
+
+
+def _gallery_detail_record(rec):
+    """详情记录的公共收尾：补 customIds（自定义标签完整路径 -> id，str）。
+
+    gallery_get_by_name / gallery_get_by_id 共用，保证两条入口返回结构完全一致。
+    """
+    if rec is None:
+        return None
     rec["customIds"] = {}
     if rec.get("customTags"):
         nidx = custom_tag_id_index()
@@ -1711,6 +1720,50 @@ def gallery_get_by_name(key):
             if cid:
                 rec["customIds"][full] = str(cid)
     return rec
+
+
+def gallery_get_by_id(gid):
+    """按 gallery_image.id 取单条详情记录（字段与 gallery_get_by_name 完全一致）。
+
+    详情查询的正式入口：图库主键即 id，不依赖文件名反查；
+    文件改名、换目录都不影响该入口的命中。
+    """
+    try:
+        gid = int(gid or 0)
+    except (TypeError, ValueError):
+        return None
+    if gid <= 0:
+        return None
+    records = gallery_load_records(ids=[gid])
+    if not records:
+        return None
+    return _gallery_detail_record(records[0])
+
+
+def gallery_id_map(names):
+    """文件名 -> 图库 id 的批量映射（供词库参考图等存量路径数据一次性换成 id）。
+
+    只在数据出口做一次映射，业务侧拿到 id 后一律按 id 定位，不再按名字反查。
+    返回 {name: id}；未进图库索引的名字不出现在结果里。
+    """
+    keys = [str(n).strip() for n in (names or []) if str(n or "").strip()]
+    if not keys:
+        return {}
+    out = {}
+    with _lock:
+        conn = connect()
+        try:
+            _ensure_schema(conn)  # connect() 已建好；此处重跑整套 CREATE TABLE 是 985 次 N+1 的主因
+            _ph = ",".join("?" * len(keys))
+            rows = conn.execute(
+                "SELECT id, name FROM {0} WHERE name IN ({1})".format(GAL_IMG_TABLE, _ph),
+                keys
+            ).fetchall()
+        finally:
+            conn.close()
+    for r in rows:
+        out[r["name"]] = int(r["id"])
+    return out
 
 
 def gallery_query_tag_gids(prompt_groups=None, custom_ids=None, mode="and"):

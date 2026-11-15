@@ -74,9 +74,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .col-btn:hover { background: var(--card-hover); color: var(--text); }
 .col-num { min-width: 20px; text-align: center; font-size: 13px; font-weight: 600; }
 
-/* Tab */
-.tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--border-2);
-  background: var(--bg-2); flex-shrink: 0; overflow-x: auto; }
+/* Tab 行：大类不再是下划线页签，也收进一条液态分段控件（.seg + .glider，样式见「大类液态分段」段） */
+.tabs { display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  flex-shrink: 0; overflow-x: auto; }
 .tabs::-webkit-scrollbar { height: 0; }
 .tab-add { flex-shrink: 0; align-self: center; width: 26px; height: 26px; margin-right: 4px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -141,14 +141,17 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .bank-body { position: relative; flex: 1; min-height: 0;
   display: flex; flex-direction: column; }
 .chips-wrap { flex-shrink: 0; background: var(--bg); border-bottom: 1px solid var(--border-2); }
-.chips-head { display: flex; align-items: center; gap: 10px; padding: 6px 18px 2px; }
-.chips-title { color: var(--text-3); font-size: 11px; flex-shrink: 0; }
-.chips-toggle { padding: 3px 10px; font-size: 12px; flex-shrink: 0;
-  background: #1b202b; color: var(--text-2); border: 1px solid var(--border);
-  border-radius: 6px; cursor: pointer; transition: all 0.12s; white-space: nowrap; }
-.chips-toggle:hover { background: var(--card-hover); color: var(--text); }
-.chips-count { color: var(--primary); font-size: 16px; font-weight: 700;
-  white-space: nowrap; flex-shrink: 0; text-shadow: 0 0 8px var(--primary-dim); }
+/* 词条数量徽章：原「筛选分类 ⏶收起 数量43」整行删除后，数量挪到顶部 tab 行、搜索放大镜左侧 */
+.wb-count { flex-shrink: 0; align-self: center; margin-left: auto;
+  display: inline-flex; align-items: baseline; gap: 3px; padding: 3px 9px;
+  font-size: 13px; font-weight: 700; color: var(--primary); font-variant-numeric: tabular-nums;
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  white-space: nowrap; text-shadow: 0 0 10px var(--primary-dim); }
+.wb-count i { font-style: normal; font-size: 10.5px; font-weight: 500;
+  color: var(--text-3); text-shadow: none; }
+.wb-count.is-search { color: var(--accent); }
+/* 数量自己贴右了，搜索框不再吃 auto 外边距，两者才会紧挨着 */
+.bank-tabs-row .wb-search { margin-left: 0; }
 /* Tab 行 + 右侧搜索（方案A）：默认只露一个放大镜图标，点开才在原位展开成框；范围开关放在框内 */
 .bank-tabs-row { display: flex; align-items: stretch; gap: 8px; padding-right: 14px;
   background: var(--bg-2); border-bottom: 1px solid var(--border-2); flex-shrink: 0; }
@@ -234,6 +237,106 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   color: #1b202b; background: #f0a93b; border-radius: 50%;
   width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
 }
+
+/* ── 分类「液态分段」（liquid segment）：同一层小类连成一条分段控件，选中项由 .glider 柔光滑块承载 ──
+   滑块宽度/位移由 Wordbank.js 的 syncChipGliders() 按真实 DOM 量出（分类名长短不一）。
+   段内 chip 不再自带药丸底与 1px 描边：池 / 整类选中改用字色 + 右上角标表达，免得和滑块抢视觉。 */
+.chips-line .seg { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 13px;
+  background: linear-gradient(180deg, #141a23, #1b2431);
+  box-shadow: inset 0 0 0 1px var(--border), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+.chips-line .seg .glider { position: absolute; top: 3px; left: 3px; width: 0; height: calc(100% - 6px);
+  border-radius: 10px; z-index: 0; pointer-events: none;
+  background: linear-gradient(158deg, var(--primary-dim) 0%, color-mix(in srgb, var(--accent) 16%, transparent) 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 72%, transparent),
+              0 10px 24px -12px var(--primary),
+              inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  transition: transform 0.42s cubic-bezier(0.22, 1.15, 0.26, 1),
+              width 0.42s cubic-bezier(0.22, 1.15, 0.26, 1),
+              opacity 0.18s; }
+.chips-line .seg .glider.off { opacity: 0; }
+.chips-line .seg .chip { position: relative; z-index: 1; padding: 5px 13px; font-size: 12.5px; line-height: 1.2;
+  background: transparent; border: 1px solid transparent; border-radius: 10px;
+  color: color-mix(in srgb, var(--tag-bg, var(--text-2)) 76%, var(--text-2));
+  transition: color 0.2s, background 0.16s, transform 0.16s; }
+.chips-line .seg .chip:hover { background: rgba(255, 255, 255, 0.055); color: var(--text); transform: translateY(-1px); }
+.chips-line .seg .chip:active { transform: translateY(0) scale(0.97); }
+.chips-line .seg .chip.active { background: transparent; border-color: transparent; color: #fff; font-weight: 600;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--primary) 62%, transparent); }
+/* 遍历池 / 随机池 / 整类选中：段内不铺底色块，改字色 + 角标（角标沿用上面的 .chip::after） */
+.chips-line .seg .chip.in-pool,
+.chips-line .seg .chip.cat-picked { box-shadow: none; padding-left: 13px; }
+.chips-line .seg .chip.in-pool { color: var(--purple); }
+.chips-line .seg .chip.in-pool-random { border-style: solid; border-color: transparent; padding-left: 13px; color: var(--accent); }
+.chips-line .seg .chip.cat-picked { color: #ffbd5c; }
+/* 选中态仍保留各自的状态色（只提亮），滑块负责兜底高亮，两者叠加不打架 */
+.chips-line .seg .chip.in-pool.active { color: #c9b6ff; }
+.chips-line .seg .chip.in-pool-random.active { color: #cfe8ff; }
+.chips-line .seg .chip.cat-picked.active { color: #ffcf85; }
+/* 段内状态角标（♾️/🎲/✓）：原来贴在药丸外侧，进了分段控件会压到边界，改为内嵌右上角并让出文字位 */
+.chips-line .seg .chip.in-pool,
+.chips-line .seg .chip.in-pool-random,
+.chips-line .seg .chip.cat-picked { padding-right: 19px; }
+.chips-line .seg .chip.in-pool::after,
+.chips-line .seg .chip.in-pool-random::after,
+.chips-line .seg .chip.cat-picked::after { top: 3px; right: 3px; width: 11px; height: 11px; font-size: 8px; z-index: 2; }
+/* 分段内的「全部」：作为分段首项与真分类同级，靠斜体灰字 + 右侧一道细竖线跟真分类分开；
+   选中它时由同一枚滑块承载，字变白不再斜体 */
+.chips-line .seg .chip.clear { color: var(--text-3); font-style: italic; padding: 5px 12px; }
+.chips-line .seg .chip.clear::after { content: ''; position: absolute; right: -1px; top: 22%; height: 56%;
+  width: 1px; background: rgba(255, 255, 255, 0.12); z-index: 2; }
+.chips-line .seg .chip.clear:hover { color: var(--text-2); font-style: italic; transform: none; }
+.chips-line .seg .chip.clear.active { color: #fff; font-style: normal; font-weight: 600; }
+.chips-line .seg .chip.clear.active::after { background: rgba(255, 255, 255, 0.22); }
+
+/* ── 大类「液态分段」：顶行大类与小类同一套 .seg + .glider 画风，但明显更「重」
+   —— 字号大一号（13.5 vs 12.5）、滑块更亮且带外发光环、选中项左内侧多一道蓝色竖条，
+   一眼看得出这是层级最高的大类，而不是又一层小类。 */
+.tabs .seg { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 15px;
+  background: linear-gradient(180deg, #0f151e, #1a2331);
+  box-shadow: inset 0 0 0 1px var(--border), inset 0 1px 0 rgba(255, 255, 255, 0.06),
+              0 8px 20px -16px #000; }
+.tabs .seg .glider { position: absolute; top: 3px; left: 3px; width: 0; height: calc(100% - 6px);
+  border-radius: 12px; z-index: 0; pointer-events: none;
+  background: linear-gradient(158deg, color-mix(in srgb, var(--primary) 46%, transparent) 0%,
+                                       color-mix(in srgb, var(--accent) 30%, transparent) 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 88%, transparent),
+              0 0 16px -3px color-mix(in srgb, var(--primary) 75%, transparent),
+              0 12px 26px -14px var(--primary),
+              inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.42s cubic-bezier(0.22, 1.15, 0.26, 1),
+              width 0.42s cubic-bezier(0.22, 1.15, 0.26, 1),
+              opacity 0.18s; }
+.tabs .seg .glider.off { opacity: 0; }
+.tabs .seg .tab { position: relative; z-index: 1; padding: 6px 15px; border-radius: 12px;
+  font-size: 13.5px; font-weight: 600; letter-spacing: 0.2px; color: var(--text-2);
+  background: transparent; border: 1px solid transparent; border-bottom-color: transparent;
+  transition: color 0.2s, background 0.16s, transform 0.16s, box-shadow 0.2s; }
+/* 页签时代的下划线全部作废（下面这串把 .tab.* 里所有 border-bottom-color 都压回透明） */
+.tabs .seg .tab.active,
+.tabs .seg .tab.in-pool,
+.tabs .seg .tab.in-pool.active,
+.tabs .seg .tab.in-pool-random,
+.tabs .seg .tab.in-pool-random.active,
+.tabs .seg .tab.cat-picked,
+.tabs .seg .tab.has-selected,
+.tabs .seg .tab.active.has-selected { border-bottom-color: transparent; }
+.tabs .seg .tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.055); transform: translateY(-1px); }
+.tabs .seg .tab:active { transform: translateY(0) scale(0.98); }
+/* 大类的「特殊」：选中项更亮 + 左内侧一道竖条，标出这是大类这一层 */
+.tabs .seg .tab.active { color: #fff; font-weight: 700; letter-spacing: 0.3px;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--primary) 72%, transparent);
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, #9ecbff 85%, transparent); }
+/* 池 / 整类选中：段内不铺底色，沿用字色 + 右上角标（角标规则沿用 .tab.*::after） */
+.tabs .seg .tab.in-pool { color: var(--purple); }
+.tabs .seg .tab.in-pool.active { color: #c9b6ff; }
+.tabs .seg .tab.in-pool-random { color: var(--accent); }
+.tabs .seg .tab.in-pool-random.active { color: #cfe8ff; }
+.tabs .seg .tab.cat-picked { color: #ffbd5c; }
+.tabs .seg .tab.cat-picked.active { color: #ffcf85; }
+.tabs .seg .tab.has-selected { color: var(--accent); }
+.tabs .seg .tab.has-selected::before { color: var(--accent); }
 
 /* 网格 */
 .main { flex: 1; overflow-y: auto; padding: 16px 18px; }
@@ -2025,7 +2128,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   overflow: hidden;
 }
 .chips-wrap { background: transparent; }
-.tabs { padding: 8px 12px 0; }
 
 /* 分类右键菜单（首项「编辑分类」，其余池三态与新建） */
 .ctx-layer { position: fixed; inset: 0; z-index: 3000; }
@@ -2281,12 +2383,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .edit-dialog .field.override > label,
 .edit-dialog .field.override .field-head > label { color: #ffd7a3; }
 
-/* 分层标签：每行 chips 左侧的层级说明（原先是 + 号槽位） */
-.chip-depth {
-  flex-shrink: 0; width: 40px; text-align: left;
-  font-size: 10.5px; color: var(--text-3); letter-spacing: 0.3px;
-  white-space: nowrap; user-select: none;
-}
+/* 分层标签已移除：每行 chips 左侧的「大类 / N级」说明文字用户判定无用，层级由分段控件自身表达 */
 
 /* 编辑分类弹层：向下继承开关 + 说明 */
 .cat-provide {
