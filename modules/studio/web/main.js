@@ -1,7 +1,6 @@
 import { createApp, ref, computed, watch, onBeforeUnmount } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 import Wordbank from './pages/Wordbank.js';
-import Gallery from './pages/Gallery.js';
 import GalleryTopDown from './pages/GalleryTopDown.js';
 // 分层弹框与图库页共用同一份组件 + 时间格式预设，设置页调用时视觉与图库完全一致
 import { LinkDialog, LINK_TIME_PRESETS, linkTimeName, normalizeTree, fmtTime } from './pages/galleryCommon.js';
@@ -196,7 +195,8 @@ const router = createRouter({
     { path: '/', redirect: '/wordbank' },
     { path: '/wordbank', name: 'wordbank', component: Wordbank },
     { path: '/gallery', name: 'gallery', component: GalleryTopDown },
-    { path: '/gallery-side', name: 'gallery-side', component: Gallery },
+    // 左右（侧边）布局已移除：旧书签一律带原参数回到上下布局
+    { path: '/gallery-side', redirect: (to) => ({ path: '/gallery', query: to.query }) },
   ],
 });
 
@@ -720,14 +720,13 @@ const App = {
       return b ? { bind: b } : {};
     },
     galleryLink() {
-      const p = ['/gallery', '/gallery-side'].includes(this.$route.path) ? this.$route.path : '/gallery';
-      return { path: p, query: this.bindQuery };
+      return { path: '/gallery', query: this.bindQuery };
     },
     isWordbank() {
       return this.$route.path === '/wordbank';
     },
     isGallery() {
-      return ['/gallery', '/gallery-side'].includes(this.$route.path);
+      return this.$route.path === '/gallery';
     },
   },
   template: `

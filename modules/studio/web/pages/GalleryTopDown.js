@@ -14,7 +14,6 @@ export default {
         <button class="zhg-sort-arrow" @click="toggleSortDir"
                 :data-tip="filters.sortDir === 'desc' ? '按时间倒序（新→旧），点击切换升序' : '按时间正序（旧→新），点击切换降序'">{{ filters.sortDir === 'desc' ? '▾' : '▴' }}</button>
       </div>
-      <button class="btn zhg-layout-btn" :data-tip="isTopDown ? '切换到左右布局' : '切换到上下布局'" @click="toggleLayout">⧉</button>
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"

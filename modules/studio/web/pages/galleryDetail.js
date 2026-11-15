@@ -1,6 +1,6 @@
 // 图片详情弹层（图库 / 词库共用）
 // 模板取自图库原版详情弹层，一字未改结构；所有数据与方法统一通过 props.g 取：
-//   - 图库页（Gallery.js / GalleryTopDown.js）传 setup 代理，即 useGalleryCommon 的整套状态与方法；
+//   - 图库页（GalleryTopDown.js）传 setup 代理，即 useGalleryCommon 的整套状态与方法；
 //   - 词库页传 createDetailHost() 生成的适配对象（数据仍走图库详情接口，界面与图库完全一致）。
 import { computed, reactive, ref } from 'vue';
 import { fmtTime, fmtSize, fmtModel, tagKey, leafName, jfetch, API } from './galleryCommon.js';

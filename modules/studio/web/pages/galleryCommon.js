@@ -1,14 +1,13 @@
-// galleryCommon.js —— 图库双布局公共逻辑（方案A：抽取 composable）
-// 说明：GalleryTopDown.js（/gallery 上下布局）与 Gallery.js（/gallery-side 侧边布局）
-// 除布局模板与筛选区拖拽参数外完全一致，公共逻辑统一收拢到本模块：
+// galleryCommon.js —— 图库页公共逻辑（方案A：抽取 composable）
+// 说明：图库只有 GalleryTopDown.js（/gallery 上下布局）一套模板，公共逻辑统一收拢到本模块：
 // 列表加载/筛选/删除/导出、详情弹层（tag 随机色 + 提示词高亮 + 左键入筛选/右键编辑词条）、
 // 框选多选、外部过滤区（隐藏=完全移除，不可逆语义统一）、标签状态持久化。
-// 布局差异通过 useGalleryCommon(opts) 参数化：
-//   opts.side = { initW, initH, wMin, wMax, hMin, hMax }  侧边/筛选区尺寸初始值与拖拽范围
-//   opts.onPrefChangedExtra(p, prev)  设置变化后的布局独有回调（如上下布局筛选块重排）
-//   opts.onMountedExtra()             挂载后布局独有回调
+// 布局参数通过 useGalleryCommon(opts) 传入：
+//   opts.side = { initW, initH, wMin, wMax, hMin, hMax }  筛选区尺寸初始值与拖拽范围
+//   opts.onPrefChangedExtra(p, prev)  设置变化后的回调（如上下布局筛选块重排）
+//   opts.onMountedExtra()             挂载后回调
 import { ref, reactive, computed, nextTick, watch, onMounted, onBeforeUnmount } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import TagTreePanel from './tagTreePanel.js';
 import { useMarqueeSelect } from './marqueeSelect.js';
 // 全站统一删除确认（图片/批量/标签/词条共用同一弹框与设置判断）
@@ -480,7 +479,6 @@ export function cardTip(it) {
 
 export function useGalleryCommon(opts = {}) {
   const route = useRoute();
-  const router = useRouter();
   // 慢操作节流日志：仅记录 >=30ms 的计算，同一标签 5 秒内最多一条，避免渲染期刷屏
   const pref = reactive(loadPref());
   function onPrefChanged(e) {
@@ -1183,12 +1181,7 @@ export function useGalleryCommon(opts = {}) {
     filters.q || tagList.value.some((t) => t.active && !t.hidden) ||
     filters.models.length || filters.loras.length);
 
-  // 当前是否为上下布局（/gallery）；GalleryTopDown.js 挂在 /gallery，故此处恒为 true
-  const isTopDown = computed(() => route.path === '/gallery');
-  function toggleLayout() {
-    const target = isTopDown.value ? '/gallery-side' : '/gallery';
-    router.push({ path: target, query: { ...route.query } });
-  }
+  // 布局切换（左右布局）已随 gallery-side 路由一并移除，图库固定上下布局
   function setSortField(f) {
     if (filters.sortField === f) return;
     filters.sortField = f;
@@ -2465,7 +2458,7 @@ export function useGalleryCommon(opts = {}) {
     tagKey, tagList,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, tagThemeClass, addDetailTagToFilter,
     copyPrompt, gotoWordbank, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
-    isTopDown, toggleLayout, setSortField, toggleSortDir,
+    setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,
     randomPage,
     pageEditing, pageEditVal, beginPageEdit, commitPageEdit, cancelPageEdit,
