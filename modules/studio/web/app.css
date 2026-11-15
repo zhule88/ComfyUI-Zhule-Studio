@@ -2742,3 +2742,397 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   transition: all .12s; }
 .hardlink-btn:hover:not(:disabled) { color: var(--text); background: var(--card-hover); border-color: var(--primary-dim); }
 .hardlink-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+
+/* ==========================================================================
+   玻璃胶囊皮肤（Glass Capsule）· 图库标签筛选区 + 标签编辑面板
+   覆盖对象：.zhg-ttp-chip / .zhg-ttp-open / .zhg-sel-tag / .zhg-out-open
+             + 角标 .zhg-ttp-count + 右键菜单 .zhg-ttp-menu + 新建重命名弹窗 .zhg-ttp-dlg
+   约定：只改视觉属性（背景/描边/阴影/滤镜/文字色），不改 DOM、不改事件、
+         不动 padding 与 font-size（这两项由 tagTreePanel.js 的 chipStyle() 内联注入）
+   性能取舍：backdrop-filter 只挂给展开容器与浮层（数量少、面积大）；
+             叶子 chip 有几十颗并发，改用「半透明叠层 + 内高光」模拟玻璃，
+             避免密集模糊掉帧。视觉上玻璃感的 80% 来自高光边与通透叠层，不依赖模糊。
+   回滚：删除本注释块至文件末尾即可（改前备份在会话 temp/app.css.bak_before_glass）
+   ========================================================================== */
+
+:root {
+  --gls-hi: rgba(255, 255, 255, 0.22);        /* 玻璃外描边 */
+  --gls-hi-strong: rgba(255, 255, 255, 0.42); /* 顶部内高光 */
+  --gls-line: rgba(255, 255, 255, 0.16);      /* 深色玻璃描边 */
+  --gls-drop: 0 2px 7px -3px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- 1. 标签本体：筛选树 chip / 已选标签 / 编辑面板标签 ---------- */
+/* 权重必须压过 .zhg-tag-theme-*.zhg-ttp-chip（0,2,0），故三种主题并列写出 */
+.zhg-tag-theme-dark.zhg-ttp-chip, .zhg-tag-theme-light.zhg-ttp-chip, .zhg-tag-theme-plain.zhg-ttp-chip,
+.zhg-tag-theme-dark.zhg-sel-tag, .zhg-tag-theme-light.zhg-sel-tag, .zhg-tag-theme-plain.zhg-sel-tag {
+  background-color: transparent;
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.06) 46%, rgba(255, 255, 255, 0.015) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 56%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 30%, transparent) 52%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 20%, transparent) 100%);
+  color: #eef4fb;
+  border: 1px solid var(--gls-hi);
+  box-shadow:
+    inset 0 1px 0 var(--gls-hi-strong),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    inset 0 0 14px rgba(255, 255, 255, 0.045),
+    var(--gls-drop);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+  transition: background-image 0.16s ease, box-shadow 0.16s ease,
+              border-color 0.16s ease, transform 0.12s ease, color 0.16s ease;
+}
+
+/* hover：整体提亮上浮，在高光边上再压一层同色辉光 */
+.zhg-tag-theme-dark.zhg-ttp-chip:hover, .zhg-tag-theme-light.zhg-ttp-chip:hover, .zhg-tag-theme-plain.zhg-ttp-chip:hover {
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.09) 50%, rgba(255, 255, 255, 0.03) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 66%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 40%, transparent) 52%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 26%, transparent) 100%);
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 16px rgba(255, 255, 255, 0.08),
+    0 5px 16px -6px rgba(0, 0, 0, 0.60),
+    0 0 14px -4px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 55%, transparent);
+  transform: translateY(-1px);
+}
+
+/* 已选标签 hover：保留「点一下要移出」的红色提示语义，但换成玻璃化的红雾 */
+.zhg-tag-theme-dark.zhg-sel-tag:hover, .zhg-tag-theme-light.zhg-sel-tag:hover, .zhg-tag-theme-plain.zhg-sel-tag:hover {
+  background-image:
+    linear-gradient(158deg, rgba(255, 130, 130, 0.28) 0%, rgba(255, 255, 255, 0.05) 55%, rgba(255, 255, 255, 0.02) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--red, #e5484d) 40%, transparent) 0%,
+      color-mix(in srgb, var(--red, #e5484d) 20%, transparent) 100%);
+  border-color: rgba(255, 120, 120, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 0 14px -5px rgba(255, 80, 80, 0.55);
+  transform: none;
+}
+
+/* ---------- 2. 展开容器：玻璃袋（唯一挂 backdrop-filter 的标签结构层） ---------- */
+.zhg-ttp-open, .zhg-out-open {
+  background-color: transparent;
+  background-image:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 55%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(120% 130% at 12% -6%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 30%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 14%, transparent) 60%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 8%, transparent) 100%);
+  border: 1px solid var(--gls-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 0 24px rgba(255, 255, 255, 0.05),
+    0 8px 22px -12px rgba(0, 0, 0, 0.65);
+  -webkit-backdrop-filter: blur(10px) saturate(1.18);
+  backdrop-filter: blur(10px) saturate(1.18);
+}
+
+/* ---------- 3. 关联图数角标：玻璃内嵌小胶囊（仅标签面板，不动详情页 .zhg-tag-count） ---------- */
+.zhg-ttp-count {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  opacity: 0.92;
+}
+
+/* ---------- 4. 状态玻璃化：on / off / hid / part 的辨识度必须保住 ---------- */
+/* on=生效：白内描边 + 同色外发光 */
+.zhg-tag-theme-dark.zhg-sel-tag.on, .zhg-tag-theme-light.zhg-sel-tag.on, .zhg-tag-theme-plain.zhg-sel-tag.on {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.30),
+    0 0 14px -5px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 65%, transparent);
+}
+/* off=待生效：中性冷玻璃，不再整片红褐；虚线只负责「未启用」，颜色留给各自 --tag-bg 在 hover 时透出 */
+.zhg-tag-theme-dark.zhg-sel-tag.off, .zhg-tag-theme-light.zhg-sel-tag.off, .zhg-tag-theme-plain.zhg-sel-tag.off {
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.028) 58%, rgba(255, 255, 255, 0.010) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 13%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 5%, transparent) 100%);
+  border: 1px dashed rgba(255, 255, 255, 0.20);
+  color: rgba(226, 234, 245, 0.72);
+  text-shadow: none;
+  opacity: 0.95;
+  background-color: transparent;
+}
+/* off hover：透出本标签自己的色，提示「点了就会启用」，红色语义只在这一刻出现 */
+.zhg-tag-theme-dark.zhg-sel-tag.off:hover, .zhg-tag-theme-light.zhg-sel-tag.off:hover, .zhg-tag-theme-plain.zhg-sel-tag.off:hover {
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.05) 55%, rgba(255, 255, 255, 0.02) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 40%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 18%, transparent) 100%);
+  color: #eef4fb;
+  opacity: 1;
+}
+/* hid=暂时隐藏：低透明 + 去饱和 + 虚线 */
+.zhg-tag-theme-dark.zhg-sel-tag.hid, .zhg-tag-theme-light.zhg-sel-tag.hid, .zhg-tag-theme-plain.zhg-sel-tag.hid {
+  opacity: 0.40;
+  border-style: dashed;
+  filter: grayscale(0.45);
+}
+/* part=半选上卷：斜纹语言必须保留，玻璃渐变叠在斜纹下面 */
+.zhg-tag-theme-dark.zhg-sel-tag.zhg-out-tag.part, .zhg-tag-theme-light.zhg-sel-tag.zhg-out-tag.part,
+.zhg-tag-theme-plain.zhg-sel-tag.zhg-out-tag.part {
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.16) 0 4px, transparent 4px 9px),
+    linear-gradient(158deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.02) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 56%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 20%, transparent) 100%);
+  border-color: rgba(255, 255, 255, 0.40);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.26),
+    0 0 12px -5px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 60%, transparent);
+}
+/* 半选容器：玻璃袋同样带一道同色辉光 */
+.zhg-out-open.part {
+  border-color: color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 72%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 1px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 26%, transparent),
+    0 8px 22px -12px rgba(0, 0, 0, 0.65);
+}
+
+/* ---------- 5. 浮层：右键菜单 + 新建/重命名弹窗（背后是图片，玻璃最有戏） ---------- */
+.zhg-ttp-menu {
+  background: rgba(22, 28, 38, 0.62);
+  border: 1px solid var(--gls-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 16px 42px rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+  backdrop-filter: blur(16px) saturate(1.35);
+}
+.zhg-ttp-dlg {
+  background: rgba(22, 28, 38, 0.68);
+  border: 1px solid var(--gls-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    0 24px 60px rgba(0, 0, 0, 0.66);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  backdrop-filter: blur(20px) saturate(1.35);
+}
+.zhg-ttp-dlg-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.zhg-ttp-dlg-input:focus {
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #4f8cff) 34%, transparent);
+}
+
+/* ---------- 6. 兜底与动效降级 ---------- */
+/* 不支持 backdrop-filter 时容器会过于通透，加深底色保证可读 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .zhg-ttp-open, .zhg-out-open {
+    background-image:
+      linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%),
+      radial-gradient(120% 130% at 12% -6%,
+        color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 40%, transparent) 0%,
+        color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 22%, transparent) 100%);
+  }
+  .zhg-ttp-menu { background: rgba(22, 28, 38, 0.92); }
+  .zhg-ttp-dlg { background: rgba(22, 28, 38, 0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zhg-tag-theme-dark.zhg-ttp-chip:hover,
+  .zhg-tag-theme-light.zhg-ttp-chip:hover,
+  .zhg-tag-theme-plain.zhg-ttp-chip:hover { transform: none; }
+}
+
+
+/* ---------- 7. 兜底：位点若没挂主题类也走玻璃（权重 0,1,0 低于主题规则，不会反压上面的定义） ---------- */
+.zhg-ttp-chip, .zhg-sel-tag {
+  background-color: transparent;
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.06) 46%, rgba(255, 255, 255, 0.015) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 56%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 30%, transparent) 52%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 20%, transparent) 100%);
+  color: #eef4fb;
+  border: 1px solid var(--gls-hi);
+  box-shadow:
+    inset 0 1px 0 var(--gls-hi-strong),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    inset 0 0 14px rgba(255, 255, 255, 0.045),
+    var(--gls-drop);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+
+/* ⋯ 管理按钮：黑底在玻璃上显脏，换成白色磨砂圆点 */
+.zhg-ttp-more:hover {
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30);
+}
+/* 展开箭头在玻璃底上原色太闷，提一档 */
+.zhg-ttp-arrow {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+
+/* ---------- 8. 菜单标题可读性修正：玻璃底上 11px 灰蓝小字对比不足（实测 4.0:1），提亮至约 5.6:1 ---------- */
+.zhg-ttp-menu-head {
+  color: rgba(226, 235, 247, 0.62);
+  font-weight: 600;
+}
+
+/* ---------- 9. 图片详情区标签：与图库筛选区同一套玻璃胶囊 ---------- */
+/* 覆盖三类载体：扁平详情标签 .zhg-detail-tags .zhg-tag、层级树叶子 .zhg-dtag-kids .zhg-tag、父分组 .zhg-dtag-group
+   颜色仍由 galleryDetail.js 注入 --tag-bg（跟随图库「图片详情区颜色」设置），此处只负责玻璃质感，
+   不动 padding / font-size；圆角胶囊化，tagRound 关闭时由 .zhg-tag-square 压回近直角 */
+.zhg-detail-tags .zhg-tag:is(.hl-prompt, .hl-custom, .zhg-tag-theme-dark, .zhg-tag-theme-light, .zhg-tag-theme-plain),
+.zhg-dtag-kids .zhg-tag:is(.hl-custom, .zhg-tag-theme-dark, .zhg-tag-theme-light, .zhg-tag-theme-plain) {
+  background-color: transparent;
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.06) 46%, rgba(255, 255, 255, 0.015) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 56%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 30%, transparent) 52%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 20%, transparent) 100%);
+  color: #eef4fb;
+  /* 描边与阴影照抄筛选区 on 态（.zhg-tag-theme-*.zhg-sel-tag.on）：彩色细描边 + 白内描边 + 同色外发光 */
+  border: 1px solid var(--tag-bg, var(--primary, #4f8cff));
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.30),
+    0 0 14px -5px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 65%, transparent);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+  transition: background-image 0.16s ease, box-shadow 0.16s ease,
+              border-color 0.16s ease, transform 0.12s ease, color 0.16s ease;
+}
+.zhg-detail-tags .zhg-tag:is(.hl-prompt, .hl-custom, .zhg-tag-theme-dark, .zhg-tag-theme-light, .zhg-tag-theme-plain):hover,
+.zhg-dtag-kids .zhg-tag:is(.hl-custom, .zhg-tag-theme-dark, .zhg-tag-theme-light, .zhg-tag-theme-plain):hover {
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.09) 50%, rgba(255, 255, 255, 0.03) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 66%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 40%, transparent) 52%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 26%, transparent) 100%);
+  border-color: var(--tag-bg, var(--primary, #4f8cff));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 16px rgba(255, 255, 255, 0.08),
+    0 5px 16px -6px rgba(0, 0, 0, 0.60),
+    0 0 14px -4px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 55%, transparent);
+  transform: translateY(-1px);
+}
+/* 父分组（DetailTagNode 的 zhg-dtag-group）：与叶子同一套玻璃袋，颜色取叶子注入的 --tag-bg 淡色 */
+.zhg-dtag-group {
+  background-color: transparent;
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.05) 48%, rgba(255, 255, 255, 0.015) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 40%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 20%, transparent) 100%);
+  color: #eef4fb;
+  border: 1px solid color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 55%, transparent);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 var(--gls-hi-strong),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    inset 0 0 14px rgba(255, 255, 255, 0.045),
+    var(--gls-drop);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+  transition: background-image 0.16s ease, box-shadow 0.16s ease,
+              border-color 0.16s ease, transform 0.12s ease, color 0.16s ease;
+}
+.zhg-dtag-group:hover {
+  background-image:
+    linear-gradient(158deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.03) 100%),
+    radial-gradient(130% 150% at 16% -10%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 52%, transparent) 0%,
+      color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 26%, transparent) 100%);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 16px rgba(255, 255, 255, 0.08),
+    0 5px 16px -6px rgba(0, 0, 0, 0.60),
+    0 0 14px -4px color-mix(in srgb, var(--tag-bg, var(--primary, #4f8cff)) 45%, transparent);
+  transform: translateY(-1px);
+}
+/* 方角开关在详情区同样生效（图库 tagRound 受控）：压回近直角 */
+.zhg-detail-tags .zhg-tag.zhg-tag-square,
+.zhg-dtag-kids .zhg-tag.zhg-tag-square { border-radius: 3px; }
+.zhg-dtag-group.zhg-tag-square { border-radius: 3px; }
+/* 透明方角时 dashed 分组描边语义保留在 hover 之上即可 */
+
+/* ==========================================================================
+   图库标签视觉皮肤（设置 → 图库标签 → 皮肤）
+   颜色仍由 --tag-bg 注入（跟随「筛选·编辑区颜色」），皮肤只改质感。
+   default 不定义任何变量，保持原有外观；作用范围：筛选区标签、标签树 chip、
+   已选标签编辑区标签与设置面板里的演示标签。图片详情区保持自身玻璃胶囊样式。
+   ========================================================================== */
+.zhg-theme-glass {
+  --sk-bgc: color-mix(in srgb, var(--tag-bg, #2a9d8f) 18%, rgba(255, 255, 255, 0.55));
+  --sk-bgi: none;
+  --sk-fg: color-mix(in srgb, var(--tag-bg, #2a9d8f) 62%, #10131a);
+  --sk-bdc: color-mix(in srgb, var(--tag-bg, #2a9d8f) 40%, #ffffff);
+  --sk-sh: 0 1px 8px rgba(12, 15, 20, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  --sk-tsh: none;
+  --sk-blur: blur(7px) saturate(1.2);
+}
+.zhg-theme-gradient {
+  --sk-bgc: var(--tag-bg, #2a9d8f);
+  --sk-bgi: linear-gradient(135deg,
+    color-mix(in srgb, var(--tag-bg, #2a9d8f) 78%, #ffffff) 0%,
+    var(--tag-bg, #2a9d8f) 62%,
+    color-mix(in srgb, var(--tag-bg, #2a9d8f) 72%, #000000) 100%);
+  --sk-fg: #ffffff;
+  --sk-bdc: color-mix(in srgb, var(--tag-bg, #2a9d8f) 70%, #ffffff);
+  --sk-sh: 0 2px 9px color-mix(in srgb, var(--tag-bg, #2a9d8f) 30%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  --sk-tsh: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --sk-blur: none;
+}
+.zhg-theme-neon {
+  --sk-bgc: color-mix(in srgb, var(--tag-bg, #2a9d8f) 12%, #101319);
+  --sk-bgi: none;
+  --sk-fg: color-mix(in srgb, var(--tag-bg, #2a9d8f) 80%, #ffffff);
+  --sk-bdc: color-mix(in srgb, var(--tag-bg, #2a9d8f) 62%, transparent);
+  --sk-sh: 0 0 7px color-mix(in srgb, var(--tag-bg, #2a9d8f) 50%, transparent),
+             inset 0 0 7px color-mix(in srgb, var(--tag-bg, #2a9d8f) 26%, transparent);
+  --sk-tsh: 0 0 7px color-mix(in srgb, var(--tag-bg, #2a9d8f) 55%, transparent);
+  --sk-blur: none;
+}
+.zhg-theme-line {
+  --sk-bgc: transparent;
+  --sk-bgi: none;
+  --sk-fg: var(--tag-bg, #2a9d8f);
+  --sk-bdc: var(--tag-bg, #2a9d8f);
+  --sk-sh: none;
+  --sk-tsh: none;
+  --sk-blur: none;
+}
+
+/* 主题作用域：图库筛选区标签 .zhg-sel-tag、标签树胶囊 .zhg-ttp-chip、设置页演示块 .demo-tag、
+   词库分类胶囊 .chip（词库侧叫「分类」，主题独立存储但共用这四种质感）。
+   胶囊是原生外观，不挂类；选中态（.on / .active）保持原生高亮，不被质感覆盖 */
+:is(.zhg-sel-tag, .zhg-ttp-chip, .demo-tag, .chip):is(.zhg-theme-glass, .zhg-theme-gradient, .zhg-theme-neon, .zhg-theme-line):not(.on):not(.active) {
+  background-color: var(--sk-bgc, transparent);
+  background-image: var(--sk-bgi, none);
+  color: var(--sk-fg, inherit);
+  border: 1px solid var(--sk-bdc, transparent);
+  box-shadow: var(--sk-sh, none);
+  text-shadow: var(--sk-tsh, none);
+  backdrop-filter: var(--sk-blur, none);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+:is(.zhg-sel-tag, .zhg-ttp-chip, .demo-tag, .chip):is(.zhg-theme-glass, .zhg-theme-gradient, .zhg-theme-neon, .zhg-theme-line):not(.on):not(.active):hover {
+  background-color: var(--sk-bgc, transparent);
+  background-image: var(--sk-bgi, none);
+  color: var(--sk-fg, inherit);
+  border-color: var(--sk-bdc, transparent);
+  filter: brightness(1.08);
+}
