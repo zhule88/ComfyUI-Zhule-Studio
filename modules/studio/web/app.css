@@ -147,7 +147,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   font-size: 13px; font-weight: 700; color: var(--primary); font-variant-numeric: tabular-nums;
   background: transparent; border: 1px solid transparent; border-radius: 9px;
   white-space: nowrap; text-shadow: 0 0 10px var(--primary-dim); }
-.wb-count i { font-style: normal; font-size: 10.5px; font-weight: 500;
+.wb-count em, .wb-count i { font-style: normal; font-size: 10.5px; font-weight: 500;
   color: var(--text-3); text-shadow: none; }
 .wb-count.is-search { color: var(--accent); }
 /* 数量自己贴右了，搜索框不再吃 auto 外边距，两者才会紧挨着 */

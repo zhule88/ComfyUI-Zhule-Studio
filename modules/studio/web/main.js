@@ -12,13 +12,16 @@ const DEFAULT_PREF = {
     // 外部过滤区与标签编辑面板标签右侧的关联图数角标（图片详情不显示），默认开启，可在设置里关掉
     showTagCount: true,
     tagTheme: 'light', tagRound: true,
+    // 图库标签视觉主题：capsule 胶囊 / glass 毛玻璃 / gradient 渐变 / neon 霓虹 / line 细线（只改质感，颜色仍由 --tag-bg 决定）
+    tagStyle: 'capsule',
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
-    // 标签颜色配置（方案E）：level=simple 全局模式（所有标签一套规则）/ complex 分区模式（各区独立）
-    // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
-    // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
+    // 标签颜色配置：图库只保留两个颜色选项（词库分类色已挪到词库自己的设置，见 zhule_wordbank_pref_v1）
+    // areas.ui     = 筛选区域（外部过滤区）+ 编辑区域，共用一个选项
+    // areas.detail = 图片详情区域（图库与词库打开的详情弹层共用，统一跟随本项）
+    // 单区内：mode=diff 异色（seed 种子散列，留空沿用 tagSeed）/ same 同色（color 统一色）
     tagColor: {
-      level: 'simple',
+      level: 'complex',
       globalMode: 'diff',
       globalColor: '#2a9d8f',
       areas: {
@@ -218,9 +221,14 @@ const App = {
       pickOpen.value = '';
       savePref();
     }
-    function setTagTheme(theme) {
-      pref.value.gallery.tagTheme = theme;
+    function setTagStyle(style) {
+      pref.value.gallery.tagStyle = style;
       savePref();
+    }
+    // 词库「分类」主题：与图库标签主题同一套质感，但独立存储（zhule_wordbank_pref_v1），互不影响
+    function setWbTagStyle(style) {
+      wbTag.value.style = style;
+      writeWbPref({ tagStyle: style });
     }
     function setTagRound(round) {
       pref.value.gallery.tagRound = round;
@@ -387,6 +395,56 @@ const App = {
       document.body.style.cursor = '';
     });
     watch(() => pref.value.common.iconSize, (v) => applyIconSize(v), { immediate: true });
+    // ===== 词库标签（词库独有设置，与图库彻底分开）=====
+    // 主题 / 颜色种子 / 分类色都存在词库自己的 pref（zhule_wordbank_pref_v1），不再读写 gallery；
+    // 词库分类固定圆角（不受图库「边角」影响）；但词库打开的图片详情仍跟随图库「图片详情区颜色」。
+    const WB_TAG_KEY = 'zhule_wordbank_pref_v1';
+    function readWbRaw() {
+      try { return JSON.parse(localStorage.getItem(WB_TAG_KEY) || 'null') || {}; } catch (e) { return {}; }
+    }
+    // 首次读取：除已有存档外，兼容把旧版「词库分类」区域配色迁移过来；主题/种子默认沿用图库当前值
+    function readWbTag() {
+      const p0 = readWbRaw();
+      const g = (pref.value && pref.value.gallery) || {};
+      const theme = ['dark', 'light', 'plain'].includes(p0.tagTheme) ? p0.tagTheme : (g.tagTheme || 'light');
+      const seed = (typeof p0.tagSeed === 'string' && p0.tagSeed) ? p0.tagSeed : (g.tagSeed || 'zhule');
+      let c = (p0.tagColor && typeof p0.tagColor === 'object') ? p0.tagColor : null;
+      if (!c) {
+        const legacy = g.tagColor && g.tagColor.areas && g.tagColor.areas.wordbank;
+        c = legacy
+          ? { mode: legacy.mode, color: legacy.color, seed: legacy.seed }
+          : { mode: 'diff', color: '#2a9d8f', seed: '' };
+      }
+      return {
+        theme: theme,
+        // 词库分类主题（胶囊/毛玻璃/渐变/霓虹/细线），与图库标签主题各存一份
+        style: TAG_STYLE_KEYS.includes(p0.tagStyle) ? p0.tagStyle : 'capsule',
+        seed: seed,
+        color: {
+          mode: ['diff', 'same'].includes(c.mode) ? c.mode : 'diff',
+          color: (typeof c.color === 'string' && c.color) ? c.color : '#2a9d8f',
+          seed: typeof c.seed === 'string' ? c.seed : '',
+        },
+      };
+    }
+    const wbTag = ref(readWbTag());
+    function writeWbPref(patch) {
+      const next = Object.assign({}, readWbRaw(), patch);
+      try { localStorage.setItem(WB_TAG_KEY, JSON.stringify(next)); }
+      catch (e) { console.warn('zhule: 词库标签偏好写入失败:', e); }
+      window.dispatchEvent(new CustomEvent('zhule-wordbank-pref', { detail: next }));
+    }
+    function setWbTagSeed(seed) {
+      const v = (seed || '').trim();
+      wbTag.value.seed = v;
+      writeWbPref({ tagSeed: v });
+    }
+    function randomWbTagSeed() {
+      const s = randomSeedStr();
+      wbTag.value.seed = s;
+      writeWbPref({ tagSeed: s });
+      return s;
+    }
     function setTagSeed(seed) {
       pref.value.gallery.tagSeed = (seed || '').trim();
       savePref();
@@ -623,7 +681,7 @@ const App = {
       }
     }
     watch(showSettings, (v) => { if (v) loadLinkMenu(); });
-    return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
+    return { showSettings, pref, TIME_FMTS, TAG_COLOR_AREAS, TAG_STYLES, ICON_SIZES, toggleField, setTimeFmt, setTagRound, setTagStyle,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, toggleHideHints,
       panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
       pickOpen, togglePick, closePick, linkTimePresetLabel, timeFmtSample,
@@ -742,49 +800,81 @@ const App = {
                   <div class="settings-hint keep-hint" v-if="linkMenu.installed > 0 && !linkMenu.pathOk">插件目录变动过，点「注册菜单」覆盖修复</div>
                   <div class="settings-hint keep-hint" v-if="linkMenu.msg">{{ linkMenu.msg }}</div>
                 </div>
-                <!-- 通用设置下的子类：标签（可折叠，折叠状态与其它分组一起持久化） -->
-                <div class="settings-subgroup" :class="{ 'collapsed': isCollapsed('common-tag') }">
-                  <div class="settings-group-title settings-subgroup-head" @click="toggleCollapse('common-tag')">
-                    <span>标签</span>
-                    <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                  </div>
-                  <div class="settings-subgroup-body" v-show="!isCollapsed('common-tag')">
-                <div class="settings-row">
-                  <span class="settings-label">主题</span>
-                  <div class="settings-theme-pick">
-                    <button v-for="th in TAG_THEMES" :key="th.key"
-                            class="zhg-tag hl-prompt demo-tag"
-                            :class="['zhg-tag-theme-' + th.key, (pref.gallery.tagRound === false ? 'zhg-tag-square' : ''), { 'demo-on': (pref.gallery.tagTheme || 'light') === th.key }]"
-                            :style="{ '--tag-bg': demoTagBg }"
-                            @click="setTagTheme(th.key)">{{ th.label }}</button>
-                  </div>
+              </div>
+            </div>
+            <template v-if="isGallery">
+              <!-- 图库标签（多选）：边角 / 主题 / 颜色（筛选·编辑区一个选项，图片详情区一个选项） -->
+              <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-tag') }">
+                <div class="settings-group-title" @click="toggleCollapse('gallery-tag')">
+                  <span>图库标签</span>
+                  <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </div>
+                <div class="settings-group-body" v-show="!isCollapsed('gallery-tag')">
                 <div class="settings-row">
                   <span class="settings-label">边角</span>
                   <div class="settings-theme-pick">
                     <button class="zhg-tag hl-prompt demo-tag"
-                            :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), { 'demo-on': pref.gallery.tagRound !== false }]"
+                            :class="[FIXED_TAG_THEME, { 'demo-on': pref.gallery.tagRound !== false }]"
                             :style="{ '--tag-bg': demoTagBg }"
                             @click="setTagRound(true)">圆角</button>
                     <button class="zhg-tag hl-prompt demo-tag"
-                            :class="['zhg-tag-theme-' + (pref.gallery.tagTheme || 'light'), 'zhg-tag-square', { 'demo-on': pref.gallery.tagRound === false }]"
+                            :class="[FIXED_TAG_THEME, 'zhg-tag-square', { 'demo-on': pref.gallery.tagRound === false }]"
                             :style="{ '--tag-bg': demoTagBg }"
                             @click="setTagRound(false)">方角</button>
                   </div>
-                </div>
+
                 <div class="settings-row">
-                  <span class="settings-label">标签颜色</span>
-                  <span class="settings-seed-box">
-                    <button class="settings-seed-rnd" data-tip="设置标签颜色方案" @click="colorPopupOpenFor('detail')">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
-                    </button>
-                  </span>
-                </div>
+                  <span class="settings-label">主题</span>
+                  <div class="settings-theme-pick">
+                    <button v-for="th in TAG_STYLES" :key="'th'+th.key"
+                            class="zhg-tag hl-prompt demo-tag"
+                            :class="['zhg-theme-' + th.key, (pref.gallery.tagRound === false ? 'zhg-tag-square' : ''), { 'demo-on': (pref.gallery.tagStyle || 'capsule') === th.key }]"
+                            :style="{ '--tag-bg': demoTagBg }"
+                            @click="setTagStyle(th.key)">{{ th.label }}</button>
                   </div>
                 </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                  <span class="settings-label">筛选·编辑区颜色</span>
+                <div class="settings-color-inline">
+                  <div class="color-popup-seg settings-color-seg">
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('gallery','ui').mode === 'diff' }" @click="setAreaTagColorMode('gallery','ui','diff')">异色</button>
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('gallery','ui').mode === 'same' }" @click="setAreaTagColorMode('gallery','ui','same')">同色</button>
+                  </div>
+                  <div class="color-popup-pick" v-if="areaConf('gallery','ui').mode === 'same'">
+                    <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': areaConf('gallery','ui').color }">
+                      <input type="color" class="color-popup-input" :value="areaConf('gallery','ui').color" @input="setAreaTagColor('gallery','ui',$event.target.value)" />
+                    </label>
+                    <button class="color-popup-rnd" data-tip="随机换色" @click="randomAreaColor('gallery','ui')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                  <div class="color-popup-pick" v-else>
+                    <input class="settings-seed-input settings-color-seed" :value="areaConf('gallery','ui').seed" placeholder="种子（留空沿用全局）" @change="setAreaTagSeed('gallery','ui',$event.target.value)" spellcheck="false" />
+                    <button class="color-popup-rnd" data-tip="随机刷新种子" @click="randomAreaSeed('gallery','ui')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                  <span class="settings-label">图片详情区颜色</span>
+                <div class="settings-color-inline">
+                  <div class="color-popup-seg settings-color-seg">
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('gallery','detail').mode === 'diff' }" @click="setAreaTagColorMode('gallery','detail','diff')">异色</button>
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('gallery','detail').mode === 'same' }" @click="setAreaTagColorMode('gallery','detail','same')">同色</button>
+                  </div>
+                  <div class="color-popup-pick" v-if="areaConf('gallery','detail').mode === 'same'">
+                    <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': areaConf('gallery','detail').color }">
+                      <input type="color" class="color-popup-input" :value="areaConf('gallery','detail').color" @input="setAreaTagColor('gallery','detail',$event.target.value)" />
+                    </label>
+                    <button class="color-popup-rnd" data-tip="随机换色" @click="randomAreaColor('gallery','detail')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                  <div class="color-popup-pick" v-else>
+                    <input class="settings-seed-input settings-color-seed" :value="areaConf('gallery','detail').seed" placeholder="种子（留空沿用全局）" @change="setAreaTagSeed('gallery','detail',$event.target.value)" spellcheck="false" />
+                    <button class="color-popup-rnd" data-tip="随机刷新种子" @click="randomAreaSeed('gallery','detail')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                </div>
+                </div>
+                <div class="settings-hint">筛选区域与编辑区域共用一个颜色选项，图片详情区单独一项；边角与皮肤作用于图库的筛选区、编辑区与标签树，图片详情区固定使用玻璃胶囊。词库打开的图片详情也跟随「图片详情区颜色」，但词库自己的分类标签在词库设置里单独配色。</div>
+                </div>
               </div>
-            </div>
-            <template v-if="isGallery">
               <div class="settings-group" :class="{ 'collapsed': isCollapsed('gallery-fields') }">
                 <div class="settings-group-title" @click="toggleCollapse('gallery-fields')">
                   <span>图库卡片显示字段</span>
@@ -977,6 +1067,45 @@ const App = {
                   </label>
                 </div>
                 <div class="settings-hint">开启后分支组卡片不再显示右上角「‹ 序号/总数 ›」翻页框，避免与参考图翻页条挤在一起；分支切换改在卡片上右键，用分支胶片条切换。</div>
+
+                <div class="settings-subgroup" :class="{ 'collapsed': isCollapsed('wordbank-tag') }">
+                  <div class="settings-group-title settings-subgroup-head" @click="toggleCollapse('wordbank-tag')">
+                    <span>词库分类</span>
+                    <svg class="settings-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </div>
+                  <div class="settings-subgroup-body" v-show="!isCollapsed('wordbank-tag')">
+                <div class="settings-row">
+                  <span class="settings-label">主题</span>
+                  <div class="settings-theme-pick">
+                    <button v-for="th in TAG_STYLES" :key="'wth'+th.key"
+                            class="zhg-tag hl-prompt demo-tag"
+                            :class="['zhg-theme-' + th.key, { 'demo-on': (wbTag.style || 'capsule') === th.key }]"
+                            :style="{ '--tag-bg': demoTagBg }"
+                            @click="setWbTagStyle(th.key)">{{ th.label }}</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                  <span class="settings-label">分类颜色</span>
+                <div class="settings-color-inline">
+                  <div class="color-popup-seg settings-color-seg">
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('wordbank','').mode === 'diff' }" @click="setAreaTagColorMode('wordbank','','diff')">异色</button>
+                    <button class="color-popup-seg-btn" :class="{ on: areaConf('wordbank','').mode === 'same' }" @click="setAreaTagColorMode('wordbank','','same')">同色</button>
+                  </div>
+                  <div class="color-popup-pick" v-if="areaConf('wordbank','').mode === 'same'">
+                    <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': areaConf('wordbank','').color }">
+                      <input type="color" class="color-popup-input" :value="areaConf('wordbank','').color" @input="setAreaTagColor('wordbank','',$event.target.value)" />
+                    </label>
+                    <button class="color-popup-rnd" data-tip="随机换色" @click="randomAreaColor('wordbank','')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                  <div class="color-popup-pick" v-else>
+                    <input class="settings-seed-input settings-color-seed" :value="areaConf('wordbank','').seed" placeholder="种子（留空沿用全局）" @change="setAreaTagSeed('wordbank','',$event.target.value)" spellcheck="false" />
+                    <button class="color-popup-rnd" data-tip="随机刷新种子" @click="randomAreaSeed('wordbank','')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></button>
+                  </div>
+                </div>
+                </div>
+                <div class="settings-hint">词库这边是「分类」（图库那边才是「标签」）：主题与颜色只作用于词库页的分类胶囊，跟图库标签互不影响；词库分类固定圆角，不跟图库「边角」。词库打开的图片详情不跟这里，仍跟随图库设置里的「图片详情区颜色」。</div>
+                  </div>
+                </div>
                 </div>
               </div>
             </template>
@@ -985,88 +1114,6 @@ const App = {
         </div>
         <div class="settings-resizer is-left" @mousedown.prevent="startPanelResize($event, -1)"></div>
         <div class="settings-resizer" @mousedown.prevent="startPanelResize($event, 1)"></div>
-        </div>
-      </div>
-
-      <!-- 标签颜色设置弹窗（方案E）：层级切换 + 模式/取色/种子 -->
-      <div class="color-popup-mask" v-if="colorPopupOpen" @click.self="colorPopupOpen = false">
-        <div class="color-popup" :class="{ 'hide-hints': pref.common.hideHints === true }">
-          <div class="color-popup-head">
-            <span class="color-popup-title">标签颜色</span>
-            <button class="color-popup-close" @click="colorPopupOpen = false">✕</button>
-          </div>
-          <div class="color-popup-body">
-            <div class="color-popup-seg">
-              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'simple' }" @click="setTagColorLevel('simple')">全局</button>
-              <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.level === 'complex' }" @click="setTagColorLevel('complex')">分区</button>
-            </div>
-            <div class="color-popup-level-hint">全局：所有标签统一按下方规则配色；分区：详情区/编辑区/词库/过滤区各自独立配色。</div>
-            <template v-if="pref.gallery.tagColor.level === 'simple'">
-              <div class="color-popup-row">
-                <span class="color-popup-label">模式</span>
-                <div class="color-popup-seg">
-                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.globalMode === 'diff' }" @click="setGlobalTagColorMode('diff')">异色</button>
-                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.globalMode === 'same' }" @click="setGlobalTagColorMode('same')">同色</button>
-                </div>
-              </div>
-              <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'same'">
-                <span class="color-popup-label">颜色</span>
-                <div class="color-popup-pick">
-                  <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': pref.gallery.tagColor.globalColor }">
-                    <input type="color" class="color-popup-input" :value="pref.gallery.tagColor.globalColor"
-                           @input="setGlobalTagColor($event.target.value)" />
-                  </label>
-                  <button class="color-popup-rnd" data-tip="随机换色" @click="randomGlobalColor()">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                  </button>
-                </div>
-              </div>
-              <div class="color-popup-row" v-if="pref.gallery.tagColor.globalMode === 'diff'">
-                <span class="color-popup-label">种子</span>
-                <div class="color-popup-pick">
-                  <input class="settings-seed-input" :value="pref.gallery.tagSeed" @change="setTagSeed($event.target.value)" spellcheck="false" />
-                  <button class="color-popup-btn" @click="randomTagSeed()">随机</button>
-                </div>
-              </div>
-              <div class="color-popup-hint">异色：按种子给每个标签散列稳定颜色，换种子整套换色；同色：全部标签统一一色，点色块取色或点刷新随机换色。</div>
-            </template>
-            <template v-else>
-              <div class="color-popup-seg color-popup-area-seg">
-                <button v-for="a in TAG_COLOR_AREAS" :key="a.key"
-                        class="color-popup-seg-btn" :class="{ on: colorPopupArea === a.key }"
-                        @click="colorPopupArea = a.key">{{ a.label }}</button>
-              </div>
-              <div class="color-popup-row">
-                <span class="color-popup-label">模式</span>
-                <div class="color-popup-seg">
-                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.areas[colorPopupArea].mode === 'diff' }" @click="setAreaTagColorMode('diff')">异色</button>
-                  <button class="color-popup-seg-btn" :class="{ on: pref.gallery.tagColor.areas[colorPopupArea].mode === 'same' }" @click="setAreaTagColorMode('same')">同色</button>
-                </div>
-              </div>
-              <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'same'">
-                <span class="color-popup-label">颜色</span>
-                <div class="color-popup-pick">
-                  <label class="color-popup-swatch" data-tip="点击取色" :style="{ '--swatch': pref.gallery.tagColor.areas[colorPopupArea].color }">
-                    <input type="color" class="color-popup-input" :value="pref.gallery.tagColor.areas[colorPopupArea].color"
-                           @input="setAreaTagColor($event.target.value)" />
-                  </label>
-                  <button class="color-popup-rnd" data-tip="随机换色" @click="randomAreaColor()">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                  </button>
-                </div>
-              </div>
-              <div class="color-popup-row" v-if="pref.gallery.tagColor.areas[colorPopupArea].mode === 'diff'">
-                <span class="color-popup-label">种子</span>
-                <div class="color-popup-pick">
-                  <input class="settings-seed-input" :value="pref.gallery.tagColor.areas[colorPopupArea].seed" @change="setAreaTagSeed($event.target.value)" spellcheck="false" />
-                  <button class="color-popup-rnd" data-tip="随机刷新种子" @click="randomAreaSeed()">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                  </button>
-                </div>
-              </div>
-              <div class="color-popup-hint">四个区域分别配色，每区可选「异色（按种子散列）/ 同色（统一一色）」；区域种子留空时沿用全局种子。</div>
-            </template>
-          </div>
         </div>
       </div>
 

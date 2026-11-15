@@ -308,7 +308,7 @@ const DEFAULT_PREF = {
     showModelFilter: true,
     showLoraFilter: true,
     timeFmt: 'yyyy-MM-dd HH:mm',
-    tagTheme: 'light',
+    tagTheme: 'light', tagStyle: 'capsule',
     tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
@@ -1383,11 +1383,13 @@ export function useGalleryCommon(opts = {}) {
   function editColorOf(name) {
     return tagColorMap.value[name] || colorFor('edit', name);
   }
-  // 标签主题类（设置页 tagTheme/tagRound，zhule-pref-changed 即时生效）：
-  // zhg-tag-theme-dark|light|plain + 圆角关闭时追加 zhg-tag-square（近直角）
+  // 标签主题类（设置页 tagRound/tagStyle，zhule-pref-changed 即时生效）：
+  // zhg-tag-theme-light（固定）+ 圆角关闭时追加 zhg-tag-square（近直角）+ 质感主题 zhg-theme-capsule|glass|gradient|neon|line
+  // 深色/浅色/描边三主题已废弃，固定浅色；圆角跟随「边角」，质感跟随「主题」（胶囊时不挂类，保持原生标签外观）
   const tagThemeClass = computed(() => {
-    const th = pref.gallery.tagTheme || 'light';
-    return 'zhg-tag-theme-' + th + (pref.gallery.tagRound === false ? ' zhg-tag-square' : '');
+    const st = pref.gallery.tagStyle || 'capsule';
+    const stCls = (st && st !== 'capsule') ? ' zhg-theme-' + st : '';
+    return 'zhg-tag-theme-light' + (pref.gallery.tagRound === false ? ' zhg-tag-square' : '') + stCls;
   });
 
   // 带 mtime 时间戳防浏览器缓存旧图：同名文件重建后 URL 变化，强制拉取新缩略图/原图

@@ -145,10 +145,12 @@ export function createDetailHost(opts = {}) {
     });
     return segs;
   });
+  // 主题（深色/浅色/描边）已废弃，固定浅色；圆角跟随图库「边角」，质感跟随图库「主题」（胶囊时不挂类）
   const tagThemeClass = computed(() => {
-    const gp = readGalleryPref();
-    return 'zhg-tag-theme-' + (gp.tagTheme || 'light') + (gp.tagRound === false ? ' zhg-tag-square' : '');
-  });
+  const st = gp.tagStyle || 'capsule';
+  const stCls = (st && st !== 'capsule') ? ' zhg-theme-' + st : '';
+  return 'zhg-tag-theme-light' + (gp.tagRound === false ? ' zhg-tag-square' : '') + stCls;
+});
   function tagStyle(t) {
     if (!t || !t.name) return null;
     const c = colorMap.value[t.name] || detailColor(t.name) || TAG_FALLBACK;

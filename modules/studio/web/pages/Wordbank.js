@@ -50,7 +50,7 @@ export default {
           <!-- 数量徽章：原先挤在「筛选分类 ⏶收起 数量43」那行右侧，那行整块去掉后数量挪到这儿，
                就贴在搜索放大镜左边，不额外占高度 -->
           <span class="wb-count" :class="{ 'is-search': searching }"
-                :data-tip="searching ? '当前搜索命中的词条数' : '当前列表词条数'">{{ listFiles.length }}<i>{{ searching ? ' 命中' : ' 词' }}</i></span>
+                :data-tip="searching ? '当前搜索命中的词条数' : '当前分类下的词条总数'"><em>{{ searching ? '命中' : '共' }}</em>{{ listFiles.length }}<i>{{ searching ? '条' : '个词条' }}</i></span>
           <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
           <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
             <button v-if="!searchOpen" class="wb-search-trigger" :data-tip="searchTip"
@@ -1583,54 +1583,53 @@ export default {
       if (typeof hv === 'boolean') pref.hideVgNav = hv;
     }
     // 通用删除免确认由 deleteConfirm.js 统一处理（onMounted 读取设置并监听广播）
-    // 全局标签主题/圆角/颜色种子（与图库标签样式一致，作用于词库小分类 chip）
-    const tagTheme = ref(readTagTheme());
-    const tagRound = ref(readTagRound());
-    const tagSeed = ref(readTagSeed());
-    const tagColor = ref(readTagColor());
+    // 词库分类（词库独有设置）：主题/颜色不再跟随图库，读写 zhule_wordbank_pref_v1；
+    // 词库分类固定圆角，不受图库「边角」影响；词库打开的图片详情仍跟随图库「图片详情区颜色」。
+    const WB_TAG_PREF_KEY = 'zhule_wordbank_pref_v1';
+    function readWbTagPref() {
+      try { return JSON.parse(localStorage.getItem(WB_TAG_PREF_KEY) || 'null') || {}; } catch (e) { return {}; }
+    }
+    // 首次读取兼容：无存档时沿用旧版「词库分类」区域配色与图库当前主题/种子
+    function wbTagDefaults() {
+      let g = {};
+      try {
+        const raw = localStorage.getItem('zhule_ui_pref');
+        g = ((raw ? JSON.parse(raw) : {}) || {}).gallery || {};
+      } catch (e) { g = {}; }
+      const legacy = g.tagColor && g.tagColor.areas && g.tagColor.areas.wordbank;
+      return {
+        theme: ['dark', 'light', 'plain'].includes(g.tagTheme) ? g.tagTheme : 'dark',
+        seed: (typeof g.tagSeed === 'string' && g.tagSeed) ? g.tagSeed : 'zhule',
+        color: legacy
+          ? { mode: legacy.mode, color: legacy.color, seed: legacy.seed }
+          : { mode: 'diff', color: '#2a9d8f', seed: '' },
+      };
+    }
     function readTagTheme() {
-      try {
-        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
-        if (raw && raw.gallery && ['dark', 'light', 'plain'].includes(raw.gallery.tagTheme)) return raw.gallery.tagTheme;
-      } catch (e) { /* ignore */ }
-      return 'dark';
+      const p0 = readWbTagPref();
+      return ['dark', 'light', 'plain'].includes(p0.tagTheme) ? p0.tagTheme : wbTagDefaults().theme;
     }
-    function readTagRound() {
-      try {
-        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
-        if (raw && raw.gallery && typeof raw.gallery.tagRound === 'boolean') return raw.gallery.tagRound;
-      } catch (e) { /* ignore */ }
-      return true;
-    }
+    // 词库标签固定圆角：恒返回 true，不再读图库 tagRound
+    function readTagRound() { return true; }
     function readTagSeed() {
-      try {
-        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
-        if (raw && raw.gallery && typeof raw.gallery.tagSeed === 'string' && raw.gallery.tagSeed) return raw.gallery.tagSeed;
-      } catch (e) { /* ignore */ }
-      return 'zhule';
+      const p0 = readWbTagPref();
+      return (typeof p0.tagSeed === 'string' && p0.tagSeed) ? p0.tagSeed : wbTagDefaults().seed;
+    }
+    // 分类质感主题：capsule 胶囊 / glass 毛玻璃 / gradient 渐变 / neon 霓虹 / line 细线
+    // 与图库标签主题同一套质感，但词库自己存一份（p0.tagStyle），互不影响
+    function readTagStyle() {
+      const p0 = readWbTagPref();
+      const ok = ['capsule', 'glass', 'gradient', 'neon', 'line'];
+      return ok.includes(p0.tagStyle) ? p0.tagStyle : 'capsule';
     }
     function readTagColor() {
-      try {
-        const raw = JSON.parse(localStorage.getItem('zhule_ui_pref') || 'null');
-        const tc = raw && raw.gallery && raw.gallery.tagColor;
-        if (!tc || typeof tc !== 'object') return null;
-        const base = { level: 'simple', globalMode: 'diff', globalColor: '#2a9d8f',
-          areas: { detail: { mode: 'diff', color: '#2a9d8f', seed: '' }, filter: { mode: 'diff', color: '#2a9d8f', seed: '' }, edit: { mode: 'diff', color: '#2a9d8f', seed: '' }, wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' } } };
-        const out = Object.assign({}, base, tc);
-        if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
-        if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
-        if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
-        out.areas = {};
-        ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
-          const a = (tc.areas && tc.areas[k]) || {};
-          out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
-          if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
-          if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
-          if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
-        });
-        return out;
-      } catch (e) { /* ignore */ }
-      return null;
+      const p0 = readWbTagPref();
+      const c = (p0.tagColor && typeof p0.tagColor === 'object') ? p0.tagColor : wbTagDefaults().color;
+      return {
+        mode: ['diff', 'same'].includes(c.mode) ? c.mode : 'diff',
+        color: (typeof c.color === 'string' && c.color) ? c.color : '#2a9d8f',
+        seed: typeof c.seed === 'string' ? c.seed : '',
+      };
     }
     // 通用设置「隐藏被静音的提示词」：默认关闭；开启后卡片列表不展示 mute=1 的词条（数据仍在，关掉开关即回来）
     function readCommonHideMuted() {
@@ -1649,52 +1648,60 @@ export default {
       } catch (e) { return false; }
     }
     const hideCardIcons = ref(readCommonHideCardIcons());
+    // 图库偏好变更：只刷新图库相关字段，词库标签配色与主题各管各，不再跟着图库变
     function onGlobalPrefChanged(e) {
-      const g = e && e.detail && e.detail.gallery;
-      const cm = e && e.detail && e.detail.common;
-      if (cm && typeof cm.hideMuted === 'boolean') hideMuted.value = cm.hideMuted;
-      if (cm && typeof cm.hideCardIcons === 'boolean') hideCardIcons.value = cm.hideCardIcons;
-      if (g) {
-        if (['dark', 'light', 'plain'].includes(g.tagTheme)) tagTheme.value = g.tagTheme;
-        if (typeof g.tagRound === 'boolean') tagRound.value = g.tagRound;
-        if (typeof g.tagSeed === 'string') tagSeed.value = g.tagSeed || '';
-        tagColor.value = readTagColor();
-      }
+      const g = (e && e.detail && e.detail.gallery) || {};
+      const cm = (e && e.detail && e.detail.common) || {};
+      hideMuted.value = cm.hideMuted === true;
+      hideCardIcons.value = cm.hideCardIcons === true;
+      if (typeof g.showTagCount === 'boolean') sp.value = g.showTagCount;
+    }
+    // 词库自己的标签设置变更后刷新 chip 样式
+    // 词库标签独立状态：主题 / 颜色种子 / 分类色全部来自 zhule_wordbank_pref_v1，与图库彻底分开
+    // 圆角固定 true：词库标签不受图库「边角」设置影响
+    const tagTheme = ref(readTagTheme());
+    const tagSeed = ref(readTagSeed());
+    const tagColor = ref(readTagColor());
+    const tagStyle = ref(readTagStyle());
+    const tagRound = ref(true);
+    function onWbTagPrefChanged() {
+      tagTheme.value = readTagTheme();
+      tagSeed.value = readTagSeed();
+      tagColor.value = readTagColor();
+      tagStyle.value = readTagStyle();
+      tagRound.value = true;
     }
     const addCardContentCn = ref('');
     const addCardInput = ref(null);
     const addingCard = ref(false);
 
-    // 词库小分类 chip 复用全局标签主题类（颜色仅由 --tag-bg 注入，主题/圆角走 CSS 类）
+    // 词库小分类 chip 复用标签主题类（颜色仅由 --tag-bg 注入；词库固定圆角，不挂 zhg-tag-square）
+    // 质感主题跟随词库自己的「主题」设置（zhule_wordbank_pref_v1.tagStyle）：胶囊时不挂类，保持原生分类胶囊外观
     const chipThemeClass = computed(() => {
-      let c = 'zhg-tag-theme-' + tagTheme.value;
-      if (tagRound.value === false) c += ' zhg-tag-square';
-      return c;
+      const st = tagStyle.value || 'capsule';
+      return st === 'capsule' ? ['zhg-tag-theme-light'] : ['zhg-tag-theme-light', 'zhg-theme-' + st];
     });
     // 词库小分类 chip 颜色：复用设置页「标签颜色」方案（wordbank 区域）
     // - 无配置或简单「全局异色」：种子散列色（同一分类名恒定同色，换种子整套换色）
     // - 简单「全局同色」：统一一色
     // - 分区模式：按 wordbank 区域配置（同色=区域统一色 / 异色=区域种子散列，区域种子留空沿用全局种子）
     // 注意：三个分支都必须返回 { '--tag-bg': 色值 } 对象，返回裸色字符串 CSS 变量注入不进去（标签会全成默认色）
-    function chipStyle(name) {
-      const hashColor = (seed) => {
-        const s = String(seed || '') + '|' + String(name);
-        let h = 2166136261;
-        for (let i = 0; i < s.length; i++) {
-          h ^= s.charCodeAt(i);
-          h = Math.imul(h, 16777619);
-        }
-        h >>>= 0;
-        return 'hsl(' + (h % 360) + ', 55%, 42%)';
-      };
-      const tc = tagColor.value;
-      if (tc && tc.level === 'complex') {
-        const a = tc.areas && tc.areas.wordbank;
-        if (a && a.mode === 'same') return { '--tag-bg': a.color || '#2a9d8f' };
-        return { '--tag-bg': hashColor((a && a.seed) || tagSeed.value) };
+    // 标签名 + 种子 → 稳定色相（算法与图库 seedHash 一致，同种子同名同色）
+    function hashColor(name, seed) {
+      const s0 = String(seed || '') + '|' + String(name);
+      let h = 2166136261;
+      for (let i = 0; i < s0.length; i++) {
+        h ^= s0.charCodeAt(i);
+        h = Math.imul(h, 16777619);
       }
-      if (tc && tc.globalMode === 'same') return { '--tag-bg': tc.globalColor || '#2a9d8f' };
-      return { '--tag-bg': hashColor(tagSeed.value) };
+      h >>>= 0;
+      return 'hsl(' + (h % 360) + ', ' + (60 + (h % 4) * 6) + '%, ' + (38 + (h % 3) * 5) + '%)';
+    }
+    // chip 配色：异色按词库自己的种子散列、同色用词库自选色
+    function chipStyle(name) {
+      const c = tagColor.value || {};
+      if (c.mode === 'same') return { '--tag-bg': c.color || '#2a9d8f' };
+      return { '--tag-bg': hashColor(name, c.seed || tagSeed.value) };
     }
 
     // 父列明确（非"全部"）时才显示小类加号：depth 0 的父列是 tab（恒选定），更深层需上层有选中
@@ -6242,6 +6249,8 @@ const submitAddTab = async () => {
       document.addEventListener('click', clickBlocker, true);
       window.addEventListener('zhule-wordbank-pref', onWordbankPref);
       window.addEventListener('zhule-pref-changed', onGlobalPrefChanged);
+    // 词库标签自己的设置（主题/颜色）改动后即时刷新分类 chip
+    window.addEventListener('zhule-wordbank-pref', onWbTagPrefChanged);
       window.addEventListener('zhule:wordbank-changed', onWordbankChanged);
       // 右键菜单：点空白、Esc、滚动、改变窗口大小都收起，避免残留
       document.addEventListener('keydown', onBankKeydown);
@@ -6281,6 +6290,7 @@ const submitAddTab = async () => {
       window.removeEventListener('resize', syncChipGliders);
       window.removeEventListener('zhule-wordbank-pref', onWordbankPref);
       window.removeEventListener('zhule-pref-changed', onGlobalPrefChanged);
+    window.removeEventListener('zhule-wordbank-pref', onWbTagPrefChanged);
       window.removeEventListener('zhule:wordbank-changed', onWordbankChanged);
       if (fullViewer) fullViewer.close();
       window.removeEventListener('paste', onUploadRefPaste);
