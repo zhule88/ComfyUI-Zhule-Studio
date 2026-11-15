@@ -848,7 +848,28 @@ export function useGalleryCommon(opts = {}) {
       const meta = tagKidMeta.value[t.rel || t.name];
       if (meta && meta.id) t = patchTag(t, { id: meta.id, kind: meta.isCustom ? 'custom' : 'prompt' }) || t;
     }
-    patchTag(t, { active: !t.active });
+    // 关闭时连同整棵子树一起停用：只翻转自身 active 的话，子树里残留的启用项会让父标签
+    // 立刻回到 part（斜纹 + 亮描边），视觉上「一直启用、怎么点都关不掉」——这正是曾经的 bug。
+    const st = nodeSelState(info);
+    if (st === 'on' || st === 'part') {
+      const rel = String(t.rel || info.rel || '');
+      const ek = t.kind || info.kind || '';
+      if (rel) {
+        const prefix = rel + '/';
+        for (const d of [...tagMap.values()]) {
+          if ((d.kind || '') !== ek) continue;
+          const dr = String(d.rel || '');
+          if (!dr || !dr.startsWith(prefix)) continue;
+          if (d.inner) { patchTag(d, { active: false }); continue; } // 套娃内点出来的临时项：只停用，留在容器里还能再点开
+          if (d.active) patchTag(d, { active: false }); // 显式子标签：停用但保留在筛选区
+        }
+      }
+      patchTag(t, { active: false });
+      applyFilter();
+      saveTagPref();
+      return;
+    }
+    patchTag(t, { active: true });
     applyFilter();
     saveTagPref();
   }
