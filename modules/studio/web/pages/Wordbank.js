@@ -824,7 +824,7 @@ export default {
               <input type="text" v-model="presetDlg.name" placeholder="如 卧室氛围 / 表情特写" spellcheck="false"
                      @keydown.enter="submitPresetSave">
             </div>
-            <!-- 同名会覆盖已存预设（后端按 kind+name 命中同一行），提前把话说明白 -->
+            <!-- 同名会覆盖已存预设（后端按 name 命中同一行），提前把话说明白 -->
             <div class="preset-dup" v-if="presetDupName">
               已有同名预设「{{ presetDupName }}」，保存会<b>覆盖</b>它原来的内容
             </div>
@@ -895,15 +895,6 @@ export default {
           </div>
           <div v-else class="pc-grid">
             <div v-for="p in presetFiltered" :key="p.id" class="pc-card">
-              <!-- 配图：图库详情💾保存的预设带着来源图（preset.gallery_id → 图库行 id）。
-                   没有图的话一排预设只靠名字根本分不清是哪张图出的，所以图放卡片最上面当主视觉；
-                   点图直接跳图库并把这张图的详情摊开。图被删/改名取不到路径时按「无配图」降级，不冒充别人的图。 -->
-              <div class="pc-thumb" @click="jumpPresetGallery(p)"
-                   :data-tip="p.gallery_name ? '跳转图库查看这张图' : '这份预设没有关联配图（词库页保存的预设不带图）'">
-                <img v-if="p.gallery_name" class="pc-thumb-img" :src="presetThumbUrl(p)"
-                     :alt="p.gallery_name" loading="lazy">
-                <span v-else class="pc-thumb-none">🖼 无配图</span>
-              </div>
               <div class="pc-card-head">
                 <!-- 卡片内改名：双击名字就地改，不弹二层框 -->
                 <input v-if="presetCtr.renaming === p.id" class="pc-name-input" v-model="presetCtr.renameText"
@@ -915,16 +906,11 @@ export default {
                 <span class="pc-items">{{ (p.flow || []).length }} 标签</span>
               </div>
               <!-- 完整标签 + 池子，按出图顺序铺开；标签（灰）与池（橙/紫）同层并列 -->
-              <!-- 图库联动入口：一个按预设的标签去图库里看「这套词能出什么图」，一个直接看这份预设的来源图 -->
-              <div class="pc-links">
-                <button class="btn" @click="enablePresetPrompt(p)"
-                        data-tip="跳转图库，把这套预设的提示词标签全部放进筛选区并启用（按词条 id 筛，改名不失效）">⚡ 启用提示词</button>
-                <button class="btn" @click="jumpPresetGallery(p)"
-                        data-tip="跳转图库并把这份预设的配图详情打开">🖼 一览图库</button>
-              </div>
               <div class="pc-tags">
+                <!-- 普通标签按词库「标签颜色」规则取色（wordbank 区域），池子标签保留 🎲/♾️ 专属配色 -->
                 <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
-                      :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'">
+                      :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'"
+                      :style="it.t === 'pool' ? null : chipStyle(it.label)">
                   <span v-if="it.t === 'pool'" class="pc-tag-badge">{{ it.mode === 'traverse' ? '♾️' : '🎲' }}</span>
                   <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
                   <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
@@ -1007,12 +993,17 @@ export default {
     const dismissToast = () => { toast.show = false; clearTimeout(toastTimer); };
 
     // 从 URL 解析ID：#/wordbank?bind=<节点上的ID>（持久化，刷新画布页不失效）
+    // tags：图库详情「→ 词库」按钮带过来的词条 id 列表（逗号分隔），数据就绪后填入「已选」。
     const linkParams = (() => {
       const h = location.hash || '';
       const qIdx = h.indexOf('?');
-      if (qIdx < 0) return { bind: '' };
+      if (qIdx < 0) return { bind: '', tags: [] };
       const params = new URLSearchParams(h.slice(qIdx + 1));
-      return { bind: params.get('bind') || '' };
+      const tags = String(params.get('tags') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => /^\d+$/.test(s));
+      return { bind: params.get('bind') || '', tags };
     })();
     let runChannel = new BroadcastChannel('zhule-studio');
     // 运行轮次：每次点「运行」递增，供画布端区分广播轮次（多标签页去重用，避免误伤连续运行）
@@ -1691,6 +1682,7 @@ export default {
     // - 无配置或简单「全局异色」：种子散列色（同一分类名恒定同色，换种子整套换色）
     // - 简单「全局同色」：统一一色
     // - 分区模式：按 wordbank 区域配置（同色=区域统一色 / 异色=区域种子散列，区域种子留空沿用全局种子）
+    // 注意：三个分支都必须返回 { '--tag-bg': 色值 } 对象，返回裸色字符串 CSS 变量注入不进去（标签会全成默认色）
     function chipStyle(name) {
       const hashColor = (seed) => {
         const s = String(seed || '') + '|' + String(name);
@@ -1706,10 +1698,10 @@ export default {
       if (tc && tc.level === 'complex') {
         const a = tc.areas && tc.areas.wordbank;
         if (a && a.mode === 'same') return { '--tag-bg': a.color || '#2a9d8f' };
-        return hashColor((a && a.seed) || tagSeed.value);
+        return { '--tag-bg': hashColor((a && a.seed) || tagSeed.value) };
       }
       if (tc && tc.globalMode === 'same') return { '--tag-bg': tc.globalColor || '#2a9d8f' };
-      return hashColor(tagSeed.value);
+      return { '--tag-bg': hashColor(tagSeed.value) };
     }
 
     // 父列明确（非"全部"）时才显示小类加号：depth 0 的父列是 tab（恒选定），更深层需上层有选中
@@ -4751,7 +4743,6 @@ const submitAddTab = async () => {
     // ============ 保存预设 / 预设中心：把「已选」整套存成可复用预设 ============
     // 落库走 preset 表，payload = { slots, genCount, fillMode } 是黑盒：后端只把它原样存回，
     // 语义完全靠 serializeSlots / rebuildSlots 两端对齐（顺带把「池子与提示词同数组」的顺序一起带走）。
-    const PRESET_KIND = 'bank';
     const presetDlg = reactive({ open: false, name: '', saving: false });
     const presetCtr = reactive({
       open: false, list: [], loading: false, q: '', renaming: 0, renameText: '',
@@ -4833,7 +4824,7 @@ const submitAddTab = async () => {
     const refreshPresetList = async () => {
       presetCtr.loading = true;
       try {
-        const resp = await fetch('/zhule_studio/api/preset?kind=' + encodeURIComponent(PRESET_KIND));
+        const resp = await fetch('/zhule_studio/api/preset');
         const json = await resp.json();
         if (!resp.ok || json.error) {
           showToast(json.error || '预设列表读取失败', 'error');
@@ -4845,44 +4836,6 @@ const submitAddTab = async () => {
       } finally {
         presetCtr.loading = false;
       }
-    };
-
-    // ---------- 预设卡片上的配图与图库入口 ----------
-    // 缩略图直连图库缩略图接口：preset.gallery_name 就是 gallery_image.name（图库相对路径），
-    // 与 /gallery/thumb?path= 的定位字段完全一致，不用再按 id 绕一圈取路径。
-    // t=mtime 破缓存：同名文件内容被换掉时 URL 跟着变，不会一直显示旧图。
-    const presetThumbUrl = (p) => '/zhule_studio/api/gallery/thumb?path=' +
-      encodeURIComponent(p.gallery_name) + '&t=' + (p.gallery_mtime || '');
-
-    // 跳图库并摊开配图详情：open 参数由图库页 onMounted 消费（openDetailByPath）。
-    // 新开标签页，词库这边的已选状态一律不动。
-    const jumpPresetGallery = (p) => {
-      if (!p || !p.gallery_name) {
-        showToast('这份预设没有关联配图（只有图库详情里点💾保存的预设才带图）', 'warn');
-        return;
-      }
-      const url = '/zhule_studio#/gallery?open=' + encodeURIComponent(p.gallery_name);
-      window.open(url, '_blank');
-    };
-
-    // 启用提示词：把这套预设的标签全部带到图库筛选区并启用（一次跳转即生效）。
-    // 参数一律走词条 id（落库/应用/筛选全链路只用 id，改名不失效）；
-    // 历史预设槽位没有 id 时才退回标签名，别让老数据点了没反应。
-    const enablePresetPrompt = (p) => {
-      const tags = (p && p.flow ? p.flow : [])
-        .filter(it => it && it.t === 'tag')
-        .map(it => String(it.id || '').trim() || String(it.label || '').trim())
-        .filter(Boolean);
-      if (!tags.length) {
-        showToast('这份预设里没有提示词标签，跳过去也是空的', 'warn');
-        return;
-      }
-      // 随机池（t=pool）是「运行时抽一条标签」的规则，不是具体词条，图库里没法按它筛，只能跳过
-      const poolCnt = (p.flow || []).filter(it => it && it.t === 'pool').length;
-      showToast('已在图库启用 ' + tags.length + ' 个提示词标签' +
-        (poolCnt ? '（另有 ' + poolCnt + ' 个随机池项未带入：池是运行时抽取，图库无法按它筛）' : ''));
-      const url = '/zhule_studio#/gallery?mode=and&tags=' + encodeURIComponent(tags.join(','));
-      window.open(url, '_blank');
     };
 
     const presetFiltered = computed(() => {
@@ -4933,7 +4886,7 @@ const submitAddTab = async () => {
         const resp = await fetch('/zhule_studio/api/preset/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: PRESET_KIND, name: nm, payload }),
+          body: JSON.stringify({ name: nm, payload }),
         });
         const json = await resp.json();
         if (!resp.ok || json.error) {
@@ -6036,6 +5989,69 @@ const submitAddTab = async () => {
       });
     };
 
+    // ============ 图库 → 词库：按 URL 的 ?tags=id1,id2 覆盖「已选」 ============
+    // 图库详情「→ 词库」按钮跳过来时会带词条 id。语义是「这张图的标签就是新的已选内容」：
+    // 先按 id 分组算好新组合，再整块替换 data.slots（含池槽），不做叠加、不做去重跳过——
+    // 旧组合被替换的项数写进 toast，避免用户以为只是追加了一次。
+    // 全部 id 都失效（词条已删）时不替换，宁可保留原组合也不能把已选清成空。
+    // 首屏只加载当前 tab，词条可能落在别的 tab，这里整包取一次做 id 定位；取到的数据不驻留 bankData，
+    // 仍走原来的懒加载策略（切 tab 时 load 会自行补拉并回填已选）。
+    const applyUrlTags = async () => {
+      const ids = linkParams.tags;
+      if (!ids.length) return;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        if (json.error) throw new Error(json.error);
+        const byId = {};
+        Object.keys(json.data || {}).forEach((tb) => {
+          (json.data[tb] || []).forEach((f) => {
+            const k = String((f && f.id) || '').trim();
+            if (k && !byId[k]) byId[k] = { tab: tb, file: f };
+          });
+        });
+        const items = [];
+        let missing = 0;
+        ids.forEach((id) => {
+          const hit = byId[id];
+          if (!hit || !hit.file) { missing += 1; return; }
+          const file = hit.file;
+          const item = {
+            t: 'item', tab: hit.tab, relPath: file.relPath, id: file.id || '', name: file.name,
+            content: file.content, content_cn: file.content_cn,
+            neg: file.neg || '', override: file.override || '', anc: file.anc || [],
+            _vgKey: file._vgKey || '', _vgTitle: file._vgTitle || '',
+          };
+          // 同一张图里重复词条（理论上不该有）只留一条，避免出词重复
+          if (items.some((s) => sameCard(s, item))) return;
+          items.push(item);
+        });
+        if (!items.length) {
+          showToast(`图库带来的 ${missing} 个标签都已失效，已保留原「已选」未覆盖`, 'warn', 3600);
+          return;
+        }
+        const oldCount = data.slots.length;
+        // 覆盖：整块替换。直接改数组内容而不是重新赋值，computed 视图（allItems/allPools）自动跟着更新
+        data.slots.splice(0, data.slots.length, ...items);
+        selectedCollapsed.value = false; // 展开「已选」区，让新组合立即可见
+        saveState(); // restoreState 已完成时才真正写盘（守卫在 saveState 内部判断），刷新后仍保留
+        // 命中项若落在未加载的 tab，补拉一次，让左侧卡片能显示选中态（与 load 末尾同款逻辑，fire-and-forget）
+        const needTabs = new Set();
+        data.slots.forEach((s) => {
+          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab)) needTabs.add(s.tab);
+        });
+        needTabs.forEach((t) => load(false, t));
+        showToast(
+          `已用图库的 ${items.length} 个标签覆盖「已选」` +
+          (oldCount ? `（原 ${oldCount} 项已替换）` : '') +
+          (missing ? `，${missing} 个标签已失效` : ''),
+          'success', 3200);
+      } catch (e) {
+        showToast('带入图库标签失败：' + e.message, 'error', 4000);
+      }
+    };
+
     // ============ 生命周期 ============
     watch([data, pref, chipsCollapsed, chipsHeight, selectedCollapsed, tabOrder, chipOrder], saveState, { deep: true });
     let clickBlocker;
@@ -6056,7 +6072,9 @@ const submitAddTab = async () => {
       document.addEventListener('click', onBankDismiss, true);
       document.addEventListener('scroll', onBankDismiss, true);
       window.addEventListener('resize', onBankDismiss);
-      load(); // 首屏加载数据（加载遮罩已移除）
+      // 首屏数据就绪后再带入 URL 指定的标签：load 内部会执行 restoreState，
+      // 早于它写入的槽位会被存档恢复覆盖，所以必须串在 load 之后
+      load().then(() => { if (linkParams.tags.length) applyUrlTags(); }); // 首屏加载数据（加载遮罩已移除）
     });
     const onBankKeydown = (e) => {
       // Ctrl+F / Cmd+F：唤起词库搜索（页面不在前台时不抢键）
@@ -6153,7 +6171,7 @@ const submitAddTab = async () => {
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      applyPreset, deletePreset, presetThumbUrl, jumpPresetGallery, enablePresetPrompt,
+      applyPreset, deletePreset,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

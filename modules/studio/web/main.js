@@ -574,6 +574,55 @@ const App = {
           rebuilding.value = false;
         });
     }
+    // 硬链接右键菜单（Windows）：实际写盘由后端调 menu_install.ps1 完成，这里只管状态展示与触发
+    const linkMenu = ref({ supported: true, installed: 0, total: 3, pathOk: false, busy: false, msg: '' });
+    const linkMenuText = computed(() => {
+      const s = linkMenu.value;
+      if (!s.supported) return '仅 Windows 支持';
+      if (!s.installed) return '未注册';
+      if (s.pathOk) return s.installed + '/' + s.total + ' 已注册';
+      return s.installed + '/' + s.total + ' 已注册，但指向已失效';
+    });
+    const linkMenuClass = computed(() => {
+      const s = linkMenu.value;
+      if (!s.supported || !s.installed) return 'off';
+      return s.pathOk ? 'on' : 'warn';
+    });
+    function applyLinkMenuStatus(st) {
+      if (!st) return;
+      const s = linkMenu.value;
+      s.supported = st.supported !== false;
+      s.installed = st.installed || 0;
+      s.total = st.total || 3;
+      s.pathOk = st.path_ok === true;
+    }
+    async function loadLinkMenu() {
+      try {
+        const r = await fetch('/zhule_studio/api/hardlink-menu/status', { headers: { 'Cache-Control': 'no-cache' } });
+        applyLinkMenuStatus(await r.json());
+      } catch (e) {
+        linkMenu.value.msg = '状态读取失败：' + e;
+      }
+    }
+    async function linkMenuAction(action) {
+      const s = linkMenu.value;
+      if (s.busy) return;
+      s.busy = true;
+      s.msg = action === 'install' ? '正在注册…' : '正在卸载…';
+      try {
+        const r = await fetch('/zhule_studio/api/hardlink-menu/' + action, { method: 'POST' });
+        const j = await r.json();
+        applyLinkMenuStatus(j.status);
+        s.msg = j.ok
+          ? (action === 'install' ? '已注册 3 项：文件夹空白处 / 文件夹右键 / 磁盘根目录 × 粘贴为硬链接' : '已卸载，右键菜单已移除')
+          : ('失败：' + String(j.error || '未知错误').slice(0, 300));
+      } catch (e) {
+        s.msg = '请求失败：' + e;
+      } finally {
+        s.busy = false;
+      }
+    }
+    watch(showSettings, (v) => { if (v) loadLinkMenu(); });
     return { showSettings, pref, TIME_FMTS, TAG_THEMES, TAG_COLOR_AREAS, ICON_SIZES, toggleField, setTimeFmt, setTagTheme, setTagRound,
       toggleNoDeleteConfirm, setIconSize, toggleHideMuted, toggleHideCardIcons, toggleHideHints,
       panelWidth, startPanelResize, setTagSeed, randomTagSeed, isCollapsed, toggleCollapse,
@@ -584,7 +633,8 @@ const App = {
       colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
       setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
       wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
-      wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB };
+      wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB,
+      linkMenu, linkMenuText, linkMenuClass, linkMenuAction };
   },
   computed: {
     // 演示块颜色：随机颜色种子联动，主题/边角演示块随种子换色
@@ -674,6 +724,23 @@ const App = {
                     <input type="checkbox" :checked="pref.common.hideHints === true" @change="toggleHideHints">
                     <span class="settings-switch-slider"></span>
                   </label>
+                </div>
+                <!-- 右键粘贴菜单（硬链接）：网页内注册 / 卸载（只写 HKCU，不需要管理员权限） -->
+                <div class="settings-row settings-row-stack">
+                  <div class="hardlink-head">
+                    <span>右键粘贴菜单（硬链接）</span>
+                    <span class="hardlink-state" :class="linkMenuClass">{{ linkMenuText }}</span>
+                  </div>
+                  <div class="hardlink-actions">
+                    <button class="hardlink-btn" :disabled="linkMenu.busy || linkMenu.supported === false"
+                            @click="linkMenuAction('install')">注册菜单</button>
+                    <button class="hardlink-btn" :disabled="linkMenu.busy || linkMenu.installed === 0"
+                            @click="linkMenuAction('uninstall')">卸载菜单</button>
+                  </div>
+                  <div class="settings-hint">注册后右键多出「Zhule 粘贴为硬链接」：零额外占用，与原图共用同一份数据。图库卡片右键「复制图片硬链接」后，到目标文件夹用它落地；Windows 11 需点「显示更多选项」或 Shift+右键才看得到，系统 Ctrl+V 仍是普通副本。</div>
+                  <div class="settings-hint keep-hint" v-if="linkMenu.installed === 0">未注册期间，图库卡片右键不显示「复制图片硬链接」——网页只负责复制路径，没有这个菜单就没有落地入口</div>
+                  <div class="settings-hint keep-hint" v-if="linkMenu.installed > 0 && !linkMenu.pathOk">插件目录变动过，点「注册菜单」覆盖修复</div>
+                  <div class="settings-hint keep-hint" v-if="linkMenu.msg">{{ linkMenu.msg }}</div>
                 </div>
                 <!-- 通用设置下的子类：标签（可折叠，折叠状态与其它分组一起持久化） -->
                 <div class="settings-subgroup" :class="{ 'collapsed': isCollapsed('common-tag') }">
@@ -829,7 +896,7 @@ const App = {
                       </div>
                     </div>
                   </div>
-                  <div class="settings-hint">这次的子文件夹名会像 <b>{{ linkTimeSample }}</b>。同一天多次导出时后端会自动加 _1 / _2 区分，不会覆盖上一次。</div>
+                  <div class="settings-hint">这次的子文件夹名会像 <b>{{ linkTimeSample }}</b>。同名子文件夹已存在时直接复用（不再另建 xxx_1），仅同名文件自动加 _1 / _2，不会覆盖上一次。</div>
                 </template>
 
                 <!-- 按过滤标签：下面只多一个「标签隔离符号」 -->

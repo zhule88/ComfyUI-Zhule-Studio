@@ -2167,29 +2167,41 @@ def gallery_delete_records(keys):
             conn.close()
 
 
-# ---------------------------------------------------------------- 方案保存（preset）
+# ---------------------------------------------------------------- 预设保存（preset，仅词库）
 
 
 def _ensure_preset_schema(conn):
-    """确保方案保存表存在（幂等，随 connect() 自动建）。
+    """确保预设表存在并按新结构落地（幂等，随 connect() 自动建）。
 
-    gallery_id 存 gallery_image.id，不存相对路径：图可改名，id 才是行身份，
-    改名后方案不用跟着重写。图被删或全量重建换了号时，JOIN 取不到名字，
-    列表按"无配图"降级，绝不指到别人家的图上。
+    表只服务词库自己的「组合」：一行 = 一套已选标签（payload），没有类型、没有来源，
+    也不再关联图库——图库侧不再往这张表写任何东西。
+    老库里的 kind / gallery_id 两列在此一次性搬掉：重建表并把 id / name / payload
+    原样抄过去，历史预设一条不丢。
     """
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info({0})".format(PRESET_TABLE)).fetchall()}
+    legacy = ("kind" in cols) or ("gallery_id" in cols)
+    if legacy:
+        # 先清掉上一轮没搬完的残表再改名，避免重名把升级卡死
+        conn.execute("DROP TABLE IF EXISTS {0}_legacy".format(PRESET_TABLE))
+        conn.execute("ALTER TABLE {0} RENAME TO {0}_legacy".format(PRESET_TABLE))
     conn.execute(
         "CREATE TABLE IF NOT EXISTS {0} ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "kind TEXT NOT NULL,"
         "name TEXT NOT NULL COLLATE NOCASE,"
-        "payload TEXT NOT NULL,"
-        "gallery_id INTEGER"
+        "payload TEXT NOT NULL"
         ")".format(PRESET_TABLE)
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_{0}_kind ON {0}(kind, name)".format(PRESET_TABLE)
+        "CREATE INDEX IF NOT EXISTS idx_{0}_name ON {0}(name)".format(PRESET_TABLE)
     )
-
+    if legacy:
+        # 历史行照抄：id 不变（前端按 id 认预设），名字与内容一个字不改
+        conn.execute(
+            "INSERT INTO {0} (id, name, payload) "
+            "SELECT id, name, payload FROM {0}_legacy".format(PRESET_TABLE)
+        )
+        conn.execute("DROP TABLE {0}_legacy".format(PRESET_TABLE))
 
 def _preset_payload_out(raw):
     """payload 出库还原为对象；历史脏数据解析失败时退回空对象，不抛给调用方。"""
@@ -2199,63 +2211,22 @@ def _preset_payload_out(raw):
         return {}
 
 
-def _preset_gallery_name(conn, gallery_id):
-    gid = _as_int_or_none(gallery_id)
-    if gid is None:
-        return None
-    row = conn.execute(
-        "SELECT name FROM {0} WHERE id = ?".format(GAL_IMG_TABLE), (gid,)
-    ).fetchone()
-    return row["name"] if row else None
-
-
-def _preset_gallery_meta(conn, gallery_id):
-    """配图当前 (name, mtime)；图已不存在返回 (None, 0)。
-
-    name 就是图库相对路径，前端缩略图接口 /gallery/thumb?path= 直接吃得下；
-    mtime 用来破缩略图缓存——同名文件被换掉内容时 URL 跟着变，不会显示旧图。
-    """
-    gid = _as_int_or_none(gallery_id)
-    if gid is None:
-        return None, 0
-    row = conn.execute(
-        "SELECT name, mtime FROM {0} WHERE id = ?".format(GAL_IMG_TABLE), (gid,)
-    ).fetchone()
-    if not row:
-        return None, 0
-    return row["name"], int(row["mtime"] or 0)
-
-
-def preset_rows(kind=None):
-    """列出方案（不带 payload 大字段，列表只给名字与配图），按 id 倒序。
-
-    kind 为空则列全部；gallery_name 为配图当前相对路径，None 表示该图已不存在。
-    """
-    sql = (
-        "SELECT p.id, p.kind, p.name, p.gallery_id, "
-        "g.name AS gallery_name, g.mtime AS gallery_mtime "
-        "FROM {0} p LEFT JOIN {1} g ON g.id = p.gallery_id".format(
-            PRESET_TABLE, GAL_IMG_TABLE
-        )
-    )
-    args = ()
-    if kind:
-        sql += " WHERE p.kind = ?"
-        args = (kind,)
-    sql += " ORDER BY p.id DESC"
+def preset_rows():
+    """列出全部预设（不带 payload 大字段），按 id 倒序。"""
+    sql = "SELECT id, name FROM {0} ORDER BY id DESC".format(PRESET_TABLE)
     with _lock:
         conn = connect()
         try:
-            return [dict(r) for r in conn.execute(sql, args).fetchall()]
+            return [dict(r) for r in conn.execute(sql).fetchall()]
         except sqlite3.Error as e:
-            print(f"[ZhuleDB] 方案列表读取失败: {e}")
+            print(f"[ZhuleDB] 预设列表读取失败: {e}")
             return []
         finally:
             conn.close()
 
 
 def preset_get(pid):
-    """取单个方案完整内容：payload 还原为对象，gallery_id 仍为 id 并附当前图名。"""
+    """取单个预设完整内容：payload 还原为对象。"""
     pid = _as_int_or_none(pid)
     if pid is None:
         return None
@@ -2263,74 +2234,51 @@ def preset_get(pid):
         conn = connect()
         try:
             row = conn.execute(
-                "SELECT id, kind, name, payload, gallery_id FROM {0} WHERE id = ?".format(
-                    PRESET_TABLE
-                ),
+                "SELECT id, name, payload FROM {0} WHERE id = ?".format(PRESET_TABLE),
                 (pid,),
             ).fetchone()
             if not row:
                 return None
             rec = dict(row)
             rec["payload"] = _preset_payload_out(row["payload"])
-            rec["gallery_id"] = _as_int_or_none(row["gallery_id"])
-            gname, gmtime = _preset_gallery_meta(conn, row["gallery_id"])
-            rec["gallery_name"] = gname
-            rec["gallery_mtime"] = gmtime
             return rec
         except sqlite3.Error as e:
-            print(f"[ZhuleDB] 方案读取失败: {e}")
+            print(f"[ZhuleDB] 预设读取失败: {e}")
             return None
         finally:
             conn.close()
 
 
-def preset_save(kind, name, payload, gallery_id=None, pid=None, gallery_touch=True):
-    """保存方案，返回行 id；失败返回 None。
+def preset_save(name, payload, pid=None):
+    """保存预设，返回行 id；失败返回 None。
 
-    pid 有值按 id 覆盖；无 pid 时按 (kind, name) 命中同一行做更新（name 大小写不敏感），
-    避免同名方案点两次存出两行。gallery_id 传 gallery_image.id，传 None 即清空配图。
-
-    gallery_touch=False 表示调用方根本没提配图这件事（如词库页保存预设），此时
-    UPDATE 不动 gallery_id、INSERT 落 NULL——否则词库侧覆盖同名预设会把图库存的配图抹掉。
+    pid 有值按 id 覆盖；无 pid 时按 name 命中同一行做更新（name 大小写不敏感），
+    避免同名预设点两次存出两行。
     """
-    kind = (kind or "").strip()
     name = (name or "").strip()
-    if not kind or not name:
+    if not name:
         return None
     raw = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
-    gid = _as_int_or_none(gallery_id)
     with _lock:
         conn = connect()
         try:
             target = _as_int_or_none(pid)
             if target is None:
                 row = conn.execute(
-                    "SELECT id FROM {0} WHERE kind = ? AND name = ?".format(PRESET_TABLE),
-                    (kind, name),
+                    "SELECT id FROM {0} WHERE name = ?".format(PRESET_TABLE),
+                    (name,),
                 ).fetchone()
                 target = int(row["id"]) if row else None
             if target is None:
                 cur = conn.execute(
-                    "INSERT INTO {0} (kind, name, payload, gallery_id) VALUES (?, ?, ?, ?)".format(
-                        PRESET_TABLE
-                    ),
-                    (kind, name, raw, gid),
+                    "INSERT INTO {0} (name, payload) VALUES (?, ?)".format(PRESET_TABLE),
+                    (name, raw),
                 )
                 target = cur.lastrowid
-            elif gallery_touch:
-                conn.execute(
-                    "UPDATE {0} SET kind = ?, name = ?, payload = ?, gallery_id = ? WHERE id = ?".format(
-                        PRESET_TABLE
-                    ),
-                    (kind, name, raw, gid, target),
-                )
             else:
-                # 调用方未涉及配图：只更新内容，配图列原样保留
                 conn.execute(
-                    "UPDATE {0} SET kind = ?, name = ?, payload = ? WHERE id = ?".format(
-                        PRESET_TABLE
-                    ),
-                    (kind, name, raw, target),
+                    "UPDATE {0} SET name = ?, payload = ? WHERE id = ?".format(PRESET_TABLE),
+                    (name, raw, target),
                 )
             conn.commit()
             return int(target)
@@ -2339,14 +2287,15 @@ def preset_save(kind, name, payload, gallery_id=None, pid=None, gallery_touch=Tr
                 conn.rollback()
             except sqlite3.Error:
                 pass
-            print(f"[ZhuleDB] 方案保存失败: {e}")
+            print(f"[ZhuleDB] 预设保存失败: {e}")
             return None
         finally:
             conn.close()
 
 
+
 def preset_rename(pid, name):
-    """只改方案名（payload / gallery_id 不动），成功返回 True。"""
+    """只改预设名（payload 不动），成功返回 True。"""
     pid = _as_int_or_none(pid)
     name = (name or "").strip()
     if pid is None or not name:
@@ -2371,7 +2320,7 @@ def preset_rename(pid, name):
 
 
 def preset_delete(pid):
-    """删除单个方案，成功返回 True。"""
+    """删除单个预设，成功返回 True。"""
     pid = _as_int_or_none(pid)
     if pid is None:
         return False

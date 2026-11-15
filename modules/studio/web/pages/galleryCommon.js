@@ -62,8 +62,31 @@ export const API = {
   del: '/zhule_studio/api/gallery/delete',
   batchDel: '/zhule_studio/api/gallery/batch-delete',
   link: '/zhule_studio/api/gallery/batch-link',
+  copyLinks: '/zhule_studio/api/gallery/copy-links',
+  hardlinkMenu: '/zhule_studio/api/hardlink-menu/status',
 };
 export const PAGE_SIZE = 60;
+
+// 系统右键「Zhule 粘贴为硬链接」是否已注册 —— 决定卡片右键里要不要出现「复制图片硬链接」。
+// 逻辑：网页端只负责把源路径写进剪贴板，真正落地靠系统右键菜单；
+// 菜单没注册时粘贴只能走 Ctrl+V，而那会得到普通副本（与系统自带复制无差别），
+// 所以入口一并隐藏，避免「复制了却无处可粘」的空操作。
+export const linkMenuReady = ref(false);
+let linkMenuStamp = 0;
+export async function refreshLinkMenuReady(force = false) {
+  const now = Date.now();
+  if (!force && now - linkMenuStamp < 5000) return linkMenuReady.value;
+  linkMenuStamp = now;
+  try {
+    const r = await fetch(API.hardlinkMenu, { headers: { 'Cache-Control': 'no-cache' } });
+    const st = await r.json();
+    // supported=false（非 Windows 环境）同样视为不可用；path_ok=false 表示注册项指向旧路径，粘贴会失效
+    linkMenuReady.value = !!st.supported && Number(st.installed) > 0 && st.path_ok !== false;
+  } catch (e) {
+    linkMenuReady.value = false;
+  }
+  return linkMenuReady.value;
+}
 
 // 外部过滤区递归节点：俄罗斯套娃包裹式展开（与 tagTreePanel 视觉一致，尺寸随子树深度放大）
 // 隐藏语义统一：Ctrl+左键 = 完全移除（不可逆，恢复靠编辑面板 tagTreePanel 重新左键点击放置）
@@ -179,7 +202,7 @@ export const CardCtxMenu = {
     // { open, x, y, title, picked, selCount }
     state: { type: Object, required: true },
   },
-  emits: ['close', 'sel', 'zoom', 'detail', 'del', 'batch-del'],
+  emits: ['close', 'sel', 'zoom', 'detail', 'copylink', 'del', 'batch-del'],
   // 模板里不能直接写 emit('x')：Vue 3 模板上下文不暴露 emit 标识符，运行时为 undefined，
   // 每次点击都会抛「TypeError: emit is not a function」——事件处理器中断导致 state.open 卡在 true，
   // 全屏透明 .ctx-layer 永不消失，整页点击/滚轮全被它吃掉（表现为「页面卡死，只能刷新」）。
@@ -189,13 +212,18 @@ export const CardCtxMenu = {
     const onSel = () => emit('sel');
     const onZoom = () => emit('zoom');
     const onDetail = () => emit('detail');
+    const onCopyLink = () => emit('copylink');
     const onDel = () => emit('del');
     const onBatchDel = () => emit('batch-del');
     // Esc 兜底：即使某个动作抛错导致遮罩残留，也能一键救回（与词库右键菜单行为一致）
     const onKeydown = (e) => { if (e.key === 'Escape' && props.state && props.state.open) onClose(); };
     onMounted(() => document.addEventListener('keydown', onKeydown));
     onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
-    return { onClose, onSel, onZoom, onDetail, onDel, onBatchDel };
+    // 每次打开菜单都校一次系统右键菜单注册状态（带 5s 节流）：在设置里注册/卸载后回来即生效，
+    // 未注册时「复制图片硬链接」整项不渲染
+    watch(() => props.state && props.state.open, (open) => { if (open) refreshLinkMenuReady(); });
+    onMounted(() => { refreshLinkMenuReady(); });
+    return { onClose, onSel, onZoom, onDetail, onCopyLink, onDel, onBatchDel, linkMenuReady };
   },
   template: `
     <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
@@ -204,6 +232,12 @@ export const CardCtxMenu = {
         <button type="button" class="ctx-item" @click="onSel">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
         <button type="button" class="ctx-item" @click="onZoom">🔍 放大预览</button>
         <button type="button" class="ctx-item" @click="onDetail">→ 进入详情</button>
+        <!-- 系统右键菜单未注册时整块（分隔线 + 复制硬链接）都不渲染，避免复制了无处可粘 -->
+        <template v-if="linkMenuReady">
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" style="white-space:nowrap" data-tip="复制这张图原文件的硬链接源：到目标文件夹空白处右键「Zhule 粘贴为硬链接」即可零拷贝落地（直接 Ctrl+V 会变成普通副本）"
+                  @click="onCopyLink">🔗 {{ state.picked && state.selCount > 1 ? ('复制选中的 ' + state.selCount + ' 张硬链接') : '复制图片硬链接' }}</button>
+        </template>
         <div class="ctx-sep"></div>
         <button type="button" class="ctx-item danger" @click="onDel">🗑 删除这张图</button>
         <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel">🗑 删除选中的 {{ state.selCount }} 张</button>
@@ -317,7 +351,7 @@ export function normalizeTree(ns) {
 export const LINK_TIME_PRESETS = [
   { key: 'ymd_hms', label: 'yyyyMMdd_HHmmss', tip: '日期_时分秒（最不容易重名）' },
   { key: 'ymd-hms', label: 'yyyy-MM-dd_HH-mm-ss', tip: '日期带横线，再接时分秒' },
-  { key: 'ymd', label: 'yyyyMMdd', tip: '只到日期（同一天多次导出自动加 _1/_2）' },
+  { key: 'ymd', label: 'yyyyMMdd', tip: '只到日期（同名文件夹直接复用，同名文件加 _1/_2）' },
   { key: 'ymd-dash', label: 'yyyy-MM-dd', tip: '只到日期，日期带横线' },
 ];
 // 按预设生成这次的目录名：只用本地时间，纯字符串（不含 / \ 等会被后端清洗的字符）
@@ -988,15 +1022,41 @@ export function useGalleryCommon(opts = {}) {
     cardCtx.title = it.name || '';
     cardCtx.picked = isSel(it.key);
     cardCtx.selCount = selected.size;
-    // 贴边翻转，避免菜单跑出窗口（宽约 200 / 高约 250）
-    cardCtx.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 210));
-    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 250));
+    // 贴边翻转，避免菜单跑出窗口（宽约 210 / 高约 300，含「复制图片硬链接」一行）
+    cardCtx.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 220));
+    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 300));
     cardCtx.open = true;
   };
   // 菜单项统一「先收菜单再执行」，避免遮罩层挡住后续弹窗与框选
   const onCtxSel = () => { const it = cardCtx.item; closeCardCtx(); if (it) toggleSel(it.key); };
   const onCtxZoom = () => { const it = cardCtx.item; closeCardCtx(); if (it) zoomView(imgUrl(it.key, it.mtime), it); };
   const onCtxDetail = () => { const it = cardCtx.item; closeCardCtx(); if (it) openDetail(it); };
+  // 右键「复制硬链接」：把源图路径交给后端写进 Windows 剪贴板文件列表，
+  // 到目标文件夹空白处右键「Zhule 粘贴为硬链接」即零拷贝落地。
+  // 该卡片已被选中且选中数 > 1 时，整批一起复制（与「删除选中的 N 张」同一套语义）。
+  const onCtxCopyLink = async () => {
+    const it = cardCtx.item;
+    const multi = !!(it && isSel(it.key) && selected.size > 1);
+    closeCardCtx();
+    if (!it) return;
+    const keys = multi ? [...selected] : [it.key];
+    const paths = [];
+    for (const k of keys) {
+      const item = items.value.find((x) => x.key === k);
+      paths.push(item ? (item.path || item.key) : k);
+    }
+    try {
+      const d = await jfetch(API.copyLinks, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths }),
+      });
+      if (!d.ok) throw new Error(d.error || '复制失败');
+      showToast('已复制 ' + d.count + ' 张图的硬链接，到目标文件夹空白处右键「Zhule 粘贴为硬链接」即可落地', 'success');
+    } catch (e) {
+      showToast('复制硬链接失败：' + (e.message || ''), 'error');
+    }
+  };
   const onCtxDel = () => { const it = cardCtx.item; closeCardCtx(); if (it) askDelete(it); };
   const onCtxBatchDel = () => { closeCardCtx(); askBatchDelete(); };
 
@@ -1139,67 +1199,6 @@ export function useGalleryCommon(opts = {}) {
       return true;
     });
   });
-  // 图库详情「保存」：把这张图的提示词标签组合直接存成一份词库预设（preset 表 kind=bank），
-  // 不用切到词库页重新一个个点。只存词条类标签——自定义标签是图库自己的分组，词库里没有对应词条，
-  // 硬塞进去「应用」时会被丢掉。名字取图片名主干，同一张图重复保存即覆盖同名预设，不堆垃圾条目。
-  const detailPresetSaving = ref(false);
-  async function saveDetailPreset() {
-    const d = detail.value;
-    if (!d || detailPresetSaving.value) return;
-    const picked = [];
-    const seen = new Set();
-    (d.tags || []).forEach((t) => {
-      if (!t || !t.prompt) return;
-      const n = String(t.name || '').trim();
-      if (!n || seen.has(n)) return;
-      seen.add(n);
-      // 身份只有词条 id：名字随它一起存只是为了预设卡片上有个可读标签，
-      // 应用时定位一律走 id（后端 preset/get 按 id 解析 tab / relPath / 正文），不按名字反查
-      picked.push({ name: n, id: (t.id != null && t.id !== '') ? String(t.id) : '' });
-    });
-    if (!picked.length) {
-      showToast('这张图没有词条类标签，存成预设后应用回词库会是空的', 'warn');
-      return;
-    }
-    const noId = picked.filter(it => !it.id).length;
-    const base = String(d.name || '').replace(/\.[^.]+$/, '') || '图库预设';
-    detailPresetSaving.value = true;
-    try {
-      const slots = picked.map((it) => {
-        const slot = { t: 'item', name: it.name, chance: 100, lock: false };
-        if (it.id) slot.id = it.id;
-        return slot;
-      });
-      const gid = (d.id != null && d.id !== '' && Number(d.id) > 0) ? Number(d.id) : null;
-      const bodyObj = {
-        kind: 'bank',
-        name: base,
-        payload: { slots: slots, genCount: 1, fillMode: false },
-      };
-      // 配图关联只写行 id（gallery_image.id）：图可在图库里改名，id 才是行身份。
-      // 没有 id 就整个键都不发 —— 后端把「无 gallery_id 键」当作「这次保存跟图无关」，
-      // 不会拿它去清空已存的配图；传 null 才是显式解绑。
-      if (gid) bodyObj.gallery_id = gid;
-      const resp = await fetch('/zhule_studio/api/preset/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyObj),
-      });
-      const json = await resp.json();
-      if (!resp.ok || json.error) {
-        showToast(json.error || '保存预设失败', 'error');
-        return;
-      }
-      showToast('已存为预设「' + base + '」（' + slots.length + ' 标签' +
-        (gid ? '，含配图' : '，未关联配图') +
-        (noId ? '，其中 ' + noId + ' 个标签缺词条 id，应用时可能定位不到' : '') +
-        '），可在词库预设中心改名 / 应用', noId ? 'warn' : 'success');
-    } catch (e) {
-      showToast('保存预设失败：' + (e.message || ''), 'error');
-    } finally {
-      detailPresetSaving.value = false;
-    }
-  }
   // 自定义标签：按 '测试/喜欢' 完整路径还原为层级树（父'测试'下挂子'喜欢'），置于提示词标签之后。
   // 树节点复用详情标签对象：叶子携带 tag/style，中间层级为纯容器（isGroup）。
   const customDetailTree = computed(() => {
@@ -1518,6 +1517,25 @@ export function useGalleryCommon(opts = {}) {
     } else {
       fallbackCopy(d.promptPreview, done);
     }
+  }
+  // 图库 → 词库：把当前这张图的提示词标签带到词库页并填入「已选」。
+  // 跳转参数 ?tags=id1,id2&bind=<节点ID>：tags 一律用词条 id 定位（改名/重名都不影响匹配）；
+  // bind 沿用节点「图库」按钮打开本页时带的 ID（#/gallery?bind=xxx），词库侧靠它回写画布节点，
+  // 缺 bind 时词库只会提示「未绑定节点」，所以这里也照原样带过去，不做任何隐式绑定。
+  function gotoWordbank() {
+    const d = detail.value;
+    if (!d) return;
+    const ids = [];
+    (d.tags || []).forEach((t) => {
+      if (!t || !t.prompt) return;
+      const id = String(t.id == null ? '' : t.id).trim();
+      if (id && !ids.includes(id)) ids.push(id);
+    });
+    if (!ids.length) { showToast('这张图没有可带入词库的提示词标签', 'warning'); return; }
+    const bind = String((route.query && route.query.bind) || '').trim();
+    let url = '/zhule_studio#/wordbank?tags=' + encodeURIComponent(ids.join(','));
+    if (bind) url += '&bind=' + encodeURIComponent(bind);
+    window.open(url, '_blank');
   }
   function fallbackCopy(text, done) {
     try {
@@ -2145,6 +2163,22 @@ export function useGalleryCommon(opts = {}) {
       .map((t) => String(t.name || '').trim())
       .filter(Boolean);
   }
+  // 单层是否失效（导出前要拦下的层）。两层判定，靠 rel 区分「取自标签树」和「手输固定目录名」：
+  //   rel 非空 = 这层当初是从标签树里点选来的（applyPick 会写 rel，切成文字层时 rel 会被清空）；
+  //   1) 名字在库里还找得到：整类分类层是结构层，分类还在就永远有效；标签层则要求它处于启用状态；
+  //   2) 名字在库里已经找不到（标签被删/改名、分类被清）：只有原本取自标签树的层算失效，
+  //      手输的固定目录名（rel 为空）继续当文字层用，不误伤。
+  function linkLayerBad(it, act, known) {
+    if (!it || it.type !== 'tag') return false;
+    const v = String(it.value || '').trim();
+    if (!v) return false;
+    // 全库标签集合还没拉到时（首次进页面）先不下结论，避免把正常层误判成「库里没有」；导出路径会先拉树再判
+    if (!known || !known.length) return false;
+    const rel = String(it.rel || '').trim();
+    if (!known.includes(v)) return !!rel;
+    if (it.cat) return false;
+    return !act.includes(v);
+  }
   // 计算导出子文件夹层级：返回空数组 = 交给后端按时间戳命名
   //   time   按时间：用设置里的时间格式拼一段（只此一层）
   //   tags   按过滤标签：启用标签用隔离符号连成一段（凌乱发@璃月）
@@ -2165,10 +2199,8 @@ export function useGalleryCommon(opts = {}) {
       for (const it of lk.custom) {
         const v = String((it && it.value) || '').trim();
         if (!v) continue;
-        // 整类分类层是结构层，不跟启用标签走，永远输出
-        if (it.type === 'tag' && it.cat) { segs.push(v); continue; }
-        // 本应是标签层、该标签也确实在标签库里、但现在没启用 → 缺这一段，跳过（导出前已被 pending 拦下）
-        if (it.type === 'tag' && !actives.includes(v) && known.includes(v)) continue;
+        // 失效层缺这一段目录：跳过（导出前已被 pending 拦下，正常走不到这里）
+        if (linkLayerBad(it, actives, known)) continue;
         segs.push(v);
       }
       return segs;
@@ -2206,12 +2238,7 @@ export function useGalleryCommon(opts = {}) {
     if (lk.nameMode !== 'custom' || !Array.isArray(lk.custom)) return 0;
     const act = activeTagNames();
     const known = knownTagNames.value;
-    return lk.custom.filter((it) => {
-      if (!it || it.type !== 'tag' || it.cat) return false;
-      const v = String(it.value || '').trim();
-      if (!v) return false;
-      return known.includes(v) && !act.includes(v);
-    }).length;
+    return lk.custom.filter((it) => linkLayerBad(it, act, known)).length;
   });
   // 图库页是否显示「自定义分层」呼出齿轮：齿轮是自定义分层独有的入口，
   // 按时间 / 按过滤标签这两种命名方式压根不用分层，工具栏就不该出现它；
@@ -2262,7 +2289,7 @@ export function useGalleryCommon(opts = {}) {
     // 自定义分层里有标签层失效：先弹框修，修好后由弹框的「保存并导出」再回到这里
     if (lk.nameMode === 'custom' && linkPending.value > 0) {
       openLinkDialog('export');
-      showToast('有 ' + linkPending.value + ' 层标签已停用，先修分层再导出', 'warn');
+      showToast('有 ' + linkPending.value + ' 层标签已失效（被停用或已删除），先修分层再导出', 'warn');
       return;
     }
     try {
@@ -2352,8 +2379,7 @@ export function useGalleryCommon(opts = {}) {
     leafName, cardTags,
     tagKey, tagList,
     hasFilter, uniqueDetailTags, promptDetailTags, customDetailTree, customFlatTags, enSegments, cnSegments, tagThemeClass, addDetailTagToFilter,
-    saveDetailPreset, detailPresetSaving,
-    copyPrompt, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
+    copyPrompt, gotoWordbank, thumbUrl, imgUrl, fmtTime, fmtSize, fmtModel,
     isTopDown, toggleLayout, setSortField, toggleSortDir,
     applyFilter, changePageSize, goPage, onScroll, removeTag,
     randomPage,
@@ -2373,7 +2399,7 @@ export function useGalleryCommon(opts = {}) {
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     hideCardIcons, cardCtx, openCardCtx, closeCardCtx,
-    onCtxSel, onCtxZoom, onCtxDetail, onCtxDel, onCtxBatchDel,
+    onCtxSel, onCtxZoom, onCtxDetail, onCtxCopyLink, onCtxDel, onCtxBatchDel,
     cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,
@@ -2615,13 +2641,17 @@ export const LinkDialog = {
     watch(() => props.open, (v) => { if (v) reset(); });
 
     // 失效 = 这层是普通标签层、该标签确实存在于标签库、但现在没启用。
-    // 整类层（cat）是结构层，不随启用标签变化，永远有效；
-    // 手输一个库里没有的名字也不算失效，保存时会被规范化成文字层，当固定目录名用。
+    // 整类层（cat）是结构层，分类还在库里就永远有效；
+    // 手输一个库里没有的名字也不算失效，保存时会被规范化成文字层，当固定目录名用；
+    // 但「当初从标签树选中(rel 非空)、现在库里已经找不到」的层要算失效，否则标签删了/改名了还能照旧导出。
     function isBad(it) {
-      if (!it || it.type !== 'tag' || it.cat) return false;
+      if (!it || it.type !== 'tag') return false;
       const v = String(it.value || '').trim();
       if (!v) return false;
-      return props.knownTags.includes(v) && !props.activeTags.includes(v);
+      const rel = String(it.rel || '').trim();
+      if (!props.knownTags.includes(v)) return !!rel;
+      if (it.cat) return false;
+      return !props.activeTags.includes(v);
     }
     const badCount = computed(() => draft.custom.filter(isBad).length);
     const preview = computed(() => {
@@ -2687,15 +2717,18 @@ export const LinkDialog = {
           let cat = false;
           if (type === 'tag' && value) {
             if (it.cat) cat = true;
-            // 标签层填的却是个库里没有的名字：落盘时降级成文字层，它就只是个固定目录名
-            else if (!props.activeTags.includes(value) && !props.knownTags.includes(value)) type = 'text';
+            // 标签层填的却是个库里没有的名字：
+            //   手输的（rel 为空）→ 降级成文字层，它就只是个固定目录名；
+            //   从标签树点选来的（rel 非空）→ 保持标签层，交给 isBad/pending 拦下让用户重选，
+            //   否则标签被删/改名后这一层会静默变成固定目录名，导出照旧成功。
+            else if (!props.knownTags.includes(value) && !String(it.rel || '').trim()) type = 'text';
           }
           return { type, value, rel: cat || type === 'tag' ? String(it.rel || '') : '', cat };
         })
         .filter((it) => it.value)
         .slice(0, 12);
       if (badCount.value > 0) {
-        err.value = '还有 ' + badCount.value + ' 层标签已停用：换个标签 / 改成整类 / 改成文字层或删掉这一层';
+        err.value = '还有 ' + badCount.value + ' 层标签已失效（被停用或已删除）：换个标签 / 改成整类 / 改成文字层或删掉这一层';
         return;
       }
       if (doExport && !custom.length) {
@@ -2755,7 +2788,7 @@ export const LinkDialog = {
               </button>
               <input v-else class="zhg-lkd-input" v-model="it.value" spellcheck="false"
                      placeholder="固定目录名，如 出图">
-              <span v-if="isBad(it)" class="zhg-lkd-bad">已停用</span>
+              <span v-if="isBad(it)" class="zhg-lkd-bad">已失效</span>
               <button class="zhg-lkd-del" data-tip="删除这一层" @click="removeLayer(i)">✕</button>
             </div>
             <div v-if="!draft.custom.length" class="zhg-lkd-empty">还没有层：点下面加一层，第一层就是最外层文件夹</div>
@@ -2767,7 +2800,7 @@ export const LinkDialog = {
           </div>
           <div class="zhg-lkd-prev"><span class="zhg-lkd-k">预览</span><code>{{ preview }}</code></div>
           <div v-if="err" class="zhg-lkd-err">{{ err }}</div>
-          <div v-else-if="badCount" class="zhg-lkd-err">{{ badCount }} 层标签已停用：换个标签 / 改成整类 / 改成文字层或删掉，否则这次不导出</div>
+          <div v-else-if="badCount" class="zhg-lkd-err">{{ badCount }} 层标签已失效（被停用或已删除）：换个标签 / 改成整类 / 改成文字层或删掉，否则这次不导出</div>
         </div>
         <div class="zhg-lkd-foot">
           <button class="btn zhg-mini" @click="$emit('close')">取消</button>

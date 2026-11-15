@@ -22,7 +22,7 @@ export default {
       <!-- 齿轮是「自定义分层」独有的入口：按时间 / 按过滤标签时整块不出现；
            hideGear 只是自定义模式下的开关；分层里真有失效标签时仍然强制亮出来，否则出问题却没有修的地方 -->
       <button v-if="linkGearShow" class="btn zhg-link-cfg-btn" :class="{ warn: linkPending > 0 }"
-              :data-tip="'配置导出子文件夹的分层（层顺序可拖动调整、标签可整类选取）' + (linkPending > 0 ? '；当前有 ' + linkPending + ' 层标签已停用，导出会被拦下' : '')"
+              :data-tip="'配置导出子文件夹的分层（层顺序可拖动调整、标签可整类选取）' + (linkPending > 0 ? '；当前有 ' + linkPending + ' 层标签已失效，导出会被拦下' : '')"
               @click="openLinkDialog('cfg')">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9z"></path></svg>
       </button>
@@ -218,9 +218,9 @@ export default {
 
             <div class="zhg-detail-section">
               <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ detail.tags.length }}</span>
-                <!-- 标签计数右边就地存预设：这张图的词条标签组合一键落成词库预设，省得回词库重选一遍 -->
-                <button class="zhg-detail-save" :disabled="detailPresetSaving" @click.stop="saveDetailPreset"
-                        data-tip="把这套提示词标签存成一份词库预设（可在词库「预设中心」里改名 / 一键应用）">💾 保存</button>
+                <!-- 图库 → 词库：把这张图的提示词标签按 id 带过去填入「已选」，bind 沿用本页 URL 上的节点 ID -->
+                <button class="zhg-detail-btn" @click.stop="gotoWordbank"
+                        data-tip="把这张图的提示词标签带入词库「已选」（按词条 ID 定位，同标签页打开）">→ 词库</button>
               </div>
               <div class="zhg-detail-row">
                 <div class="zhg-detail-tags">
@@ -272,6 +272,7 @@ export default {
     <!-- 图库卡片右键菜单：卡片图标操作 + 进入详情的统一入口（隐藏图标后为唯一入口） -->
     <card-ctx-menu :state="cardCtx" @close="closeCardCtx"
                    @sel="onCtxSel" @zoom="onCtxZoom" @detail="onCtxDetail"
+                   @copylink="onCtxCopyLink"
                    @del="onCtxDel" @batch-del="onCtxBatchDel"></card-ctx-menu>
 
     <!-- 全站唯一删除确认弹框：图片/批量/标签/词条共用，设置里开启「删除免确认」则不弹 -->

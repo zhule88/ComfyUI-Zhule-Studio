@@ -1081,13 +1081,10 @@ async def post_wordbank_sort_save(request):
                               "errors": errors})
 
 # ---------------------------------------------------------------- 预设保存（preset）
-# 前端「💾 保存」/「🗂 预设中心」用的四个接口，数据层见 db.preset_*。
+# 词库「💾 保存」/「🗂 预设中心」用的接口，数据层见 db.preset_*（表只服务词库，不与图库关联）。
 # payload 是黑盒 JSON（{ slots, genCount, fillMode }），后端不解构它的语义，
 # 只做一件事：把 slots 里的「池标签」摘出来给预设中心的卡片当主视觉——
 # 卡片要立刻能认出「这套方案挂了哪些池」，总不能为了列表去反序列化整棵词库树。
-
-PRESET_KIND_DEFAULT = "bank"
-
 
 def _preset_card_brief(payload):
     """从 payload.slots 摘卡片摘要：标签与池子按出图顺序铺开，只给名字不给提示词正文。
@@ -1126,8 +1123,8 @@ def _preset_card_brief(payload):
             flow.append({
                 "t": "tag",
                 "label": label,
-                # 词条 id 随卡片一起走：预设中心「跳图库 / 启用这套提示词」按 id 筛选，
-                # 改名后不失效（与落库、应用全链路一致，一律只用 id）
+                # 词条 id 随卡片一起走：卡片按 id 认标签，改名后不失效
+                # （与落库、应用全链路一致，一律只用 id）
                 "id": str(s.get("id") or "").strip(),
                 "chance": int(s.get("chance") or 100),
                 "lock": bool(s.get("lock")),
@@ -1237,13 +1234,12 @@ def _preset_resolve_slots(payload):
 
 
 async def get_preset_rows(request):
-    """GET /zhule_studio/api/preset?kind=bank —— 预设中心列表（含卡片摘要）。
+    """GET /zhule_studio/api/preset —— 预设中心列表（含卡片摘要）。
 
     列表必须能直接渲染卡片，所以顺带把 payload 里的池标签摘出来一起返回；
-    方案数量是「人手工攒的」，几十条量级，逐条 preset_get 的成本可以忽略。
+    预设数量是「人手工攒的」，几十条量级，逐条 preset_get 的成本可以忽略。
     """
-    kind = (request.query.get("kind") or "").strip()
-    rows = db.preset_rows(kind or None)
+    rows = db.preset_rows()
     out = []
     for r in rows:
         rec = db.preset_get(r.get("id"))
@@ -1252,11 +1248,7 @@ async def get_preset_rows(request):
         brief = _preset_card_brief(rec.get("payload") or {})
         out.append({
             "id": rec.get("id"),
-            "kind": rec.get("kind"),
             "name": rec.get("name"),
-            "gallery_id": rec.get("gallery_id"),
-            "gallery_name": rec.get("gallery_name"),
-            "gallery_mtime": rec.get("gallery_mtime") or 0,
             **brief,
         })
     return web.json_response({"ok": True, "presets": out})
@@ -1278,11 +1270,11 @@ async def get_preset_get(request):
 
 
 async def post_preset_save(request):
-    """POST /zhule_studio/api/preset/save —— 保存 / 覆盖。
+    """POST /zhule_studio/api/preset/save —— 保存 / 覆盖（只服务词库预设）。
 
-    body: { kind?, name, payload:{slots,genCount,fillMode}, gallery_id?, pid? }
+    body: { name, payload:{slots,genCount,fillMode}, pid? }
     - 有 pid：按 id 覆盖（供 rename / 覆盖场景使用）
-    - 无 pid：按 (kind, name) 命中同名就更新，不重复建行（db.preset_save 内部规则）
+    - 无 pid：按 name 命中同名就更新，不重复建行（db.preset_save 内部规则）
     """
     try:
         body = await request.json()
@@ -1290,20 +1282,16 @@ async def post_preset_save(request):
         return web.json_response({"error": "JSON 解析失败"}, status=400)
     name = (body.get("name") or "").strip()
     if not name:
-        return web.json_response({"error": "方案名不能为空"}, status=400)
+        return web.json_response({"error": "预设名不能为空"}, status=400)
     payload = body.get("payload")
     if not isinstance(payload, dict) or not isinstance(payload.get("slots"), list):
         return web.json_response({"error": "payload.slots 必须是数组"}, status=400)
-    kind = (body.get("kind") or PRESET_KIND_DEFAULT).strip() or PRESET_KIND_DEFAULT
-    # body 里没有 gallery_id 键 = 这次保存跟配图无关（词库页保存预设），
-    # 不能当成「清空配图」，否则覆盖同名预设会把图库带过来的图抹掉
-    pid = db.preset_save(kind, name, payload, body.get("gallery_id"), body.get("pid"),
-                         gallery_touch=("gallery_id" in body))
+    pid = db.preset_save(name, payload, body.get("pid"))
     if pid is None:
         return web.json_response({"error": "保存失败"}, status=500)
     rec = db.preset_get(pid) or {}
     return web.json_response({
-        "ok": True, "id": pid, "name": name, "kind": kind,
+        "ok": True, "id": pid, "name": name,
         "brief": _preset_card_brief(rec.get("payload") or {}),
     })
 

@@ -2,6 +2,7 @@
 from ..common.routes import get_prompt_routes
 from . import api
 from . import gallery
+from . import hardlink
 
 
 def register_routes():
@@ -33,8 +34,12 @@ def register_routes():
     routes.post("/zhule_studio/api/wordbank/image-upload")(api.post_wordbank_image_upload)
     routes.post("/zhule_studio/api/wordbank/sort-save")(api.post_wordbank_sort_save)
     routes.post("/zhule_studio/api/debug_log")(api.post_debug_log)
+    # 硬链接右键菜单：网页内注册 / 卸载（只写 HKCU，不需管理员），状态实时读注册表
+    routes.get("/zhule_studio/api/hardlink-menu/status")(hardlink.get_hardlink_menu_status)
+    routes.post("/zhule_studio/api/hardlink-menu/install")(hardlink.post_hardlink_menu_install)
+    routes.post("/zhule_studio/api/hardlink-menu/uninstall")(hardlink.post_hardlink_menu_uninstall)
 
-    # 方案保存（preset 表）：保存 / 列表 / 详情 / 改名 / 删除
+    # 预设（preset 表，仅词库组合）：保存 / 列表 / 详情 / 改名 / 删除
     routes.get("/zhule_studio/api/preset")(api.get_preset_rows)
     routes.get("/zhule_studio/api/preset/get")(api.get_preset_get)
     routes.post("/zhule_studio/api/preset/save")(api.post_preset_save)
@@ -56,6 +61,8 @@ def register_routes():
     routes.post("/zhule_studio/api/gallery/delete")(gallery.post_gallery_delete)
     routes.post("/zhule_studio/api/gallery/batch-delete")(gallery.post_gallery_batch_delete)
     routes.post("/zhule_studio/api/gallery/batch-link")(gallery.post_gallery_batch_link)
+    # 图库卡片右键「复制硬链接」：源图路径写入系统剪贴板文件列表
+    routes.post("/zhule_studio/api/gallery/copy-links")(gallery.post_gallery_copy_links)
     routes.post("/zhule_studio/api/gallery/annotate")(gallery.post_gallery_annotate)
     routes.post("/zhule_studio/api/gallery/rename")(gallery.post_gallery_rename)
     routes.post("/zhule_studio/api/gallery/rename-file")(gallery.post_gallery_rename_file)

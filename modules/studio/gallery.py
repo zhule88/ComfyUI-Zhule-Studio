@@ -29,6 +29,7 @@ import json
 import os
 import random
 import re
+import struct
 import threading
 import time
 import shutil
@@ -1615,7 +1616,7 @@ async def get_gallery_detail(request):
                      "cn": _tag_cn(leaf), "en": _tag_en(leaf)})
     pt = rec.get("prompt") or ""
     data = {
-        # 行主键：图库详情「保存预设」要把它写成 preset.gallery_id（配图关联只认 id）
+        # 行主键：图库详情内部用的行身份（图库侧已不写预设表，纯展示用）
         "id": int(rec.get("id") or 0),
         "path": rel,
         "name": rec.get("name") or os.path.basename(rel.replace("/", os.sep).replace("\\", os.sep)),
@@ -1863,7 +1864,7 @@ def _unique_dest(target_dir, filename):
 
 async def _post_gallery_batch_link_impl(request):
     """body: { paths: [rel, ...], folder?: string, segments?: [string], dir?: string }
-    把选中的图片以硬链接平铺到 <链接根目录>/<folder 或 segments 各层>（每次导出独立子文件夹，不平铺）。
+    把选中的图片以硬链接平铺到 <链接根目录>/<folder 或 segments 各层>（子文件夹已存在则直接复用并追加文件，不平铺）。
     - dir：链接根目录（绝对路径，留空 = output/zhule_studio/zhule_link）
     - segments：多层文件夹（自定义分层命名），逐层清洗 + 逐层创建，最多 12 层
     - folder：单层文件夹名（旧接口，等价 segments=[folder]）
@@ -1891,7 +1892,7 @@ async def _post_gallery_batch_link_impl(request):
     if not paths:
         return web.json_response({"error": "paths 不能为空"}, status=400)
 
-    # 每次导出独立子文件夹：优先 segments 多层（自定义分层命名），其次 folder 单层，最后时间戳；重名自动加序号
+    # 每次导出子文件夹：优先 segments 多层（自定义分层命名），其次 folder 单层，最后时间戳；已存在则直接复用
     segs = body.get("segments")
     folder_segs = []
     if isinstance(segs, list):
@@ -1915,12 +1916,9 @@ async def _post_gallery_batch_link_impl(request):
     root, err = _resolve_link_root(body.get("dir"))
     if err:
         return web.json_response({"error": err}, status=400)
-    # 末层重名自动追加 _1/_2…（与旧行为一致，避免同一标签反复导出冲掉上一次）
+    # 末层目录已存在时直接复用，不再追加 _1/_2 另建同级目录：
+    # 同一标签反复导出都归入同一个文件夹，文件层面重名由 _unique_dest 追加序号，不会覆盖旧图
     target = os.path.join(root, *folder_segs)
-    n = 1
-    while os.path.exists(target):
-        target = os.path.join(root, *(folder_segs[:-1] + [f"{folder_segs[-1]}_{n}"]))
-        n += 1
     try:
         os.makedirs(target, exist_ok=True)
     except OSError as e:
@@ -1962,6 +1960,100 @@ async def post_gallery_batch_link(request):
     except Exception as e:
         print(f"[ZhuleGallery] 批量硬链接异常: {e}")
         return web.json_response({"ok": False, "error": f"批量硬链接失败: {e}"}, status=500)
+
+
+def _set_clipboard_files(files):
+    """把文件路径列表写进 Windows 剪贴板（CF_HDROP），格式与资源管理器 Ctrl+C 一致。
+
+    为什么要走剪贴板：网页无法向资源管理器递送「硬链接」这种粘贴语义，只能交付源文件路径；
+    真正建链由资源管理器右键菜单 tools/win_hardlink/paste_hardlink.ps1 完成
+    （它读 Get-Clipboard -Format FileDropList，正是本函数写入的格式）。
+    返回 (ok, err)。"""
+    if os.name != 'nt':
+        return False, '仅支持 Windows'
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+
+    # DROPFILES 头 20 字节：pFiles=20 / pt=(0,0) / fNC=0 / fWide=1（其后是 UTF-16 串）
+    payload = ('\0'.join(files) + '\0\0').encode('utf-16-le')
+    buf = struct.pack('<IiiII', 20, 0, 0, 0, 1) + payload
+
+    if not user32.OpenClipboard(None):
+        return False, '剪贴板被其它程序占用，稍后再试'
+    try:
+        user32.EmptyClipboard()
+        h = kernel32.GlobalAlloc(0x0042, len(buf))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+        if not h:
+            return False, '剪贴板内存分配失败'
+        ptr = kernel32.GlobalLock(h)
+        if not ptr:
+            kernel32.GlobalFree(h)
+            return False, '剪贴板内存锁定失败'
+        ctypes.memmove(ptr, buf, len(buf))
+        kernel32.GlobalUnlock(h)
+        if not user32.SetClipboardData(15, h):  # 15 = CF_HDROP
+            kernel32.GlobalFree(h)
+            return False, '写入剪贴板失败（可能被安全软件拦截）'
+        # 成功后句柄所有权移交系统，不能再 GlobalFree
+    finally:
+        user32.CloseClipboard()
+    return True, ''
+
+
+async def post_gallery_copy_links(request):
+    """图库卡片右键「复制硬链接」。body: { paths: [rel, ...] }
+
+    把图片原文件路径写进 Windows 剪贴板文件列表；到目标文件夹空白处右键
+    「Zhule 粘贴为硬链接」即零拷贝建链（若直接 Ctrl+V，得到的是普通副本，会占空间）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "请求体必须是 JSON 对象"}, status=400)
+    raw = body.get("paths")
+    if not isinstance(raw, list) or not raw:
+        return web.json_response({"error": "paths 不能为空"}, status=400)
+    if len(raw) > 500:
+        return web.json_response({"error": "单次最多 500 张"}, status=400)
+
+    fulls, seen, missing = [], set(), []
+    for p in raw:
+        if not isinstance(p, str):
+            continue
+        rel = p.strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        full = _safe_full(rel)
+        if full and os.path.isfile(full):
+            fulls.append(full)
+        else:
+            missing.append(rel)
+    if not fulls:
+        return web.json_response({"error": "图片不存在，可能已被移动或删除"}, status=400)
+
+    ok, err = _set_clipboard_files(fulls)
+    if not ok:
+        return web.json_response({"ok": False, "error": err}, status=500)
+    return web.json_response({"ok": True, "count": len(fulls), "missing": missing})
 
 
 def _norm_tag_names(v):

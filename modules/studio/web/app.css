@@ -1388,13 +1388,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border: 1px solid var(--border-2); border-radius: 10px; font-size: 10px; cursor: pointer;
   transition: all 0.12s; }
 .zhg-prompt-copy:hover { color: #fff; background: var(--primary-dim); border-color: var(--primary); }
-/* 「标签」标题右侧的保存：把这张图的提示词标签组合直接存成一份词库预设。
-   与「复制」同一套皮，但不吃 margin-left:auto —— 它要紧贴标签计数右边，不推到行尾 */
-.zhg-detail-save { padding: 2px 10px; background: #1b202b; color: var(--text-2);
+/* 详情区小节标题里的小按钮（如标签标题旁「→ 词库」）：沿用原详情「保存」按钮那套皮，靠 margin-left:auto 推到标题行最右 */
+.zhg-detail-btn { margin-left: auto; padding: 2px 10px; background: #1b202b; color: var(--text-2);
   border: 1px solid var(--border-2); border-radius: 10px; font-size: 10px; cursor: pointer;
   transition: all 0.12s; white-space: nowrap; }
-.zhg-detail-save:hover { color: #fff; background: var(--primary-dim); border-color: var(--primary); }
-.zhg-detail-save[disabled] { opacity: 0.55; cursor: default; }
+.zhg-detail-btn:hover { color: #fff; background: var(--primary-dim); border-color: var(--primary); }
+.zhg-detail-btn[disabled] { opacity: 0.55; cursor: default; }
 .zhg-cn-title { margin-top: 2px; }
 .zhg-prompt-cn { color: var(--text); border-color: rgba(42, 157, 143, 0.45); background: rgba(42, 157, 143, 0.06); }
 /* 提示词内 tag 对应词语的高亮块（背景色由 tag 临时色驱动） */
@@ -1794,7 +1793,9 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-ttp-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; }
 .zhg-ttp-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  border-radius: 12px;
+  /* 圆角用相对单位：叶子(12px)=12px，父级分组字号被 TagNode 放大后圆角等比放大，
+     否则固定 12px 在大号 chip 上视觉接近方角，与下方自定义标签不一致 */
+  border-radius: 1em;
   font-size: 12px; cursor: pointer; user-select: none;
   transition: all 0.12s;
 }
@@ -2219,30 +2220,14 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .pc-card {
   display: flex; flex-direction: column; gap: 9px;
-  /* 上缘留给配图，左右内边距下沉到 head / tags / foot 各自身上（图要通栏贴边） */
+  /* 内边距下沉到 head / tags / foot 各自身上，卡片本体只管边框与底色 */
   padding: 0; background: #171f2b;
   border: 1px solid #2c3a4e; border-radius: 10px;
-  /* 定高：配图 + head + 标签区 + foot 的固定四段，标签多了只在标签区内滚 */
-  height: 300px;
+  /* 定高：head + 标签区 + foot 三段，标签多了只在标签区内滚 */
+  height: 250px;
   align-self: start;
   overflow: hidden;
   transition: border-color 0.15s, transform 0.15s;
-}
-/* 配图主视觉：图库详情保存预设时带过来的那张图（preset.gallery_id → gallery_image） */
-.pc-thumb {
-  position: relative; flex: 0 0 auto; height: 96px; overflow: hidden;
-  background: #0e141c; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.pc-thumb-img {
-  width: 100%; height: 100%; object-fit: cover; display: block;
-  transition: transform 0.2s;
-}
-.pc-thumb:hover .pc-thumb-img { transform: scale(1.04); }
-.pc-thumb:hover { box-shadow: inset 0 0 0 1px rgba(79, 143, 247, 0.5); }
-.pc-thumb-none {
-  font-size: 11.5px; color: var(--text-3); letter-spacing: 0.5px;
-  border: 1px dashed #2c3a4e; border-radius: 8px; padding: 6px 12px;
 }
 .pc-card:hover { border-color: rgba(79, 143, 247, 0.5); transform: translateY(-1px); }
 .pc-card-head { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; padding: 10px 12px 0; }
@@ -2275,7 +2260,10 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .pc-tag-label { font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-tag-chance { font-size: 10.5px; opacity: 0.85; }
 .pc-tag-lock { font-size: 10px; }
-.pc-tag-item { color: var(--text); border-color: #3a4a60; background: rgba(255, 255, 255, 0.045); }
+/* 预设中心普通标签：颜色跟随「标签颜色」wordbank 区域（--tag-bg 由 Wordbank.js chipStyle 注入），无配置时回落中性蓝灰 */
+.pc-tag-item { color: color-mix(in srgb, var(--tag-bg, #8aa0b8) 62%, #fff);
+  border-color: color-mix(in srgb, var(--tag-bg, #8aa0b8) 50%, transparent);
+  background: color-mix(in srgb, var(--tag-bg, #8aa0b8) 18%, transparent); }
 .pc-tag-item .pc-tag-label { font-weight: 500; }
 .pc-tag-none { font-size: 11.5px; color: var(--text-3); align-self: center; }
 .pc-foot {
@@ -2284,13 +2272,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 }
 .pc-sub { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .pc-ops { margin-left: auto; display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
-/* 图库联动入口行（启用提示词 / 一览图库）：独立一行，别跟应用/删除挤在 foot 里折行 */
-.pc-links {
-  display: flex; gap: 5px; flex-shrink: 0; padding: 0 12px;
-}
-.pc-links .btn {
-  flex: 1 1 0; padding: 3px 6px; font-size: 11.5px; white-space: nowrap;
-}
 /* 卡片按钮都不许被 flex 压扁：早先「删」被挤成半个字，就是缺 nowrap + flex-shrink:0 */
 .pc-ops .btn { padding: 3px 9px; font-size: 11.5px; white-space: nowrap; flex: 0 0 auto; }
 
@@ -2645,3 +2626,16 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-link-cfg-btn:hover { background: var(--accent-dim, rgba(79, 140, 255, 0.14));
   border-color: var(--accent, #4f8cff); color: var(--accent, #4f8cff); }
 .zhg-link-cfg-btn.warn { background: rgba(255, 176, 32, 0.14); border-color: rgba(255, 176, 32, 0.6); color: #ffb020; }
+
+
+/* 设置页 · 硬链接右键菜单：状态徽标 + 注册/卸载按钮 */
+.hardlink-head { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.hardlink-state { font-size: 12px; color: var(--text-3); }
+.hardlink-state.on { color: var(--green); }
+.hardlink-state.warn { color: var(--danger); }
+.hardlink-actions { display: flex; gap: 8px; width: 100%; }
+.hardlink-btn { flex: 1; padding: 5px 12px; font-size: 12px; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  transition: all .12s; }
+.hardlink-btn:hover:not(:disabled) { color: var(--text); background: var(--card-hover); border-color: var(--primary-dim); }
+.hardlink-btn:disabled { opacity: .45; cursor: not-allowed; }
