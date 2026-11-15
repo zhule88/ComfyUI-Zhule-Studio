@@ -1067,7 +1067,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 }
 .zhg-dirty { color: var(--green); font-size: 12px; white-space: nowrap; }
 
-/* ===== 上下布局版：工具栏分段控件美化（不影响左右布局 Gallery.js） ===== */
+/* ===== 上下布局版：工具栏分段控件美化 ===== */
 .gallery-td-page .zhg-page-ctl,
 .gallery-td-page .zhg-grid-ctl,
 .gallery-td-page .zhg-pager {
@@ -1095,17 +1095,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .gallery-td-page .zhg-rename-btn { opacity: 0; transition: opacity 0.15s; }
 .gallery-td-page .zhg-opt:hover .zhg-rename-btn,
 .gallery-td-page .zhg-rename-btn:focus-visible { opacity: 1; }
-
-.zhg-layout { flex: 1; min-height: 0; display: flex; }
-.zhg-side { width: 268px; flex-shrink: 0; border-right: 1px solid var(--border-2);
-  background: var(--bg-2); overflow-y: auto; }
-.zhg-side::-webkit-scrollbar { width: 6px; }
-.zhg-side::-webkit-scrollbar-thumb { background: #2f3540; border-radius: 3px; }
-.zhg-side-inner { padding: 8px 10px 24px; display: flex; flex-direction: column; gap: 4px; }
-.zhg-side.zhg-side-lock .zhg-side-inner { height: 100%; }
-/* 高度以拖动为准（side.h）：lock 后各筛选块参与 flex 压缩，内容超高时在块体内部滚动，不再把整个过滤区撑高占满屏幕 */
-.zhg-side.zhg-side-lock .zhg-block { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.zhg-side.zhg-side-lock .zhg-block-body { flex: 1 1 auto; min-height: 0; max-height: none; }
 
 .zhg-block { background: var(--card); border: 1px solid var(--border-2);
   border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
@@ -1264,9 +1253,6 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   transition: all 0.12s; }
 .zhg-tag-add:hover { border-color: var(--primary); color: var(--primary); background: var(--card-hover); }
 
-.zhg-main { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px 30px; background: var(--bg); position: relative; }
-.zhg-main::-webkit-scrollbar { width: 8px; }
-.zhg-main::-webkit-scrollbar-thumb { background: #2f3540; border-radius: 4px; }
 .zhg-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px; align-content: start; }
 
@@ -1511,12 +1497,9 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   border: 1px solid rgba(79, 143, 247, 0.45); white-space: nowrap; }
 
 @media (max-width: 900px) {
-  .zhg-side { width: 220px; }
   .zhg-modal-left { width: 40%; }
 }
 @media (max-width: 720px) {
-  .zhg-layout { flex-direction: column; }
-  .zhg-side { width: 100%; max-height: 40%; border-right: none; border-bottom: 1px solid var(--border-2); }
   .zhg-modal-body { flex-direction: column; }
   .zhg-modal-left { width: 100%; height: 40%; border-right: none; border-bottom: 1px solid var(--border-2); }
 }
@@ -2083,20 +2066,6 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   background: transparent; border: 1px solid var(--border-2);
 }
 .zhg-tag-mode-btn:hover { color: #fff; background: var(--primary-dim); border-color: var(--primary); }
-
-/* 筛选面板拖拽把手（侧栏布局） */
-.zhg-side { position: relative; }
-.zhg-side-resize-x {
-  position: absolute; top: 0; right: -2px; width: 10px; height: 100%;
-  cursor: ew-resize; z-index: 5;
-}
-.zhg-side-resize-y {
-  position: absolute; left: 0; bottom: 0; width: 100%; height: 10px;
-  cursor: ns-resize; z-index: 5;
-  background: rgba(79, 143, 247, 0.30);
-}
-.zhg-side-resize-x:hover { background: rgba(79, 143, 247, 0.45); }
-.zhg-side-resize-y:hover { background: rgba(79, 143, 247, 0.55); }
 
 /* 筛选面板拖拽把手（上下布局） */
 .zhg-td-filters { position: relative; }
