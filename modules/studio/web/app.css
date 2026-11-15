@@ -1655,6 +1655,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   padding: 6px 0; font-size: 13px; color: var(--text); }
 /* 纵向排布的行：标签在上、控件占满整行（链接目录这类长输入用） */
 .settings-row.settings-row-stack { flex-direction: column; align-items: stretch; gap: 6px; }
+/* 标签颜色就地配置：原来弹窗里的「异色/同色 + 取色/种子」直接摊在设置行里，不再点图标开弹窗 */
+.settings-color-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; }
+.settings-color-inline .settings-color-seg { flex: none; }
+.settings-color-inline .settings-color-seg .color-popup-seg-btn { flex: none; padding: 4px 12px; }
+.settings-color-inline .color-popup-pick { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.settings-color-inline .settings-color-seed { flex: 1 1 auto; width: auto; min-width: 0; box-sizing: border-box; }
 /* 文件链接地址：宽度跟着面板走（特异性压过 .settings-seed-input 的 130px 固定宽） */
 .settings-seed-input.settings-link-dir { width: 100%; min-width: 0; box-sizing: border-box;
   font-family: ui-monospace, Consolas, monospace; }

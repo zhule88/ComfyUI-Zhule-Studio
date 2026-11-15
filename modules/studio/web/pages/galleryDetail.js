@@ -31,15 +31,19 @@ function seedHash(name, seed) {
   const lit = 38 + (h % 3) * 5;
   return 'hsl(' + hue + ', ' + sat + '%, ' + lit + '%)';
 }
+// 详情标签配色：统一跟随图库设置里的「图片详情区颜色」（areas.detail）。
+// 词库复用的也是这同一个弹层，所以词库打开的图片详情同样跟随图库这一项，不另设开关。
 function detailColor(name) {
   const gp = readGalleryPref();
   const tc = gp.tagColor;
-  if (!tc || tc.level !== 'complex') {
-    return (tc && tc.globalMode === 'same') ? (tc.globalColor || TAG_FALLBACK) : seedHash(name, gp.tagSeed);
+  const area = tc && tc.areas && tc.areas.detail;
+  if (!area) {
+    // 旧存档兜底：没有 detail 分区时按旧的全局规则取色
+    if (tc && tc.globalMode === 'same') return tc.globalColor || TAG_FALLBACK;
+    return seedHash(name, gp.tagSeed);
   }
-  const area = tc.areas && tc.areas.detail;
-  if (!area || area.mode === 'diff') return seedHash(name, area && area.seed ? area.seed : gp.tagSeed);
-  return area.color || TAG_FALLBACK;
+  if (area.mode === 'same') return area.color || TAG_FALLBACK;
+  return seedHash(name, area.seed ? area.seed : gp.tagSeed);
 }
 
 // 词库侧适配器：把「图库详情」需要的全部成员装成一份 reactive 对象，

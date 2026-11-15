@@ -312,18 +312,17 @@ const DEFAULT_PREF = {
     tagRound: true,
     // 标签颜色种子：简单模式「全局异色」使用；所有标签颜色 = 该种子 + 标签名的确定性散列；改种子整套换色，同一标签恒定同色
     tagSeed: 'zhule',
-    // 标签颜色配置（方案E）：level=simple 全局模式（所有标签一套规则）/ complex 分区模式（各区独立）
-    // simple：globalMode=diff 全局异色（tagSeed 种子散列）/ same 全局同色（globalColor 统一色）
-    // complex：areas 四区独立（detail 详情区 / filter 外部筛选区 / edit 编辑面板 / wordbank 词库分类）
+    // 标签颜色配置：图库只留两个颜色选项（词库分类色已归词库自己的设置，见 Wordbank.js 的 zhule_wordbank_pref_v1）
+    // areas.ui   = 筛选区域（外部过滤区）+ 编辑区域，共用一个选项
+    // areas.detail = 图片详情区域（图库与词库打开的详情弹层共用，统一跟随本项）
+    // 单区内：mode=diff 异色（seed 种子散列，留空沿用全局 tagSeed）/ same 同色（color 统一色）
     tagColor: {
-      level: 'simple',
+      level: 'complex',
       globalMode: 'diff',
       globalColor: '#2a9d8f',
       areas: {
+        ui: { mode: 'diff', color: '#2a9d8f', seed: '' },
         detail: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        filter: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        edit: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
       },
     },
     // 链接相关（与 main.js 设置面板同构）：dir 目标根目录 / nameMode 子文件夹命名方式
@@ -391,22 +390,36 @@ function normalizeLink(lk) {
   return out;
 }
 
-// 标签颜色配置归一化：兼容旧版存档（无 tagColor 字段）与残缺数据，保证四区字段齐全
+// 标签颜色配置归一化：兼容旧存档并把旧的四分区（detail/filter/edit/wordbank）迁移成新的两分区（ui/detail）
+// 旧 simple 全局模式 → 两个分区都继承旧的全局模式与颜色；旧 filter 与 edit 合并成 ui（filter 优先）
 function normalizeTagColor(tc) {
-  const base = JSON.parse(JSON.stringify(DEFAULT_PREF.gallery.tagColor));
-  if (!tc || typeof tc !== 'object') return base;
-  const out = Object.assign({}, base, tc);
-  if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
-  if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
-  if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
-  out.areas = {};
-  ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
-    const a = (tc.areas && tc.areas[k]) || {};
-    out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
-    if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
-    if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
-    if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
-  });
+  const one = (a) => {
+    const o = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a || {});
+    if (!['diff', 'same'].includes(o.mode)) o.mode = 'diff';
+    if (typeof o.color !== 'string' || !o.color) o.color = '#2a9d8f';
+    if (typeof o.seed !== 'string') o.seed = '';
+    return { mode: o.mode, color: o.color, seed: o.seed };
+  };
+  const out = { level: 'complex', globalMode: 'diff', globalColor: '#2a9d8f', areas: {} };
+  if (!tc || typeof tc !== 'object') {
+    out.areas = { ui: one(), detail: one() };
+    return out;
+  }
+  if (!['diff', 'same'].includes(tc.globalMode)) tc.globalMode = 'diff';
+  if (typeof tc.globalColor !== 'string' || !tc.globalColor) tc.globalColor = '#2a9d8f';
+  out.globalMode = tc.globalMode;
+  out.globalColor = tc.globalColor;
+  const old = tc.areas || {};
+  if (tc.level === 'simple' || (!old.ui && !old.detail && !old.filter && !old.edit)) {
+    // 旧全局模式：两区继承同一套规则（异色留空种子 = 沿用全局 tagSeed）
+    const inherit = { mode: tc.globalMode, color: tc.globalColor, seed: '' };
+    out.areas = { ui: one(inherit), detail: one(inherit) };
+    return out;
+  }
+  out.areas = {
+    ui: one(old.ui || old.filter || old.edit),
+    detail: one(old.detail || old.ui),
+  };
   return out;
 }
 
@@ -1272,17 +1285,15 @@ export function useGalleryCommon(opts = {}) {
     const lit = 38 + (h % 3) * 5; // 38/43/48 微调明度
     return 'hsl(' + hue + ', ' + sat + '%, ' + lit + '%)';
   }
-  // 标签区域配色统一入口（方案E）：按级别与模式决定某个区域的标签颜色。
-  // simple：全局异色 = 全局种子散列（同一标签恒定同色，换种子整套换色）；全局同色 = 统一一色。
-  // complex：按区域配置；异色 = 区域种子散列（区域种子留空回退全局种子）；同色 = 区域统一色。
+  // 标签区域配色统一入口：图库只有两个颜色选项 —— ui（筛选区 + 编辑区共用）、detail（图片详情区）。
+  // 旧调用点传的 'filter' / 'edit' 一律归到 ui，保证筛选区与编辑区永远同色；
+  // 异色 = 区域种子散列（区域种子留空回退全局 tagSeed）；同色 = 区域统一色。
   function colorFor(areaKey, name) {
-    const tc = pref.gallery.tagColor;
-    if (!tc || tc.level !== 'complex') {
-      return (tc && tc.globalMode === 'same') ? tc.globalColor : seedHash(name);
-    }
-    const a = tc.areas && tc.areas[areaKey];
-    if (!a || a.mode === 'diff') return seedHash(name, a && a.seed);
-    return a.color;
+    const tc = pref.gallery.tagColor || {};
+    const key = (!areaKey || areaKey === 'filter' || areaKey === 'edit') ? 'ui' : areaKey;
+    const a = (tc.areas && tc.areas[key]) || { mode: 'diff', color: '#2a9d8f', seed: '' };
+    if (a.mode === 'same') return a.color || '#2a9d8f';
+    return seedHash(name, a.seed);
   }
   function refreshTagColors() {
     const map = {};

@@ -25,10 +25,8 @@ const DEFAULT_PREF = {
       globalMode: 'diff',
       globalColor: '#2a9d8f',
       areas: {
+        ui: { mode: 'diff', color: '#2a9d8f', seed: '' },
         detail: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        filter: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        edit: { mode: 'diff', color: '#2a9d8f', seed: '' },
-        wordbank: { mode: 'diff', color: '#2a9d8f', seed: '' },
       },
     },
     // 链接相关：图库工具栏下载按钮（硬链接快捷导出）的目标目录与子文件夹命名方式
@@ -70,17 +68,21 @@ const PANEL_PCT_MIN = 22;
 const PANEL_PCT_MAX = 80;
 // 标签颜色分区（方案E复杂模式）：四个区域独立配置
 const TAG_COLOR_AREAS = [
-  { key: 'detail', label: '图片详情' },
-  { key: 'filter', label: '筛选区域' },
-  { key: 'edit', label: '编辑面板' },
-  { key: 'wordbank', label: '词库分类' },
+  { key: 'ui', label: '筛选·编辑区' },
+  { key: 'detail', label: '图片详情区' },
 ];
-// 标签主题（参考 Element Plus Tag 的 effect）：dark 深色实底 / light 浅色柔和底 / plain 描边透明底
-const TAG_THEMES = [
-  { key: 'dark', label: '深色' },
-  { key: 'light', label: '浅色' },
-  { key: 'plain', label: '描边' },
+// 标签主题（深色/浅色/描边）已废弃：颜色统一由 --tag-bg 接管，三主题视觉已无差异，固定使用 FIXED_TAG_THEME；
+// 现在的「主题」= TAG_STYLES 五种质感（胶囊/毛玻璃/渐变/霓虹/细线），只改质感不改颜色。
+// 图库侧叫「标签」（多选），词库侧叫「分类」；两边各存一份主题（pref.gallery.tagStyle / zhule_wordbank_pref_v1.tagStyle），互不影响
+const FIXED_TAG_THEME = 'zhg-tag-theme-light';
+const TAG_STYLES = [
+  { key: 'capsule', label: '胶囊' },
+  { key: 'glass', label: '毛玻璃' },
+  { key: 'gradient', label: '渐变' },
+  { key: 'neon', label: '霓虹' },
+  { key: 'line', label: '细线' },
 ];
+const TAG_STYLE_KEYS = TAG_STYLES.map((s) => s.key);
 
 // 演示块颜色：与图库/词库同一 FNV-1a 散列算法（种子 + 固定名 'demo'），
 // 随机颜色种子变化时，设置面板的主题/边角演示块联动换色，所见即所得
@@ -95,22 +97,35 @@ function seedColor(seed) {
   return 'hsl(' + (h % 360) + ', ' + (60 + (h % 4) * 6) + '%, ' + (38 + (h % 3) * 5) + '%)';
 }
 
-// 标签颜色配置归一化：兼容旧版存档（无 tagColor 字段）与残缺数据，保证四区字段齐全
+// 标签颜色配置归一化：兼容旧存档并把旧四分区（detail/filter/edit/wordbank）迁移成新的两分区（ui/detail）
+// 旧 simple 全局模式 → 两区都继承旧的全局模式与颜色；旧 filter 与 edit 合并成 ui（filter 优先）
 function normalizeTagColor(tc) {
-  const base = JSON.parse(JSON.stringify(DEFAULT_PREF.gallery.tagColor));
-  if (!tc || typeof tc !== 'object') return base;
-  const out = Object.assign({}, base, tc);
-  if (!['simple', 'complex'].includes(out.level)) out.level = 'simple';
-  if (!['diff', 'same'].includes(out.globalMode)) out.globalMode = 'diff';
-  if (typeof out.globalColor !== 'string' || !out.globalColor) out.globalColor = '#2a9d8f';
-  out.areas = {};
-  ['detail', 'filter', 'edit', 'wordbank'].forEach((k) => {
-    const a = (tc.areas && tc.areas[k]) || {};
-    out.areas[k] = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a);
-    if (!['diff', 'same'].includes(out.areas[k].mode)) out.areas[k].mode = 'diff';
-    if (typeof out.areas[k].color !== 'string' || !out.areas[k].color) out.areas[k].color = '#2a9d8f';
-    if (typeof out.areas[k].seed !== 'string') out.areas[k].seed = '';
-  });
+  const one = (a) => {
+    const o = Object.assign({ mode: 'diff', color: '#2a9d8f', seed: '' }, a || {});
+    if (!['diff', 'same'].includes(o.mode)) o.mode = 'diff';
+    if (typeof o.color !== 'string' || !o.color) o.color = '#2a9d8f';
+    if (typeof o.seed !== 'string') o.seed = '';
+    return { mode: o.mode, color: o.color, seed: o.seed };
+  };
+  const out = { level: 'complex', globalMode: 'diff', globalColor: '#2a9d8f', areas: {} };
+  if (!tc || typeof tc !== 'object') {
+    out.areas = { ui: one(), detail: one() };
+    return out;
+  }
+  if (!['diff', 'same'].includes(tc.globalMode)) tc.globalMode = 'diff';
+  if (typeof tc.globalColor !== 'string' || !tc.globalColor) tc.globalColor = '#2a9d8f';
+  out.globalMode = tc.globalMode;
+  out.globalColor = tc.globalColor;
+  const old = tc.areas || {};
+  if (tc.level === 'simple' || (!old.ui && !old.detail && !old.filter && !old.edit)) {
+    const inherit = { mode: tc.globalMode, color: tc.globalColor, seed: '' };
+    out.areas = { ui: one(inherit), detail: one(inherit) };
+    return out;
+  }
+  out.areas = {
+    ui: one(old.ui || old.filter || old.edit),
+    detail: one(old.detail || old.ui),
+  };
   return out;
 }
 
@@ -458,44 +473,49 @@ const App = {
       savePref();
       return s;
     }
-    // 方案E 标签颜色弹窗：开关、模式切换、取色与种子编辑统一入口
-    const colorPopupOpen = ref(false);
-    const colorPopupArea = ref('detail');
-    function colorPopupOpenFor(areaKey) {
-      colorPopupArea.value = areaKey;
-      colorPopupOpen.value = true;
+    // 标签颜色：直接在设置面板里就地配置（图库筛选·编辑区 / 图片详情区、词库分类色），不再另开弹窗
+    // 单区内：mode=diff 异色（seed 种子散列，留空沿用全局种子）/ same 同色（color 统一色）
+    function areaConf(scope, area) {
+      if (scope === 'wordbank') {
+        if (!wbTag.value.color) wbTag.value.color = { mode: 'diff', color: '#2a9d8f', seed: '' };
+        return wbTag.value.color;
+      }
+      const tc = pref.value.gallery.tagColor;
+      if (!tc.areas) tc.areas = {};
+      if (!tc.areas[area]) tc.areas[area] = { mode: 'diff', color: '#2a9d8f', seed: '' };
+      return tc.areas[area];
     }
-    function setTagColorLevel(level) {
-      pref.value.gallery.tagColor.level = level;
-      savePref();
+    // 落盘：词库写自己的 key，图库走 savePref 广播
+    function commitConf(scope) {
+      if (scope === 'wordbank') {
+        writeWbPref({ tagColor: JSON.parse(JSON.stringify(wbTag.value.color)) });
+      } else {
+        savePref();
+      }
     }
-    function setGlobalTagColorMode(mode) {
-      pref.value.gallery.tagColor.globalMode = mode;
-      savePref();
+    function setAreaTagColorMode(scope, area, mode) {
+      areaConf(scope, area).mode = mode === 'same' ? 'same' : 'diff';
+      commitConf(scope);
     }
-    function setGlobalTagColor(color) {
-      pref.value.gallery.tagColor.globalColor = color;
-      savePref();
+    function setAreaTagColor(scope, area, color) {
+      areaConf(scope, area).color = color;
+      commitConf(scope);
     }
-    function setAreaTagColorMode(mode) {
-      pref.value.gallery.tagColor.areas[colorPopupArea.value].mode = mode;
-      savePref();
+    function setAreaTagSeed(scope, area, seed) {
+      areaConf(scope, area).seed = (seed || '').trim();
+      commitConf(scope);
     }
-    function setAreaTagColor(color) {
-      pref.value.gallery.tagColor.areas[colorPopupArea.value].color = color;
-      savePref();
-    }
-    function setAreaTagSeed(seed) {
-      pref.value.gallery.tagColor.areas[colorPopupArea.value].seed = (seed || '').trim();
-      savePref();
-    }
-    // 分区异色种子：一键随机刷新（替代原清空式「重置」）
-    function randomAreaSeed() {
+    function randomSeedStr() {
       const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
       let s = '';
       for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-      pref.value.gallery.tagColor.areas[colorPopupArea.value].seed = s;
-      savePref();
+      return s;
+    }
+    // 异色种子：一键随机刷新
+    function randomAreaSeed(scope, area) {
+      const s = randomSeedStr();
+      areaConf(scope, area).seed = s;
+      commitConf(scope);
       return s;
     }
     function randomHexColor() {
@@ -504,14 +524,10 @@ const App = {
       for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
       return s;
     }
-    // 方案E 弹窗「随机换色」：全局同色 / 分区同色各一键随机
-    function randomGlobalColor() {
-      pref.value.gallery.tagColor.globalColor = randomHexColor();
-      savePref();
-    }
-    function randomAreaColor() {
-      pref.value.gallery.tagColor.areas[colorPopupArea.value].color = randomHexColor();
-      savePref();
+    // 同色：一键随机换色
+    function randomAreaColor(scope, area) {
+      areaConf(scope, area).color = randomHexColor();
+      commitConf(scope);
     }
     // 设置面板大类折叠：状态写入 common.collapsedGroups，随 pref 持久化并广播
     function isCollapsed(key) {
@@ -688,8 +704,8 @@ const App = {
       setLinkDir, setLinkNameMode, DEFAULT_LINK_DIR: 'output/zhule_studio/zhule_link',
       LINK_TIME_PRESETS, setLinkTimeFmt, setLinkSep, toggleHideLinkGear, linkTimeSample,
       linkDlgOpen, linkTree, linkActiveTags, linkKnownTags, linkLayerCount, openLinkDlg, closeLinkDlg, onLinkDlgSaved,
-      colorPopupOpen, colorPopupArea, colorPopupOpenFor, setTagColorLevel, setGlobalTagColorMode, setGlobalTagColor,
-      setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomGlobalColor, randomAreaColor,
+      areaConf, setAreaTagColorMode, setAreaTagColor, setAreaTagSeed, randomAreaSeed, randomHexColor, randomAreaColor,
+      wbTag, setWbTagSeed, randomWbTagSeed, setWbTagStyle,
       wordbankAutoParent, toggleWordbankAutoParent, wordbankSearchByPath, toggleWordbankSearchByPath,
       wordbankHideVgNav, toggleWordbankHideVgNav, rebuilding, rebuildNotice, rebuildDB,
       linkMenu, linkMenuText, linkMenuClass, linkMenuAction };
