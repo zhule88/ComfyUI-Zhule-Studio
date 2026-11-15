@@ -58,6 +58,30 @@ function ack(bindId, ok, error) {
   channel.postMessage({ type: "zhule:ack", bindId, ok, error });
 }
 
+// 【竞态修复·一】提交串行锁：同一时刻只允许一条 prompt 处于「等队列空闲 → 写选词 → 构建快照 → POST」过程中。
+// 词库端一次运行会连发 N 条 zhule:run，若两条的写值与构建交叉，前一条的快照就会读到后一条的选词，
+// 表现为几十条 prompt 在 0.4 秒内涌入、角色重复且顺序错乱。加锁后每条快照互不重叠，ack 也延迟到
+// 构建完成后才发，天然反压词库端，词库页不必再加人为延迟。
+let submitChain = Promise.resolve();
+function withSubmitLock(fn) {
+  const run = submitChain.then(fn);
+  submitChain = run.then(() => {}, () => {});
+  return run;
+}
+
+// 【竞态修复·二】等前端队列真正空闲。新版前端 app.queuePrompt 在 processingQueue 为真时，
+// 只把请求塞进 queueItems 就立刻返回 false，graphToPrompt 构建要等当前这一批处理时才做；
+// 此时若认定「已提交」就去写下一条选词，构建出来的就是下一条的内容（= 重复角色 / 顺序错乱）。
+// 因构建在 await app.queuePrompt 返回时才算完成，所以提交前先等 processingQueue 落下，
+// 并配合串行锁保证这段窗口内没有别的 run 改写 _selected。字段缺失时退化为原行为。
+const QUEUE_IDLE_TIMEOUT_MS = 60000;
+async function waitQueueIdle() {
+  const t0 = Date.now();
+  while (app.processingQueue && Date.now() - t0 < QUEUE_IDLE_TIMEOUT_MS) {
+    await new Promise((r) => setTimeout(r, 40));
+  }
+}
+
 async function handleRunMessage(msg) {
   if (!msg || msg.type !== "zhule:run") return;
   const bindId = String(msg.bindId || "");
@@ -90,48 +114,53 @@ async function handleRunMessage(msg) {
   // 广播认领声明：其他标签页收到后会在窗口期内跳过同一轮次的 run（异步竞态下仍可能有毫秒级重复，已大幅收敛）
   try { channel.postMessage({ type: "zhule:claimed", bindId, seq, sig }); } catch (e) { /* 忽略 */ }
 
-  const w = ensureSelectedWidget(node);
-  if (!w) {
-    ack(bindId, false, "节点缺少 _selected 字段");
-    return;
-  }
-
-  // 写入网页选词；显式保证前端序列化进 prompt（勿依赖 hidden 默认行为）
-  // 对象格式 {id, name, content, neg, override}：id=词条 id（SaveImage 提取提示词标签用，
-  // 词条改名/移动不脱钩），name=词条名（节点 tags 输出用），content=提示词文本，
-  // neg=负面提示词（并入负面输出），override=排除词（只删别的词条的提示词段，不删自己）
-  const items = Array.isArray(msg.items) ? msg.items.map((s) => {
-    if (s && typeof s === 'object' && !Array.isArray(s)) {
-      return {
-        id: String(s.id || ''),
-        name: String(s.name || ''),
-        content: String(s.content || ''),
-        neg: String(s.neg || ''),
-        override: String(s.override || ''),
-      };
+  // 【竞态修复】写选词 → 构建 → 提交 整段串行化，避免多条 run 在 graphToPrompt 窗口内互相覆写。
+  await withSubmitLock(async () => {
+    // 等上一次提交的构建真正做完，再写本次选词（否则快照会读到本次的值）
+    await waitQueueIdle();
+    const w = ensureSelectedWidget(node);
+    if (!w) {
+      ack(bindId, false, "节点缺少 _selected 字段");
+      return;
     }
-    // 兼容纯字符串消息：无 id/name 时节点 tags 输出为空，SaveImage 回退存原字符串
-    return { id: '', name: '', content: String(s), neg: '', override: '' };
-  }) : [];
-  w.value = JSON.stringify(items);
-  if (!w.options) w.options = {};
-  w.options.serialize = true;
-  w.callback?.(w.value);
 
-  try {
-    const count = Math.max(1, Math.min(99, Number(msg.count) || 1));
-    // 走前端当前画布实时状态，与手动点 Run 等价（内部会重新 graphToPrompt）。
-    // 注意签名：queuePrompt(number, batchCount, opts) —— 第一参是队列序号，第二参才是重复次数。
-    // 只传 count 会被当成 number、batchCount 落回默认 1，表现为「提示跑 N 次、画布只有 1 个任务」。
-    console.log("[ZhuleStudio] zhule:run bind=", bindId, "count=", count, "items=", items.length);
-    const ok = await app.queuePrompt(0, count);
-    // queuePrompt 返回 false 只有一种情况：上一次提交还在处理中，本次请求已进 queueItems 等待，稍后照常执行。
-    // 所以这里不能再回「失败」误导用户；真正的构建/提交异常是抛错，走下面的 catch。
-    if (ok === false) console.warn("[ZhuleStudio] queuePrompt 已入队等待上一次请求处理（非失败）");
-    ack(bindId, true);
-  } catch (e) {
-    ack(bindId, false, String(e?.message || e));
-  }
+    // 写入网页选词；显式保证前端序列化进 prompt（勿依赖 hidden 默认行为）
+    // 对象格式 {id, name, content, neg, override}：id=词条 id（SaveImage 提取提示词标签用，
+    // 词条改名/移动不脱钩），name=词条名（节点 tags 输出用），content=提示词文本，
+    // neg=负面提示词（并入负面输出），override=排除词（只删别的词条的提示词段，不删自己）
+    const items = Array.isArray(msg.items) ? msg.items.map((s) => {
+      if (s && typeof s === 'object' && !Array.isArray(s)) {
+        return {
+          id: String(s.id || ''),
+          name: String(s.name || ''),
+          content: String(s.content || ''),
+          neg: String(s.neg || ''),
+          override: String(s.override || ''),
+        };
+      }
+      // 兼容纯字符串消息：无 id/name 时节点 tags 输出为空，SaveImage 回退存原字符串
+      return { id: '', name: '', content: String(s), neg: '', override: '' };
+    }) : [];
+    w.value = JSON.stringify(items);
+    if (!w.options) w.options = {};
+    w.options.serialize = true;
+    w.callback?.(w.value);
+
+    try {
+      const count = Math.max(1, Math.min(99, Number(msg.count) || 1));
+      // 走前端当前画布实时状态，与手动点 Run 等价（内部会重新 graphToPrompt）。
+      // 注意签名：queuePrompt(number, batchCount, opts) —— 第一参是队列序号，第二参才是重复次数。
+      // 只传 count 会被当成 number、batchCount 落回默认 1，表现为「提示跑 N 次、画布只有 1 个任务」。
+      console.log("[ZhuleStudio] zhule:run bind=", bindId, "count=", count, "items=", items.length);
+      const ok = await app.queuePrompt(0, count);
+      // queuePrompt 返回 false 只有一种情况：上一次提交还在处理中，本次请求已进 queueItems 等待，稍后照常执行。
+      // 所以这里不能再回「失败」误导用户；真正的构建/提交异常是抛错，走下面的 catch。
+      if (ok === false) console.warn("[ZhuleStudio] queuePrompt 已入队等待上一次请求处理（非失败）");
+      ack(bindId, true);
+    } catch (e) {
+      ack(bindId, false, String(e?.message || e));
+    }
+  });
 }
 
 channel.onmessage = (ev) => {
