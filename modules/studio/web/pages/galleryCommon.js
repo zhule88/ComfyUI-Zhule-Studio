@@ -192,16 +192,16 @@ const OutNode = {
   `,
 };
 
-// 图库卡片右键菜单（左右布局 / 上下布局共用同一份模板与状态）。
-// 卡片右侧竖排的选择/放大/删除图标在此完整复制一份，另加「进入详情」；
-// 开启通用设置「隐藏卡片上的图标」后，这里成为唯一入口（与词库卡片右键菜单同构）。
+// 图库卡片右键菜单（上下布局）。
+// 保留「选中 / 放大预览」与卡片图标一致的快捷动作，只去掉「进入详情」（左键点卡片即进详情，重复了）；
+// 随后是「复制硬链接 / 导出 / 删除」。
 export const CardCtxMenu = {
   name: 'CardCtxMenu',
   props: {
     // { open, x, y, title, picked, selCount }
     state: { type: Object, required: true },
   },
-  emits: ['close', 'sel', 'zoom', 'detail', 'copylink', 'download', 'del', 'batch-del'],
+  emits: ['close', 'sel', 'zoom', 'copylink', 'download', 'del', 'batch-del'],
   // 模板里不能直接写 emit('x')：Vue 3 模板上下文不暴露 emit 标识符，运行时为 undefined，
   // 每次点击都会抛「TypeError: emit is not a function」——事件处理器中断导致 state.open 卡在 true，
   // 全屏透明 .ctx-layer 永不消失，整页点击/滚轮全被它吃掉（表现为「页面卡死，只能刷新」）。
@@ -210,7 +210,6 @@ export const CardCtxMenu = {
     const onClose = () => emit('close');
     const onSel = () => emit('sel');
     const onZoom = () => emit('zoom');
-    const onDetail = () => emit('detail');
     const onCopyLink = () => emit('copylink');
     const onDownload = () => emit('download');
     const onDel = () => emit('del');
@@ -223,7 +222,7 @@ export const CardCtxMenu = {
     // 未注册时「复制图片硬链接」整项不渲染
     watch(() => props.state && props.state.open, (open) => { if (open) refreshLinkMenuReady(); });
     onMounted(() => { refreshLinkMenuReady(); });
-    return { onClose, onSel, onZoom, onDetail, onCopyLink, onDownload, onDel, onBatchDel, linkMenuReady };
+    return { onClose, onSel, onZoom, onCopyLink, onDownload, onDel, onBatchDel, linkMenuReady };
   },
   template: `
     <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
@@ -231,7 +230,7 @@ export const CardCtxMenu = {
         <div class="ctx-title">{{ state.title }}</div>
         <button type="button" class="ctx-item" @click="onSel">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
         <button type="button" class="ctx-item" @click="onZoom">🔍 放大预览</button>
-        <button type="button" class="ctx-item" @click="onDetail">→ 进入详情</button>
+        <!-- 不再重复放「进入详情」：左键点卡片即可进详情 -->
         <!-- 系统右键菜单未注册时整块（分隔线 + 复制硬链接）都不渲染，避免复制了无处可粘 -->
         <template v-if="linkMenuReady">
           <div class="ctx-sep"></div>
@@ -1058,15 +1057,14 @@ export function useGalleryCommon(opts = {}) {
     cardCtx.title = it.name || '';
     cardCtx.picked = isSel(it.key);
     cardCtx.selCount = selected.size;
-    // 贴边翻转，避免菜单跑出窗口（宽约 210 / 高约 300，含「复制图片硬链接」一行）
+    // 贴边翻转，避免菜单跑出窗口（宽约 210 / 高约 295：选中 / 放大 / 复制硬链接 / 导出 / 删除 五行）
     cardCtx.x = Math.max(8, Math.min(evt.clientX, window.innerWidth - 220));
-    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 340));
+    cardCtx.y = Math.max(8, Math.min(evt.clientY, window.innerHeight - 300));
     cardCtx.open = true;
   };
   // 菜单项统一「先收菜单再执行」，避免遮罩层挡住后续弹窗与框选
   const onCtxSel = () => { const it = cardCtx.item; closeCardCtx(); if (it) toggleSel(it.key); };
   const onCtxZoom = () => { const it = cardCtx.item; closeCardCtx(); if (it) zoomView(imgUrl(it.key, it.mtime), it); };
-  const onCtxDetail = () => { const it = cardCtx.item; closeCardCtx(); if (it) openDetail(it); };
   // 右键「复制硬链接」：把源图路径交给后端写进 Windows 剪贴板文件列表，
   // 到目标文件夹空白处右键「Zhule 粘贴为硬链接」即零拷贝落地。
   // 该卡片已被选中且选中数 > 1 时，整批一起复制（与「删除选中的 N 张」同一套语义）。
@@ -2477,7 +2475,7 @@ export function useGalleryCommon(opts = {}) {
     hitIds, hitTotal, detailPos, ensureHitIds, detailNav, detailNavRandom,
     askDelete, toggleSel,
     hideCardIcons, cardCtx, openCardCtx, closeCardCtx,
-    onCtxSel, onCtxZoom, onCtxDetail, onCtxCopyLink, onCtxDownload, onCtxDel, onCtxBatchDel,
+    onCtxSel, onCtxZoom, onCtxCopyLink, onCtxDownload, onCtxDel, onCtxBatchDel,
     cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
     addTagToImage, removeTagFromImage,

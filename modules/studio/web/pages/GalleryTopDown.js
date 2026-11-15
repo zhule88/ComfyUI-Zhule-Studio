@@ -187,9 +187,9 @@ export default {
 
     <!-- 全屏查看：由公共模块 modules/common/zhule_fullviewer.js 命令式接管（非响应式） -->
 
-    <!-- 图库卡片右键菜单：卡片图标操作 + 进入详情的统一入口（隐藏图标后为唯一入口） -->
+    <!-- 图库卡片右键菜单：选中 / 放大 / 硬链接 / 导出 / 删除（不进详情，左键点卡片即是） -->
     <card-ctx-menu :state="cardCtx" @close="closeCardCtx"
-                   @sel="onCtxSel" @zoom="onCtxZoom" @detail="onCtxDetail"
+                   @sel="onCtxSel" @zoom="onCtxZoom"
                    @copylink="onCtxCopyLink" @download="onCtxDownload"
                    @del="onCtxDel" @batch-del="onCtxBatchDel"></card-ctx-menu>
 
