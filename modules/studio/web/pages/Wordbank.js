@@ -135,7 +135,7 @@ export default {
                   <button class="vg-next" @click.stop="vgStep(file, 1)">›</button>
                 </div>
                 <!-- 左上角徽标栈：排除/负面按需出现。
-                     多分支不做额外标记——卡名本身已按「组名#分支名」分两段着色，足以识别。 -->
+                     多分支不做额外标记——卡名只放这一版自己的名字，所属组名由下方 card-vg 角标单独显示。 -->
                 <div class="thumb-badges">
                   <div class="thumb-badge ov" v-if="(file.override || '').trim()" data-tip="已配置排除词：只删「别的词条」里命中的提示词段，不删自己">排除</div>
                   <div class="thumb-badge ng" v-if="(file.neg || '').trim()" data-tip="已配置负面提示词：该词条被选中时并入负面输出">负面</div>
@@ -229,7 +229,7 @@ export default {
 
         <div class="bottom">
           <div class="selected-header">
-            <span class="sel-title">已选 <span class="selected-count">{{ data.slots.length }}</span> 项</span>
+            <span class="sel-title">已选 <span class="selected-count">{{ selTagCount }}</span> 项</span>
             <div class="header-actions">
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :data-tip="selectedCollapsed ? '展开提示词预览' : '收起提示词预览'"
@@ -239,7 +239,7 @@ export default {
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetCtr.open }"
                       @click="openPresetCenter"
-                      data-tip="预设中心：已存下来的预设都在这里，卡片铺开全部标签与池子，点「应用」一键还原整套已选">🗂 预设</button>
+                      data-tip="预设：存下来的预设都在这儿，卡片铺开全部标签与池子，点「应用」一键还原整套已选；「🧩 添加」把整份预设凝结成一个标签接到已选末尾">🗂 预设</button>
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetDlg.open }"
                       @click="openPresetDlg"
@@ -265,7 +265,39 @@ export default {
                  :class="{'drag-active': drag.hoverSide === 'selList'}"
                  @pointerdown="onSelListPointerDown">
               <span v-if="!data.slots.length" class="empty-tip">点击卡片加入已选，或拖动卡片直接拖入</span>
-              <div v-for="(item, idx) in data.slots" :key="idx"
+              <template v-for="(item, idx) in data.slots" :key="idx">
+              <!-- 合并标签：一份预设整份凝结成的一个标签，名字就是预设名。
+                   生图照常用里面的提示词（角色、体型等一条不少），这里只是把展示收成一个 -->
+              <div v-if="isMergeHead(idx)" class="tag is-merged"
+                   :class="{
+                     'is-open': isMergeOpen(item._mg),
+                     'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
+                     'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
+                     'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right'
+                   }"
+                   :title="mergeTitle(item._mg)"
+                   @pointerdown.stop="onTagPointerDown($event, idx)"
+                   @click.stop="toggleMergeOpen(item._mg)">
+                <span class="mg-ico">🧩</span>
+                <span class="mg-name">{{ item._mgName }}</span>
+                <span class="mg-num">{{ mergeSize(item._mg) }}</span>
+                <span class="close" @pointerdown.stop @click.stop="removeMerged(item._mg)">×</span>
+              </div>
+              <!-- 合并标签展开后的内部项：只读——不给 ×、不给右键菜单，但能拖（拖任意一枚＝整组一起挪） -->
+              <div v-else-if="isMergedChild(idx)" v-show="isMergeOpen(item._mg)" class="tag is-merged-child"
+                   :class="{
+                     'is-pool': item.t === 'pool',
+                     'is-pool-traverse': item.t === 'pool' && !!item.traverse,
+                     'zhule-source': drag.active && drag.sourceType === 'tag' && drag.sourceIdx === idx,
+                     'drag-over-insert': drag.hoverTagIdx === idx && drag.hoverSide === 'left',
+                     'drag-over-insert-right': drag.hoverTagIdx === idx && drag.hoverSide === 'right'
+                   }"
+                   title="合并标签里的提示词（跟着合并标签整组走，不能单独编辑或删除）"
+                   @pointerdown.stop="onTagPointerDown($event, idx)">
+                <span>{{ selDisplayName(item) }}</span>
+                <span v-if="item.t === 'pool'" class="ph-badge">♻</span>
+              </div>
+              <div v-else
                    class="tag"
                    :class="{
                      'is-pool': item.t === 'pool',
@@ -294,6 +326,7 @@ export default {
                 <span v-if="itemLocked(item)" class="tag-lock" title="已锁定：不能修改也不能删除，右键可解锁">🔒</span>
                 <span v-else class="close" @pointerdown.stop="removeSelected(idx)">×</span>
               </div>
+              </template>
             </div>
           </div>
           <!-- 预览：以已选提示词为主干，池子按顺序融入并挂徽标（不再整块替换成池子说明） -->
@@ -824,7 +857,7 @@ export default {
       </div>
 
       <!-- 保存预设：把「已选」这一整套（标签 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一份可复用预设。
-           落库走 preset 表（payload = { slots, genCount, fillMode }），存完即可在「预设中心」里看到。 -->
+           落库走 preset 表（payload = { slots, genCount, fillMode }），存完即可在「预设」里看到。 -->
       <div v-if="presetDlg.open" class="edit-overlay" @click.self="closePresetDlg">
         <div class="edit-dialog preset-dialog">
           <div class="title"><span class="title-text">保存预设</span></div>
@@ -870,7 +903,7 @@ export default {
             </div>
             <div class="hint" style="margin-top:10px">
               存下来的是整套「已选」：位置顺序、每个池的抽取方式与参与率、锁定状态、次数与填充模式都会一起还原。
-              之后在 <b>🗂 预设中心</b> 里点「应用」一键装回。
+              之后在 <b>🗂 预设</b> 里点「应用」一键装回。
             </div>
           </div>
           <div class="actions">
@@ -882,18 +915,18 @@ export default {
         </div>
       </div>
 
-      <!-- 预设中心：已存预设的网格卡片。
+      <!-- 预设：已存预设的网格卡片。
            卡片主视觉给「完整的标签」——按出图顺序把每个标签与池子逐条铺开，
            提示词正文不进卡片（又长又没辨识度），只留条数。 -->
       <div v-if="presetCtr.open" class="pc-overlay" @click.self="closePresetCenter">
         <div class="pc-panel" :style="{ width: presetCtr.w + 'vw', height: presetCtr.h + 'vh' }">
           <div class="pc-head">
-            <span class="pc-title">🗂 预设中心
+            <span class="pc-title">🗂 预设
               <span class="pc-num">{{ presetCtr.list.length }}</span>
             </span>
             <div class="pc-head-r">
               <input v-model="presetCtr.q" class="pc-search" placeholder="搜预设名 / 标签 / 池名" spellcheck="false">
-              <button class="btn" style="padding:4px 10px;font-size:12px;" @click="refreshPresetList"
+              <button class="btn" @click="refreshPresetList"
                       :disabled="presetCtr.loading" data-tip="重新读取预设列表">↻</button>
               <button class="btn icon-btn" @click="closePresetCenter" data-tip="关闭">✕</button>
             </div>
@@ -915,30 +948,31 @@ export default {
                 <!-- 计数按「标签 + 池子」合计：池子在用户语境里本身就是一枚标签，不该被漏掉 -->
                 <span class="pc-items">{{ (p.flow || []).length }} 标签</span>
               </div>
-              <!-- 完整标签 + 池子，按出图顺序铺开；标签（灰）与池（橙/紫）同层并列 -->
               <div class="pc-tags">
-                <!-- 普通标签按词库「标签颜色」规则取色（wordbank 区域），池子标签保留 🎲/♾️ 专属配色 -->
-                <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
-                      :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'"
-                      :style="it.t === 'pool' ? null : chipStyle(it.label)">
-                  <span v-if="it.t === 'pool'" class="pc-tag-badge">{{ it.mode === 'traverse' ? '♾️' : '🎲' }}</span>
-                  <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
-                  <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
-                        class="pc-tag-chance">{{ it.chance }}%</span>
-                  <span v-if="it.lock" class="pc-tag-lock">🔒</span>
-                </span>
-                <span v-if="!p.flow || !p.flow.length" class="pc-tag-none">空预设</span>
+                <!-- 标签（灰）与池（橙/紫）同层并列，按出图顺序铺开；普通标签按词库「标签颜色」规则取色，池子标签保留 🎲/♾️ 专属配色 -->
+                  <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
+                        :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'"
+                        :style="it.t === 'pool' ? null : chipStyle(it.label)">
+                    <span v-if="it.t === 'pool'" class="pc-tag-badge">{{ it.mode === 'traverse' ? '♾️' : '🎲' }}</span>
+                    <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
+                    <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
+                          class="pc-tag-chance">{{ it.chance }}%</span>
+                    <span v-if="it.lock" class="pc-tag-lock">🔒</span>
+                  </span>
+                  <span v-if="!p.flow || !p.flow.length" class="pc-tag-none">空预设</span>
               </div>
               <div class="pc-foot">
                 <span class="pc-sub">次数 {{ p.genCount }}{{ p.fillMode ? ' · ⏩ 填充' : '' }}</span>
                 <div class="pc-ops">
-                  <button class="btn primary" @click="applyPreset(p)"
+                  <button class="btn primary" @click="mergeAppendPreset(p)"
+                          data-tip="把这份预设整份凝结成一个标签接到已选末尾：已有标签一个不动，次数与填充也不改；标签名 = 预设名，里面的提示词（角色 + 体型等）照常参与生图">🧩 添加</button>
+                  <button class="btn" @click="applyPreset(p)"
                           data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">应用</button>
                   <button class="btn" @click="presetToGallery(p)"
                           :disabled="!presetGalleryTagIds(p).length"
                           :data-tip="presetGalleryTagIds(p).length
-                            ? ('按这份预设的 ' + presetGalleryTagIds(p).length + ' 个普通标签 id 跳图库筛选（池子只抽词，不参与筛选）')
-                            : '这份预设没有带 id 的普通标签（只有池子或空预设），跳不了图库'">跳图库</button>
+                            ? ('按这份预设的 ' + presetGalleryTagIds(p).length + ' 个普通标签 id 前往图库筛选（池子只抽词，不参与筛选）')
+                            : '这份预设没有带 id 的普通标签（只有池子或空预设），前往不了图库'">前往图库</button>
                   <button class="btn danger" @click="deletePreset(p)"
                           data-tip="删除这份预设（只删预设记录，词库里的标签一个不碰）">删除</button>
                 </div>
@@ -1290,6 +1324,8 @@ export default {
         }
         o.traverse = !!s.traverse;
         o.chance = s.traverse ? 100 : normalizeChance(s.chance);
+        // 合并标签的组标记：跟着槽位一起存档，刷新回来还是那一个标签
+        if (s._mg) { o._mg = s._mg; o._mgName = s._mgName || ''; }
         if (s.lock) o.lock = true;
         if (s.pin) o.pin = s.pin;
         if (s.picked) o.picked = s.picked;
@@ -1300,6 +1336,7 @@ export default {
         content: s.content || undefined, content_cn: s.content_cn || undefined,
         neg: s.neg || undefined, override: s.override || undefined,
         _vgKey: s._vgKey || undefined, _vgTitle: s._vgTitle || undefined,
+        _mg: s._mg || undefined, _mgName: s._mg ? (s._mgName || '') : undefined,
         chance: normalizeChance(s.chance), lock: !!s.lock,
       };
     });
@@ -1332,6 +1369,7 @@ export default {
           o.traverse = !!s.traverse;
           // 遍历池 ∞ 不吃参与率，读档一律拨回 100，免得存档里留个无意义的百分比误导人
           o.chance = o.traverse ? 100 : normalizeChance(s.chance);
+          if (s._mg) { o._mg = s._mg; o._mgName = s._mgName || ''; }
           if (s.lock) o.lock = true;
           if (s.pin) o.pin = s.pin;
           if (s.picked) o.picked = s.picked;
@@ -1346,9 +1384,9 @@ export default {
         if (!sTab || !sRel) continue;
         const card = (bankData.value[sTab] || []).find(c => c.relPath === sRel);
         if (card) {
-          out.push({ t: 'item', tab: sTab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+          out.push({ t: 'item', tab: sTab, relPath: card.relPath, id: card.id || '', name: card.name, content: card.content, content_cn: card.content_cn, neg: card.neg || '', override: card.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', _mg: s._mg || '', _mgName: s._mgName || '', chance: normalizeChance(s.chance), lock: !!s.lock });
         } else {
-          out.push({ t: 'item', tab: sTab, relPath: sRel, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', chance: normalizeChance(s.chance), lock: !!s.lock });
+          out.push({ t: 'item', tab: sTab, relPath: sRel, id: s.id || '', name: s.name || '', content: s.content || '', content_cn: s.content_cn || '', neg: s.neg || '', override: s.override || '', _vgKey: s._vgKey || '', _vgTitle: s._vgTitle || '', _mg: s._mg || '', _mgName: s._mgName || '', chance: normalizeChance(s.chance), lock: !!s.lock });
         }
       }
       return out;
@@ -2765,18 +2803,19 @@ export default {
       const g = vgRealMap.value[s];
       return (g && g.title) || '';
     };
-    // 卡片标题用名 = 这一版自己的完整名：库里只存短名，显示时补上组名，
-    // 让卡片脱离左栏/词库单独看（复制、截图、拖到别的分类）也读得懂是谁。
-    //   组名「刘海」+ 短名「单眼」 → 「单眼刘海」
-    //   短名本身就是「默认」或是组名本身 → 只显示组名（它本来就是完整名）
-    //   短名里已经带了组名 → 原样显示，避免「刘海刘海」
+    // 卡片标题用名 = 这一版自己的名字：库里只存短名，显示时也只放短名。
+    // 组名不再粘到分支名后面（否则组名「叉腰站姿」+ 分支「叉腰摸脸站姿」会拼成一串假词），
+    // 组名由卡片上方的分支身份牌（cardGroupBadge）承担，标题保持干净可读。
+    //   短名是「默认」/空/等于组名 → 显示组名（组头那一版本来就是组名）
+    //   其余一律原样显示短名
     const vgFullName = (name, group) => {
       const g = String(group || '').trim();
       const short = vgShortName(name, g).trim();
       if (!g) return short;
       if (!short || short === '默认' || short === g) return g;
-      if (short.includes(g)) return short;
-      return short + g;
+      // 只放这一版自己的名字：组名已作为卡片上方的身份牌显示，粘到后面会拼出
+      // 「叉腰摸脸站姿叉腰站姿」这种假词，读起来像词条名被写坏了。
+      return short;
     };
     // 这条词所在分支组的组名：三种来源依次兜底，保证任何出口都能拼出完整名
     //   1. 卡片/已选项上带的 _vgTitle（跨 tab、存档恢复、随机池都随项传递）
@@ -4106,7 +4145,8 @@ const submitAddTab = async () => {
 
     const vgJoin = reactive({ open: false, name: '', suggest: '', parentName: '', busy: false, items: [] });
     // 分支名：只留短名那段；老库里残留的「旧组#名」前缀在这里现剥，避免拼出「新组#旧组#分支」套娃
-    const vgJoinTail = (f) => vgShortName((f && f.name) || '').trim();
+    // 注意必须把这张卡当前所属组名传进去，vgShortName 只认「组名#」这个显式前缀才动刀
+    const vgJoinTail = (f) => vgShortName((f && f.name) || '', vgTitleFor(f)).trim();
 
     const vgJoinPreview = computed(() => {
       const nm = (vgJoin.name || '').trim();
@@ -4862,7 +4902,7 @@ const submitAddTab = async () => {
       data.slots.splice(idx, 1);
       zhuleLog('removeSelected: 删除槽', s.t, s.t === 'pool' ? (s.display || s.tab) : s.name, 'idx=', idx, 'slots=', selSummary());
     };
-    // ============ 保存预设 / 预设中心：把「已选」整套存成可复用预设 ============
+    // ============ 保存预设 / 预设：把「已选」整套存成可复用预设 ============
     // 落库走 preset 表，payload = { slots, genCount, fillMode } 是黑盒：后端只把它原样存回，
     // 语义完全靠 serializeSlots / rebuildSlots 两端对齐（顺带把「池子与提示词同数组」的顺序一起带走）。
     const presetDlg = reactive({ open: false, name: '', saving: false });
@@ -4871,7 +4911,7 @@ const submitAddTab = async () => {
       w: 72, h: 64,                  // 面板尺寸（vw / vh），右下握把可拖，尺寸持久化
     });
 
-    // 预设中心尺寸：默认 72vw × 64vh，拖完记住；窗口缩放时按 vw/vh 等比，跟设置面板一个思路
+    // 预设弹层尺寸：默认 72vw × 64vh，拖完记住；窗口缩放时按 vw/vh 等比，跟设置面板一个思路
     const PC_SIZE_KEY = 'zhule_preset_size';
     const PC_W_MIN = 40, PC_W_MAX = 96, PC_H_MIN = 32, PC_H_MAX = 92;
     (() => {
@@ -4942,7 +4982,7 @@ const submitAddTab = async () => {
       return hit ? hit.name : '';
     });
 
-    // 预设中心列表：只带卡片摘要（完整标签 + 池子 + 条数），不带整份 payload
+    // 预设列表：只带卡片摘要（完整标签 + 池子 + 条数），不带整份 payload
     const refreshPresetList = async () => {
       presetCtr.loading = true;
       try {
@@ -4988,7 +5028,7 @@ const submitAddTab = async () => {
       presetDlg.open = true;
       refreshPresetList();   // 顺带把同名检测所需的现有名单取回
     };
-    // 预设中心里不再提供「把当前已选存成新预设」的入口：保存只走工具栏的 💾 保存，
+    // 预设里不再提供「把当前已选存成新预设」的入口：保存只走工具栏的 💾 保存，
     // 中心只负责「应用 / 改名 / 删除」三件事，入口单一才不会两边打架。
     const closePresetDlg = () => { presetDlg.open = false; };
 
@@ -5026,22 +5066,126 @@ const submitAddTab = async () => {
       }
     };
 
+    // 拉一份预设并还原成可用 slots：定位由后端按词条 id 解析（tab / relPath / 正文一并给到），
+    // 前端不拉全库、不按名反查。「替换」与「追加」共用这一段，两条链路只有落地方式不同。
+    const fetchPresetSlots = async (p) => {
+      const resp = await fetch('/zhule_studio/api/preset/get?pid=' + encodeURIComponent(p.id));
+      const json = await resp.json();
+      if (!resp.ok || json.error) throw new Error(json.error || '读取预设失败');
+      const payload = (json.preset && json.preset.payload) || {};
+      const rawSlots = Array.isArray(payload.slots) ? payload.slots : [];
+      return { payload, slots: rebuildSlots(rawSlots), missing: Number(json.missing) || 0 };
+    };
+
+    // 预设可能跨 tab：懒加载首屏只留当前 tab，其余 tab 的卡片不在本地，已选行会缺参考图/编号
+    // 这类展示信息（正文已由后端按词条 id 一并给到，出图不受影响）。这里按需补拉，backfillSelected 回填。
+    const ensureTabsForSlots = (slots) => {
+      const needTab = [];
+      (slots || []).forEach(s => {
+        if (!s || s.t !== 'item') return;
+        if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab) && !needTab.includes(s.tab)) needTab.push(s.tab);
+      });
+      // 跨 tab 合并成一条请求：涉及几个 tab 就只打一条
+      if (needTab.length) load(false, needTab);
+    };
+
+    // ---------- 合并标签：一份预设整份凝结成一个标签 ----------
+    // 「添加」不是替换：这份预设的槽位原样接到已选末尾（已有标签一个不动，次数与填充也不改），
+    // 只在前端给它们挂同一个组标记 _mg，渲染成一个以预设名命名的标签（样式跟池子一样自成一格）。
+    // 出图用的仍是这些槽位里的提示词（角色、体型等一条不少），抽词行为与逐个手动添加完全一致。
+    const mergeOpenMap = ref({});
+    const isMergeOpen = (gid) => !!mergeOpenMap.value[gid];
+    const toggleMergeOpen = (gid) => {
+      if (!gid) return;
+      const willOpen = !mergeOpenMap.value[gid];
+      mergeOpenMap.value = { ...mergeOpenMap.value, [gid]: willOpen };
+      // 点了要有回声：展开时明说「打开了什么、里面几项、生图照常」，收起不打扰
+      if (willOpen) {
+        const first = data.slots.find(s => s && s._mg === gid);
+        showToast('已展开「' + ((first && first._mgName) || '合并标签') + '」：'
+          + mergeSize(gid) + ' 项内部标签（只读，生图照常按它们出词）', 'success', 3000);
+      }
+    };
+    // 同组只在第一项出头，其余都算它的内部标签
+    const isMergeHead = (idx) => {
+      const it = data.slots[idx];
+      if (!it || !it._mg) return false;
+      return idx === 0 || !data.slots[idx - 1] || data.slots[idx - 1]._mg !== it._mg;
+    };
+    const isMergedChild = (idx) => {
+      const it = data.slots[idx];
+      if (!it || !it._mg) return false;
+      return idx > 0 && !!data.slots[idx - 1] && data.slots[idx - 1]._mg === it._mg;
+    };
+    const mergeSize = (gid) => data.slots.filter(s => s && s._mg === gid).length;
+    // 合并标签没有展开态了，内容全放进悬停提示：把里面的提示词名字按顺序列出来
+    const mergeTitle = (gid) => {
+      const first = data.slots.find(s => s && s._mg === gid);
+      const names = data.slots.filter(s => s && s._mg === gid).map(s => selDisplayName(s));
+      const head = '「' + ((first && first._mgName) || '合并标签') + '」= 一份预设整份合成的标签，共 ' + names.length + ' 项：';
+      const list = names.slice(0, 10).join('、') + (names.length > 10 ? ' 等' + names.length + ' 项' : '');
+      return head + list + '。'
+        + (isMergeOpen(gid) ? '（现在是展开态，点一下收起）' : '（点一下展开看内部标签）')
+        + ' 生图照常按这些提示词出词；拖动整组挪位置，× 整组一起删';
+    };
+    // 组跨度：合并标签是一个整体，拖动 / 落点 / 删除都按整组算；非组元素跨度就是它自己
+    const groupSpan = (idx) => {
+      const it = data.slots[idx];
+      if (!it || !it._mg) return { s: idx, e: idx, gid: '' };
+      let s = idx, e = idx;
+      while (s > 0 && data.slots[s - 1] && data.slots[s - 1]._mg === it._mg) s--;
+      while (e < data.slots.length - 1 && data.slots[e + 1] && data.slots[e + 1]._mg === it._mg) e++;
+      return { s, e, gid: it._mg };
+    };
+    // 已选计数：一个合并标签算一枚，内部标签不重复计
+    const selTagCount = computed(() => data.slots.filter((s, i) => !(s && s._mg) || isMergeHead(i)).length);
+    // 整组删除：合并标签是一个整体，× 删的就是整份
+    const removeMerged = (gid) => {
+      if (!gid) return;
+      const n = mergeSize(gid);
+      data.slots = data.slots.filter(s => !(s && s._mg === gid));
+      const m = { ...mergeOpenMap.value };
+      delete m[gid];
+      mergeOpenMap.value = m;
+      saveState();
+      zhuleLog('removeMerged', 'gid=', gid, 'removed=', n);
+      showToast('已删除这个合并标签（整份 ' + n + ' 项一起移除）', 'success', 2400);
+    };
+
+    // 添加（不覆盖）：整份预设接在已选末尾，并合成一个标签
+    const mergeAppendPreset = async (p) => {
+      if (!p) return;
+      try {
+        const { slots, missing } = await fetchPresetSlots(p);
+        if (!slots.length) {
+          showToast('这份预设里的标签在词库中已经找不到了，没有可添加的内容', 'warn', 3600);
+          return;
+        }
+        const nm = String(p.name || '').trim() || '预设';
+        // 组标记随槽位一起存档（_mg 同组 id、_mgName 预设名），刷新后合并标签还在
+        const gid = 'mg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        slots.forEach(s => { s._mg = gid; s._mgName = nm; });
+        const before = data.slots.length;
+        data.slots = data.slots.concat(slots);
+        saveState();
+        ensureTabsForSlots(slots);
+        zhuleLog('mergeAppendPreset', 'id=', p.id, 'name=', nm, 'gid=', gid,
+          'add=', slots.length, 'before=', before, 'after=', data.slots.length);
+        showToast('已添加「' + nm + '」：' + slots.length + ' 项提示词合成一个标签（『' + nm + '』）接到已选末尾'
+          + (missing ? '（另有 ' + missing + ' 项词条已不在词库，未添加）' : ''),
+          missing ? 'warn' : 'success', missing ? 4400 : 3600);
+        closePresetCenter();
+      } catch (e) {
+        showToast('添加失败：' + e.message, 'error');
+      }
+    };
+
     // 应用预设：payload.slots 走 rebuildSlots 还原（名字/正文按词库当前数据刷一遍）
     // 一次点击即替换当前「已选」，不再走二次确认（用户明确要求直接点一下就行）
     const applyPreset = async (p) => {
       if (!p) return;
       try {
-        const resp = await fetch('/zhule_studio/api/preset/get?pid=' + encodeURIComponent(p.id));
-        const json = await resp.json();
-        if (!resp.ok || json.error) {
-          showToast(json.error || '应用预设失败', 'error');
-          return;
-        }
-        const payload = (json.preset && json.preset.payload) || {};
-        const rawSlots = Array.isArray(payload.slots) ? payload.slots : [];
-        // 定位已由后端按词条 id 解析（tab / relPath / 正文一并给到），前端不再拉全库、不按名反查
-        const slots = rebuildSlots(rawSlots);
-        const missing = Number(json.missing) || 0;
+        const { payload, slots, missing } = await fetchPresetSlots(p);
         if (!slots.length) {
           showToast('这份预设里的标签在词库中已经找不到了，应用结果为空', 'warn', 3600);
           return;
@@ -5050,15 +5194,7 @@ const submitAddTab = async () => {
         pref.genCount = Math.max(0, Number(payload.genCount) || 0);
         data.fillMode = !!payload.fillMode;
         saveState();
-        // 预设可能跨 tab：懒加载首屏只留当前 tab，其余 tab 的卡片不在本地，已选行会缺参考图/编号
-        // 这类展示信息（正文已由后端按词条 id 一并给到，出图不受影响）。这里按需补拉，backfillSelected 回填。
-        const needTab = [];
-        slots.forEach(s => {
-          if (s.t !== 'item') return;
-          if (s.tab && !bankData.value[s.tab] && tabs.value.includes(s.tab) && !needTab.includes(s.tab)) needTab.push(s.tab);
-        });
-        // 跨 tab 合并成一条请求：预设里涉及几个 tab 就只打一条
-        if (needTab.length) load(false, needTab);
+        ensureTabsForSlots(slots);
         zhuleLog('applyPreset', 'id=', p.id, 'name=', p.name, 'slots=', slots.length, 'missing=', missing, 'genCount=', pref.genCount);
         showToast('已载入「' + (p.name || '') + '」：' + slots.length + ' 项 / 次数 ' + pref.genCount +
           (missing ? '（另有 ' + missing + ' 项的词条已不在词库，未载入）' : ''),
@@ -5102,7 +5238,7 @@ const submitAddTab = async () => {
     // 现在一律按设置里的「删除免确认」（zhule_ui_pref.common.noDeleteConfirm）：
     //   开 = 点一下就删（不弹框）；关 = 弹统一的确认框，确认后才删。
     // 只删预设记录，词库词条与图库图片一个都不碰。
-    // 预设中心「跳图库」：只取这份预设里的普通标签 id（池子整项跳过，池子是抽词来源、没有固定标签），
+    // 预设「前往图库」：只取这份预设里的普通标签 id（池子整项跳过，池子是抽词来源、没有固定标签），
     // 去重升序后一次带入图库筛选（服务端按 promptIds 精确匹配）；没有任何可用 id 就明确提示。
     const presetGalleryTagIds = (p) => toIdList(((p && p.flow) || [])
       .filter((it) => it && it.t !== 'pool')
@@ -5960,7 +6096,12 @@ const submitAddTab = async () => {
         document.body.classList.add('zhule-dragging');
         const ghost = document.createElement('div');
         ghost.className = 'drag-ghost';
-        ghost.textContent = selDisplayName(p.item);
+        // 拖合并标签时 ghost 显示预设名 + 整组条数，一眼知道搬的是一整块
+        const _gi = p.sourceType === 'tag' ? groupSpan(p.sourceIdx) : null;
+        const _gh = _gi && _gi.gid ? data.slots[_gi.s] : null;
+        ghost.textContent = _gh
+          ? ((_gh._mgName || '合并标签') + '（整组 ' + (_gi.e - _gi.s + 1) + '）')
+          : selDisplayName(p.item);
         document.body.appendChild(ghost);
         pDrag.ghostEl = ghost;
       }
@@ -6056,13 +6197,15 @@ const submitAddTab = async () => {
         const rect = tag.getBoundingClientRect();
         const isLeft = (x - rect.left) < rect.width / 2;
         if (p.sourceType === 'tag') {
-          const fromIdx = p.sourceIdx;
-          if (fromIdx === idx) return;
-          const [moved] = data.slots.splice(fromIdx, 1);
-          let t;
-          if (isLeft) t = fromIdx < idx ? idx - 1 : idx;
-          else t = fromIdx < idx ? idx : idx + 1;
-          data.slots.splice(t, 0, moved);
+          // 合并标签整组搬：拖它里面任何一枚，动的都是整块，绝不把组拆散
+          const src = groupSpan(p.sourceIdx);
+          const dst = groupSpan(idx);
+          if (dst.s <= src.s && src.e <= dst.e) return; // 落在自己身上，不动
+          // 落点以「整组」为单位：落在左侧＝插到这组前面，落在右侧＝插到这组后面
+          let insertAt = isLeft ? dst.s : dst.e + 1;
+          const block = data.slots.splice(src.s, src.e - src.s + 1);
+          if (src.s < insertAt) insertAt -= block.length;
+          data.slots.splice(insertAt, 0, ...block);
         } else {
           const item = { t: 'item', tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           const existIdx = data.slots.findIndex(s => sameCard(s, item));
@@ -6079,8 +6222,9 @@ const submitAddTab = async () => {
 
       if (selList) {
         if (p.sourceType === 'tag') {
-          const [moved] = data.slots.splice(p.sourceIdx, 1);
-          data.slots.push(moved);
+          const src = groupSpan(p.sourceIdx);
+          const block = data.slots.splice(src.s, src.e - src.s + 1);
+          data.slots.push(...block);
         } else {
           const item = { t: 'item', tab: p.item.tab, relPath: p.item.relPath, id: p.item.id || '', name: p.item.name, content: p.item.content, content_cn: p.item.content_cn, neg: p.item.neg || '', override: p.item.override || '', anc: p.item.anc || [], _vgKey: p.item._vgKey || '', _vgTitle: p.item._vgTitle || '' };
           if (data.slots.some(s => sameCard(s, item))) return;
@@ -6296,7 +6440,7 @@ const submitAddTab = async () => {
       window.removeEventListener('paste', onUploadRefPaste);
       window.removeEventListener('dragover', preventDropDefault);
       window.removeEventListener('drop', preventDropDefault);
-      // 预设中心拖尺寸中途切走页面时，别把全局 mousemove / mouseup 留在 document 上
+      // 预设拖尺寸中途切走页面时，别把全局 mousemove / mouseup 留在 document 上
       document.removeEventListener('mousemove', onPresetResizeMove);
       document.removeEventListener('mouseup', onPresetResizeUp);
     });
@@ -6366,7 +6510,8 @@ const submitAddTab = async () => {
       removeSelected, clearAll, singleRandom, runGenerate, toggleFillMode,
       presetDlg, presetSummary, openPresetDlg, closePresetDlg, submitPresetSave, presetDupName,
       presetCtr, presetFiltered, openPresetCenter, closePresetCenter, refreshPresetList,
-      applyPreset, presetToGallery, presetGalleryTagIds, deletePreset,
+      applyPreset, mergeAppendPreset, presetToGallery, presetGalleryTagIds, deletePreset,
+      isMergeHead, isMergedChild, isMergeOpen, toggleMergeOpen, mergeSize, mergeTitle, removeMerged, selTagCount,
       startPresetRename, cancelPresetRename, commitPresetRename, startPresetResize,
       onTabDragStart, onTabDragOver, onTabDrop, onTabDragEnd,
       tabLabel,

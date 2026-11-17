@@ -2352,6 +2352,162 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 /* 卡片按钮都不许被 flex 压扁：早先「删」被挤成半个字，就是缺 nowrap + flex-shrink:0 */
 .pc-ops .btn { padding: 3px 9px; font-size: 11.5px; white-space: nowrap; flex: 0 0 auto; }
 
+/* ===================== 预设中心 · 视觉升级 + 凝结聚合 ===================== */
+/* 面板：冷色渐变底 + 内高光，把面板从卡片底色里拎出来（原来是一块平色，边界发闷） */
+.pc-panel {
+  background: linear-gradient(180deg, #161e2a 0%, #131822 100%);
+  border-color: #2f3f56;
+  box-shadow: 0 30px 72px -26px rgba(0, 0, 0, 0.94),
+              inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+.pc-overlay { backdrop-filter: blur(3px); }
+.pc-head { background: linear-gradient(to bottom, #1c2534, #161d28); border-bottom-color: #27364a; }
+.pc-title { letter-spacing: 0.2px; }
+
+/* ===================== 预设 · 界面打磨 =====================
+   原则：不加花活、不动结构，只补层次——面板与卡片各给一层渐变和高光，
+   把「在哪一层」表达清楚；标签、按钮、条数统一成同一套圆角与字号。 */
+
+/* 面板：底面往下沉一层，顶沿一道细高光，圆角收一点 */
+.pc-panel {
+  border-radius: 14px;
+  border-color: #2f3f56;
+  background: linear-gradient(180deg, #18212e 0%, #141a24 62%, #12171f 100%);
+  box-shadow: 0 32px 76px -28px rgba(0, 0, 0, 0.95),
+              0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+              inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.pc-panel::before {
+  content: ''; position: absolute; left: 14%; right: 14%; top: 0; height: 1px;
+  z-index: 9; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(110, 170, 255, 0.55), transparent);
+}
+
+/* 标题条：标题左边一道主题色竖条，条数做成实心小药丸 */
+.pc-head {
+  padding: 12px 16px; gap: 10px;
+  border-bottom-color: #253345;
+  background: linear-gradient(180deg, #1d2736, #171f2b);
+}
+.pc-title { font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; }
+.pc-title::before {
+  content: ''; width: 3px; height: 14px; border-radius: 2px;
+  background: linear-gradient(180deg, #6aa8ff, #4f8cff 60%, #7b6cff);
+  box-shadow: 0 0 8px rgba(79, 140, 255, 0.45);
+}
+.pc-num {
+  margin-left: 0; padding: 1px 7px; font-size: 10.5px; font-weight: 600;
+  color: #cfe1ff; background: rgba(79, 143, 247, 0.16);
+  border-color: rgba(79, 143, 247, 0.42);
+}
+/* 搜索框：更柔和的内底 + 聚焦时一圈淡光，不再只是描边变色 */
+.pc-search {
+  width: 220px; padding: 6px 10px; border-radius: 8px;
+  background: #0f141c; border-color: #2c3a4e;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.pc-search:focus { background: #0d1219; box-shadow: 0 0 0 3px rgba(79, 143, 247, 0.13); }
+/* 弹层内按钮统一一套规格：头部 ↺ / ✕、卡片「🧩 添加 / 应用 / 删除」、底部按钮同圆角同字号，
+   不再出现「只有第一个和最后一个好看」的情况 */
+.pc-panel .btn { border-radius: 7px; font-size: 11.5px; padding: 4px 10px; }
+.pc-panel .btn.icon-btn { padding: 4px 8px; font-size: 13px; line-height: 1; }
+/* 头部的刷新 / 关闭是次要动作：平时只描边不上底，悬停才亮，不跟卡片里的主按钮抢视线 */
+.pc-head-r .btn { background: transparent; border-color: #2c3a4e; color: var(--text-3); }
+.pc-head-r .btn:hover {
+  background: rgba(79, 143, 247, 0.13); border-color: rgba(79, 143, 247, 0.5); color: #cfe1ff;
+}
+
+/* 网格：间距放松一点，滚动条与主界面统一 */
+.pc-grid { gap: 13px; padding: 16px; }
+.pc-grid::-webkit-scrollbar { width: 8px; }
+.pc-grid::-webkit-scrollbar-track { background: transparent; }
+.pc-grid::-webkit-scrollbar-thumb { background: #2f3f56; border-radius: 4px; }
+.pc-grid::-webkit-scrollbar-thumb:hover { background: #3d5170; }
+
+/* 卡片：上亮下暗的渐变底 + 顶沿一道淡高光；悬停微抬、主题色描边、柔影 */
+.pc-card {
+  position: relative; border-radius: 12px; height: 250px;
+  background: linear-gradient(180deg, #1a2431 0%, #161d28 58%, #151b25 100%);
+  border-color: #2b394c;
+  transition: border-color 0.16s, transform 0.16s, box-shadow 0.16s;
+}
+.pc-card::before {
+  content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(120, 170, 255, 0.34), transparent);
+  opacity: 0.7; pointer-events: none;
+}
+.pc-card:hover {
+  border-color: rgba(79, 143, 247, 0.55);
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px -22px rgba(0, 0, 0, 0.92),
+              0 0 0 1px rgba(79, 143, 247, 0.14) inset;
+}
+
+/* 卡片头：名字略放大，条数做成小胶囊 chip */
+.pc-card-head { padding: 12px 14px 0; }
+.pc-name { font-size: 13.5px; }
+.pc-items {
+  font-size: 10.5px; color: #9fb0c6; padding: 1px 7px;
+  border: 1px solid #2c3a4e; border-radius: 999px; background: rgba(255, 255, 255, 0.03);
+}
+
+/* 标签区与标签本身：跟已选区那排标签同款（7px 圆角），一排扫过去不打架 */
+.pc-tags { padding: 0 14px; }
+.pc-tag { padding: 3px 8px; border-radius: 7px; font-size: 11.5px; line-height: 1.35; }
+.pc-tag-label { font-weight: 600; }
+
+/* 底部操作区：分隔线更淡，按钮尺寸统一、圆角与搜索框对齐 */
+.pc-foot { margin: 0 14px 12px; padding-top: 9px; border-top-color: rgba(255, 255, 255, 0.055); }
+.pc-ops .btn { padding: 4px 10px; font-size: 11.5px; border-radius: 7px; }
+.pc-ops .btn.primary { box-shadow: 0 2px 10px -5px rgba(79, 143, 247, 0.8); }
+
+/* 空态：给个淡图标，不要只有一行灰字 */
+.pc-empty { padding: 52px 24px; }
+.pc-empty::before {
+  content: '🗂'; display: block; font-size: 28px; line-height: 1;
+  opacity: 0.22; margin-bottom: 12px;
+}
+
+/* 拖拽握把悬停：改用主题色，和面板色调一致 */
+.pc-resizer-x:hover, .pc-resizer-y:hover, .pc-resizer-xy:hover { background: rgba(79, 143, 247, 0.14); }
+
+/* 合并标签：一份预设整份凝结成的一个标签。
+   形状完全走 .tag 基础样式（同样的 6px 圆角、同样的尺寸），只把颜色换成青绿，
+   和池子（橙/紫）一样属于「同一排标签里的另一个色号」，不做胶囊、不做浮夸描边。 */
+.selected-list .tag.is-merged {
+  background: rgba(45, 170, 148, 0.18);
+  border-color: rgba(90, 209, 192, 0.72);
+  color: #c8f4ec;
+  cursor: pointer;
+}
+.selected-list .tag.is-merged:hover {
+  background: rgba(45, 170, 148, 0.28);
+  border-color: #7fe6d4;
+}
+/* 展开态：稍微亮一档，让人知道「点了一下，它现在是开着的」 */
+.selected-list .tag.is-merged.is-open {
+  background: rgba(45, 170, 148, 0.32);
+  border-color: #7fe6d4;
+  box-shadow: inset 0 0 0 1px rgba(90, 209, 192, 0.3);
+}
+.tag.is-merged .mg-ico { font-size: 11px; opacity: 0.95; }
+.tag.is-merged .mg-name {
+  max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 条数小角标：跟标签字号贴合，不抢名字 */
+.tag.is-merged .mg-num {
+  flex: 0 0 auto; min-width: 15px; padding: 0 4px; text-align: center;
+  font-size: 10px; font-weight: 600; line-height: 14px;
+  color: #06231f; background: #7fe6d4; border-radius: 4px;
+}
+/* 展开后的内部标签：形状照旧是普通标签，虚线描边 + 左侧青线表明「我属于上面那个合并标签」；
+   仍然能拖——拖任意一枚都是整组一起挪，不能单独编辑/删除；没有 × */
+.selected-list .tag.is-merged-child {
+  cursor: grab; opacity: 0.9;
+  border-style: dashed;
+  border-left: 2px solid rgba(90, 209, 192, 0.62);
+}
+
 /* 编辑分类弹层里的负向 / 排除字段，与词条弹层同一套配色 */
 .edit-dialog .field.neg > label,
 .edit-dialog .field.neg .field-head > label { color: #ffb3b3; }

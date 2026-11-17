@@ -1156,17 +1156,16 @@ async def post_wordbank_sort_save(request):
 # 只做一件事：把 slots 里的「池标签」摘出来给预设中心的卡片当主视觉——
 # 卡片要立刻能认出「这套方案挂了哪些池」，总不能为了列表去反序列化整棵词库树。
 
-def _preset_card_brief(payload):
-    """从 payload.slots 摘卡片摘要：标签与池子按出图顺序铺开，只给名字不给提示词正文。
+def _preset_flow_of(slots):
+    """把 slots 铺成卡片目录：普通标签与池子同层并列，只给名字不给提示词正文。
 
     slots 顺序即方案顺序，所以 flow 就是「这套预设会长什么样」的目录；
     池项的 display / 标签项的 name 都是 serialize 时的快照，列表页无须回查词库节点。
+    聚合预设的成员块也走同一套铺法，口径只有一份。
     """
-    slots = payload.get("slots") if isinstance(payload, dict) else None
-    slots = slots if isinstance(slots, list) else []
     flow = []
     pools = []
-    for s in slots:
+    for s in (slots if isinstance(slots, list) else []):
         if not isinstance(s, dict):
             continue
         if s.get("t") == "pool":
@@ -1199,6 +1198,18 @@ def _preset_card_brief(payload):
                 "chance": int(s.get("chance") or 100),
                 "lock": bool(s.get("lock")),
             })
+    return flow, pools
+
+
+def _preset_card_brief(payload):
+    """从 payload.slots 摘卡片摘要：标签与池子按出图顺序铺开，只给名字不给提示词正文。
+
+    预设卡只负责「整份应用 / 整份添加」：卡片铺开的就是 slots 本身。添加时前端把整份
+    槽位接到已选末尾并合成一个以预设名命名的标签，靠的是槽位自带的 _mg/_mgName 标记，
+    不需要后端再拆一层成员快照。
+    """
+    slots = payload.get("slots") if isinstance(payload, dict) else None
+    flow, pools = _preset_flow_of(slots)
     return {
         # 标签总数：池子也算一枚标签（用户口径），所以直接按铺开的 flow 计，不再只数提示词
         "items": len(flow),
