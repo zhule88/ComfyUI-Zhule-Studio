@@ -23,10 +23,10 @@ import shutil
 
 from aiohttp import web
 
-from ..common.paths import _get_output_dir
+from ...common.paths import _get_output_dir
 from . import db  # zhule.db 数据层（词库/图库读写统一走 SQLite）
 
-STUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
+STUDIO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.abspath(os.path.join(STUDIO_DIR, "web"))
 
 # 词库根：随代码走，位于 modules/studio/prompt/

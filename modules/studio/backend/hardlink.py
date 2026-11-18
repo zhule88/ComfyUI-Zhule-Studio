@@ -9,9 +9,9 @@ import subprocess
 
 from aiohttp import web
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+_STUDIO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 注册 / 卸载脚本位置（_probe 与 _run_ps 都要用）
-PS1_PATH = os.path.join(_HERE, 'tools', 'win_hardlink', 'menu_install.ps1')
+PS1_PATH = os.path.join(_STUDIO_DIR, 'tools', 'win_hardlink', 'menu_install.ps1')
 # 只做硬链接：「粘贴为副本」与资源管理器自带 Ctrl+V 完全等价，已取消
 MENU_ITEMS = [
     'ZhuleHardlinkPaste',

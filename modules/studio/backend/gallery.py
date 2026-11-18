@@ -41,9 +41,9 @@ from aiohttp import web
 from . import db
 from . import png_text
 from .api import _path_sort_key, _node_raw_name
-from ..common.paths import _get_output_dir
+from ...common.paths import _get_output_dir
 
-GALLERY_DIR = os.path.dirname(os.path.abspath(__file__))
+GALLERY_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 图库索引已迁移 SQLite（zhule.db gallery_image / gallery_tag 表），不再读写 cache/gallery_index.json。
 # 自定义标签字典+分组也已迁入 zhule.db custom_tag 表，不再读写 gallery/meta.json。
 STUDIO_SUBDIR = "zhule_studio"  # output 下统一收纳目录：zhule_img / zhule_thumbs / zhule_link / zhule_reference
@@ -255,7 +255,7 @@ def _extract_positive_prompt(pt):
                 slugs = _json_list(ref_inputs.get("_selected"), "_selected")
                 tags = []
                 try:
-                    from ..artist_picker.node import _load_slug_to_tag
+                    from ...artist_picker.node import _load_slug_to_tag
                     mapping = _load_slug_to_tag()
                     for s in slugs:
                         tags.append(mapping.get(s, "@" + s))

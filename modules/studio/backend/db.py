@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 
-_STUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
+_STUDIO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 全插件唯一数据源：词库 prompt / 图库 gallery_image+gallery_tag / 自定义标签 custom_tag 同库。
 # 落位 modules/studio/zhule.db（随插件走，勿移出插件目录，否则重装即丢数据）。
 DB_PATH = os.path.join(_STUDIO_DIR, "zhule.db")

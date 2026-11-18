@@ -1,5 +1,5 @@
 """Zhule Studio 路由注册：词库 API + 图库 API + Studio 页面静态服务。"""
-from ..common.routes import get_prompt_routes
+from ...common.routes import get_prompt_routes
 from . import api
 from . import gallery
 from . import hardlink
