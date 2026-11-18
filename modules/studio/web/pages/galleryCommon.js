@@ -228,21 +228,21 @@ export const CardCtxMenu = {
     <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
       <div class="ctx-menu" :style="{ left: state.x + 'px', top: state.y + 'px' }" @pointerdown.stop>
         <div class="ctx-title">{{ state.title }}</div>
-        <button type="button" class="ctx-item" @click="onSel">{{ state.picked ? '✓ 取消选中' : '✓ 选中这张图' }}</button>
-        <button type="button" class="ctx-item" @click="onZoom">🔍 放大预览</button>
+        <button type="button" class="ctx-item" @click="onSel"><span class="ico" aria-hidden="true">✅</span>{{ state.picked ? '取消选中' : '选中这张图' }}</button>
+        <button type="button" class="ctx-item" @click="onZoom"><span class="ico" aria-hidden="true">🔍</span> 放大预览</button>
         <!-- 不再重复放「进入详情」：左键点卡片即可进详情 -->
         <!-- 系统右键菜单未注册时整块（分隔线 + 复制硬链接）都不渲染，避免复制了无处可粘 -->
         <template v-if="linkMenuReady">
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" style="white-space:nowrap" data-tip="复制这张图原文件的硬链接源：到目标文件夹空白处右键「Zhule 粘贴为硬链接」即可零拷贝落地（直接 Ctrl+V 会变成普通副本）"
-                  @click="onCopyLink">🔗 {{ state.picked && state.selCount > 1 ? ('复制选中的 ' + state.selCount + ' 张硬链接') : '复制图片硬链接' }}</button>
+                  @click="onCopyLink"><span class="ico" aria-hidden="true">🔗</span> {{ state.picked && state.selCount > 1 ? ('复制选中的 ' + state.selCount + ' 张硬链接') : '复制图片硬链接' }}</button>
         </template>
         <div class="ctx-sep"></div>
         <!-- 下载：图标之外的第二个入口，多选时整批下载（右键 = 下载 + 删除，不必再去找图标） -->
         <button type="button" class="ctx-item" @click="onDownload">⬇ {{ state.picked && state.selCount > 1 ? ('导出选中的 ' + state.selCount + ' 张') : '导出图片' }}</button>
         <!-- 多选时只保留「删除选中的 N 张」，「删除这张图」隐去，避免误删当前这一张之外的语义混乱 -->
-        <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel">🗑 删除这张图</button>
-        <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel">🗑 删除选中的 {{ state.selCount }} 张</button>
+        <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel"><span class="ico" aria-hidden="true">🗑️</span> 删除这张图</button>
+        <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel"><span class="ico" aria-hidden="true">🗑️</span> 删除选中的 {{ state.selCount }} 张</button>
       </div>
     </div>
   `,
@@ -267,14 +267,14 @@ const DetailTagNode = {
   template: `
     <div class="zhg-dtag-wrap" :class="{ open: expanded }">
       <span v-if="node.isGroup && !node.tag" class="zhg-dtag-group" @click.stop="expanded = !expanded">
-        {{ node.name }}<span class="zhg-dtag-arrow">{{ expanded ? '▾' : '▸' }}</span>
+        {{ node.name }}<span class="zhg-dtag-arrow"><svg class="ico zhg-caret" :class="{ down: expanded }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
       </span>
       <span v-else class="zhg-tag hl-custom" :class="[themeCls]"
             :style="node.style || {}"
             :data-tip="'自定义标签，左键编辑词条，右键删除（遵循删除确认设置）'"
             @click.stop="emit('edit', node.tag)" @contextmenu.prevent="emit('delete', node.tag)">
         {{ node.name }}
-        <span v-if="hasKids()" class="zhg-dtag-arrow" @click.stop="expanded = !expanded">{{ expanded ? '▾' : '▸' }}</span>
+        <span v-if="hasKids()" class="zhg-dtag-arrow" @click.stop="expanded = !expanded"><svg class="ico zhg-caret" :class="{ down: expanded }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
       </span>
       <div class="zhg-dtag-kids" v-if="expanded" :style="{ marginLeft: (depth + 1) * 12 + 'px' }">
         <detail-tag-node v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" :theme-cls="themeCls"
@@ -336,6 +336,7 @@ const DEFAULT_PREF = {
 
 // 标签树瘦身：只保留选择器需要的字段（名字/完整路径/图数/子节点）
 // 「整类可选」的判定就靠 children 是否为空：有子节点 = 分类节点
+// id 一并带上：自定义标签的判重/删除都按 id 走，重名叶子（'测试/喜欢' vs '喜欢'）才不互相误伤
 export function normalizeTree(ns) {
   if (!Array.isArray(ns)) return [];
   return ns.map((n) => ({
@@ -940,7 +941,8 @@ export function useGalleryCommon(opts = {}) {
     if (force && (now - tagTreeFetchTs) < 1200) return;
     tagTreeFetchTs = now;
     try {
-      const r = await fetch('/zhule_studio/api/gallery/tagtree', { headers: { 'Cache-Control': 'no-cache' } });
+      const r = await fetch('/zhule_studio/api/gallery/tagtree' + (force ? '?t=' + Date.now() : ''),
+        { headers: { 'Cache-Control': 'no-cache' } });
       const d = await r.json();
       if (Array.isArray(d.tree)) {
         const map = {};
@@ -1481,11 +1483,11 @@ export function useGalleryCommon(opts = {}) {
       fullViewer = createFullViewerFn({
         tip: '',
         actions: [
-          { label: '‹', tip: '上一张（当前命中池）', size: 'lg', onClick: () => fullNav(-1) },
-          { label: '🎲', tip: '随机一张（当前命中池）', dice: true, onClick: fullRandom },
-          { label: '›', tip: '下一张（当前命中池）', size: 'lg', onClick: () => fullNav(1) },
+          { icon: 'chevron-left', tip: '上一张（当前命中池）', size: 'lg', onClick: () => fullNav(-1) },
+          { icon: 'dice-5', tip: '随机一张（当前命中池）', dice: true, onClick: fullRandom },
+          { icon: 'chevron-right', tip: '下一张（当前命中池）', size: 'lg', onClick: () => fullNav(1) },
           { sep: true },
-          { label: '🗑', tip: '删除当前图片及其库内关联数据', onClick: fullDelete },
+          { icon: 'trash', tip: '删除当前图片及其库内关联数据', onClick: fullDelete },
         ],
       });
     }
@@ -1732,6 +1734,8 @@ export function useGalleryCommon(opts = {}) {
   function startTagInput() {
     tagInputing.value = true;
     clearTimeout(tagBlurTimer);
+    // 输入框一出来就把「已有自定义标签」候选一起铺开：想手打就手打，想复用点一下就行
+    openTagPick();
     nextTick(() => {
       if (tagInputEl.value) tagInputEl.value.focus();
     });
@@ -1777,9 +1781,10 @@ export function useGalleryCommon(opts = {}) {
     tagInputing.value = false;
     closeTagPick();
   }
-  // 自定义标签名列表（唯一可增删部分；zhule_tags 已并入 zhule_custom_tags）。
-  // String 归一化：后端 JSON 若把纯数字自定义标签序列化为数值类型，统一转字符串比对，避免覆盖提示词标签。
-  function customTagNames() {
+  // 图上自定义标签的「完整路径」列表——tags 全量重写的口径。
+  // 后端按 / 拆段 find-or-create，只给叶子名会把层级标签（测试/喜欢）拍平成顶层新标签，
+  // 所以这里必须交完整路径（顶层标签 path == name，天然兼容）。
+  function customTagPaths() {
     return (detail.value.tags || [])
       .filter((t) => t && !t.prompt && (t.path || t.name != null))
       .map((t) => String(t.path || t.name));
@@ -1966,12 +1971,19 @@ export function useGalleryCommon(opts = {}) {
     const readonly = src.filter((t) => t && t.prompt);
     const seen = new Set(readonly.map((t) => (t.name != null ? String(t.name) : '')));
     const custom = [];
-    for (const n of customNames) {
-      const key = n != null ? String(n) : '';
-      if (!seen.has(key)) {
-        custom.push({ name: key, prompt: false, custom: true });
-        seen.add(key);
-      }
+    for (const p of customPaths) {
+      const full = String(p || '').trim().replace(/^\/+|\/+$/g, '');
+      if (!full) continue;
+      const leaf = leafName(full);
+      // 词条与自定义标签同名时保留词条那一条，避免详情里出现两个同名 chip
+      if (seen.has(leaf) || seen.has(full)) continue;
+      const node = tagNodeByRel(full);
+      custom.push({
+        name: leaf, path: full, id: (node && node.id) || '',
+        prompt: false, custom: true,
+      });
+      seen.add(leaf);
+      seen.add(full);
     }
     return [...readonly, ...custom];
   }
@@ -2210,10 +2222,16 @@ export function useGalleryCommon(opts = {}) {
           item.customTags = (d.tags || []).filter((t) => t && t.custom).map((t) => t.path || t.name);
         }
       }
-      // 新增标签（tags 全量重写）：卡片标签同步为写入值
+      // 新增标签（tags 全量重写）：卡片标签同步为写入值。
+      // 自定义标签要同时写进 customTags——cardTags 靠它把自定义项从提示词项里剔除，
+      // 只更新 tags 会让卡片把「测试/喜欢」这样的完整路径当成提示词标签显示出来
       if ('tags' in payload) {
         const item = items.value.find((x) => x.key === d.path);
-        if (item) item.tags = payload.tags;
+        if (item) {
+          const customPaths = (d.tags || []).filter((t) => t && t.custom).map((t) => t.path || t.name);
+          item.customTags = customPaths;
+          item.tags = (d.tags || []).filter((t) => t && t.prompt).map((t) => t.name).concat(customPaths);
+        }
       }
       await loadMeta();
     } catch (e) {
@@ -3076,7 +3094,7 @@ export const LinkDialog = {
       <div class="zhg-lkd">
         <div class="zhg-lkd-head">
           <span class="zhg-lkd-title">{{ mode === 'export' ? '标签失效，先修分层再导出' : '导出子文件夹 · 自定义分层' }}</span>
-          <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')">✕</button>
+          <button class="zhg-lkd-x" data-tip="关闭" @click="$emit('close')"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
         </div>
         <div class="zhg-lkd-body">
           <div class="zhg-lkd-lh">分层顺序（从上到下 = 由外到内，按住 ⠿ 拖动换顺序）</div>
@@ -3086,7 +3104,7 @@ export const LinkDialog = {
                  @dragover.prevent="onDragOver(i)" @dragleave="onDragLeave(i)"
                  @drop.prevent="onDrop(i)">
               <span class="zhg-lkd-grip" draggable="true" data-tip="按住拖动换顺序"
-                    @dragstart="onDragStart(i, $event)" @dragend="onDragEnd">⠿</span>
+                    @dragstart="onDragStart(i, $event)" @dragend="onDragEnd"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-grip-vertical"></use></svg></span>
               <span class="zhg-lkd-idx">{{ i + 1 }}</span>
               <button class="zhg-lkd-type" :class="{ tag: it.type === 'tag' }"
                       data-tip="点击切换：标签层跟着启用的过滤标签走 / 文字层就是固定目录名"
@@ -3095,12 +3113,12 @@ export const LinkDialog = {
                       data-tip="点击选标签或整类分类（整棵树一次铺开、可搜索）" @click="openPicker(i, $event)">
                 <span class="zhg-lkd-chip-nm">{{ it.value || '点这里选标签 / 整类…' }}</span>
                 <span v-if="it.cat" class="zhg-lkd-chip-tag">整类</span>
-                <span class="zhg-lkd-chip-cv">▾</span>
+                <span class="zhg-lkd-chip-cv"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
               </button>
               <input v-else class="zhg-lkd-input" v-model="it.value" spellcheck="false"
                      placeholder="固定目录名，如 出图">
               <span v-if="isBad(it)" class="zhg-lkd-bad">已失效</span>
-              <button class="zhg-lkd-del" data-tip="删除这一层" @click="removeLayer(i)">✕</button>
+              <button class="zhg-lkd-del" data-tip="删除这一层" @click="removeLayer(i)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
             </div>
             <div v-if="!draft.custom.length" class="zhg-lkd-empty">还没有层：点下面加一层，第一层就是最外层文件夹</div>
           </div>
@@ -3139,7 +3157,7 @@ export const LinkDialog = {
                @mouseenter="pk.hi = ni" @click="applyPick(n.node)">
             <button v-if="n.hasKids" class="fold" :class="{ closed: !n.open }"
                     data-tip="折叠 / 展开这个分类（只影响显示，不会选中）"
-                    @click.stop="toggleFold(n)">{{ n.open ? '▾' : '▸' }}</button>
+                    @click.stop="toggleFold(n)"><svg class="ico zhg-caret" :class="{ down: n.open }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></button>
             <span v-else class="ic">·</span>
             <span class="nm">
               <b>{{ n.name }}</b>

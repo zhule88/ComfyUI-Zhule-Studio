@@ -102,6 +102,13 @@ function ensureCss() {
  * @param {Function} [options.onClose] 关闭后的回调（可空）
  * @returns {{ open: Function, close: Function, isOpen: boolean }}
  */
+// 统一图标：引用页面内联的 Lucide sprite（#i-*）；无 sprite 时静默降级为空
+function fvIcon(name) {
+  return '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" '
+    + 'style="width:1em;height:1em;display:block"><use href="#i-' + name + '"></use></svg>';
+}
+
 export function createFullViewer(options = {}) {
   const tip = options.tip || '';
   const actions = Array.isArray(options.actions) ? options.actions : [];
@@ -125,7 +132,7 @@ export function createFullViewer(options = {}) {
 
   const closeBtn = document.createElement('div');
   closeBtn.className = 'zfv-close';
-  closeBtn.textContent = '✕';
+  closeBtn.innerHTML = fvIcon('x');
 
   const capEl = document.createElement('div');
   capEl.className = 'zfv-cap';
@@ -148,7 +155,7 @@ export function createFullViewer(options = {}) {
         return;
       }
       const btn = document.createElement('button');
-      btn.textContent = a.label || '';
+      if (a.icon) { btn.innerHTML = fvIcon(a.icon); } else { btn.textContent = a.label || ''; }
       const cls = [
         a.dice ? 'zfv-action-dice' : '',
         a.size === 'lg' ? 'zfv-action-lg' : (a.size === 'sm' ? 'zfv-action-sm' : ''),

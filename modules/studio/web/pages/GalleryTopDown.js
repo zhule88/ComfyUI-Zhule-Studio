@@ -12,10 +12,10 @@ export default {
       <input class="zhg-search" v-model="filters.q" placeholder="搜索文件名 / 模型 / 标签…" @keyup="onSearchKeyup">
       <div class="zhg-sort-box" data-tip="按时间排序">
         <button class="zhg-sort-arrow" @click="toggleSortDir"
-                :data-tip="filters.sortDir === 'desc' ? '按时间倒序（新→旧），点击切换升序' : '按时间正序（旧→新），点击切换降序'">{{ filters.sortDir === 'desc' ? '▾' : '▴' }}</button>
+                :data-tip="filters.sortDir === 'desc' ? '按时间倒序（新→旧），点击切换升序' : '按时间正序（旧→新），点击切换降序'"><svg class="ico zhg-caret" :class="{ down: filters.sortDir === 'desc', up: filters.sortDir !== 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></button>
       </div>
       <button class="btn zhg-trash-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
-              data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete">🗑</button>
+              data-tip="删除选中的图片（拖动框选或 Ctrl+点击 多选）" @click="askBatchDelete"><span class="ico" aria-hidden="true">🗑️</span></button>
       <button class="btn zhg-link-btn" :class="{on: selected.size > 0}" :disabled="!selected.size"
               :data-tip="'快捷导出选中的图片：硬链接给原图建分身入口，不复制图片数据、几乎不占额外空间'" @click="batchLink">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path></svg>
@@ -27,28 +27,28 @@ export default {
               @click="openLinkDialog('cfg')">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9z"></path></svg>
       </button>
-      <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters">{{ filtersOpen ? '▲ 收起筛选' : '▼ 展开筛选' }}</button>
-      <button class="btn zhg-dice-btn" data-tip="随机拼页：从当前筛选命中的图片中随机抽出一页覆盖当前页，页码不变" @click="randomPage">🎲</button>
+      <button class="btn zhg-filters-toggle" :class="{on: filtersOpen}" :data-tip="filtersOpen ? '收起整个筛选区' : '展开整个筛选区'" @click="toggleFilters"><svg class="ico zhg-caret" :class="{ up: filtersOpen }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>{{ filtersOpen ? '收起筛选' : '展开筛选' }}</button>
+      <button class="btn zhg-dice-btn" data-tip="随机拼页：从当前筛选命中的图片中随机抽出一页覆盖当前页，页码不变" @click="randomPage"><span class="ico" aria-hidden="true">🎲</span></button>
       <span class="zhg-sel-count" v-if="selected.size">已选 <b>{{ selected.size }}</b>
         <a class="zhg-sel-clear" @click="selected.clear()">清除</a></span>
       <span class="zhg-total">命中 <b>{{ total }}</b> / 共 <b>{{ meta.total }}</b> 张</span>
       <span class="zhg-page-ctl" data-tip="每页显示张数">
-        <span class="zhg-ctl-ico">☰</span>
-        <button class="zhg-pg-btn" @click="changePageSize(-10)" :disabled="pageSize <= 10" data-tip="每页减少10张">−</button>
+        <span class="zhg-ctl-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rows-3"></use></svg></span>
+        <button class="zhg-pg-btn" @click="changePageSize(-10)" :disabled="pageSize <= 10" data-tip="每页减少10张"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-minus"></use></svg></button>
         <b class="zhg-pg-val">{{ pageSize }}</b>
-        <button class="zhg-pg-btn" @click="changePageSize(10)" :disabled="pageSize >= 200" data-tip="每页增加10张">＋</button>
+        <button class="zhg-pg-btn" @click="changePageSize(10)" :disabled="pageSize >= 200" data-tip="每页增加10张"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg></button>
       </span>
       <span class="zhg-grid-ctl" data-tip="每行卡片数">
         <span class="zhg-ctl-ico">⊞</span>
-        <button class="zhg-pg-btn" @click="changeGridCols(-1)" :disabled="gridCols <= 2" data-tip="每行减少1张">−</button>
+        <button class="zhg-pg-btn" @click="changeGridCols(-1)" :disabled="gridCols <= 2" data-tip="每行减少1张"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-minus"></use></svg></button>
         <b class="zhg-pg-val">{{ gridCols }}</b>
-        <button class="zhg-pg-btn" @click="changeGridCols(1)" :disabled="gridCols >= 10" data-tip="每行增加1张">＋</button>
+        <button class="zhg-pg-btn" @click="changeGridCols(1)" :disabled="gridCols >= 10" data-tip="每行增加1张"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg></button>
       </span>
       <span class="zhg-pager" v-if="total > pageSize">
-        <button class="zhg-pg-btn" @click="goPage(page - 1)" :disabled="page <= 1" data-tip="上一页">◀</button>
+        <button class="zhg-pg-btn" @click="goPage(page - 1)" :disabled="page <= 1" data-tip="上一页"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
         <span class="zhg-pg-info" v-if="!pageEditing" :data-tip="'双击页码可直接输入跳转'" @dblclick="beginPageEdit">{{ page }} / {{ totalPages }}</span>
         <input v-else class="zhg-pg-input" v-model="pageEditVal" @keyup.enter="commitPageEdit" @keyup.esc="cancelPageEdit" @blur="commitPageEdit" @click.stop />
-        <button class="zhg-pg-btn" @click="goPage(page + 1)" :disabled="page >= totalPages" data-tip="下一页">▶</button>
+        <button class="zhg-pg-btn" @click="goPage(page + 1)" :disabled="page >= totalPages" data-tip="下一页"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
       </span>
       <span class="zhg-dirty" v-if="dirty">有新图片，索引已自动重建</span>
     </div>
@@ -68,7 +68,7 @@ export default {
             <input type="checkbox" :checked="filters.models.includes(m.name)" @change="toggleModel(m.name)">
             <span class="zhg-opt-name" :data-tip="m.name">{{ fmtModel(m.name) }}</span>
             <span class="zhg-opt-count">{{ m.count }}</span>
-            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名模型，同步所有关联图片" @click.stop.prevent="openRename('model', m.name)">⚙</button>
+            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名模型，同步所有关联图片" @click.stop.prevent="openRename('model', m.name)"><span class="ico" aria-hidden="true">⚙️</span></button>
           </label>
           <div class="zhg-none" v-if="!meta.models.length">暂无</div>
         </div>
@@ -85,7 +85,7 @@ export default {
             <input type="checkbox" :checked="filters.loras.includes(l.name)" @change="toggleLora(l.name)">
             <span class="zhg-opt-name" :data-tip="l.name">{{ l.name }}</span>
             <span class="zhg-opt-count">{{ l.count }}</span>
-            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名 LoRA，同步所有关联图片" @click.stop.prevent="openRename('lora', l.name)">⚙</button>
+            <button class="btn zhg-mini zhg-rename-btn" data-tip="重命名 LoRA，同步所有关联图片" @click.stop.prevent="openRename('lora', l.name)"><span class="ico" aria-hidden="true">⚙️</span></button>
           </label>
           <div class="zhg-none" v-if="!meta.loras.length">暂无</div>
         </div>
@@ -98,7 +98,7 @@ export default {
           <span class="zhg-block-title">标签 <span class="zhg-badge">{{ visibleTags.length }}</span></span>
           <button class="zhg-tag-mode-btn" :data-tip="'标签过滤模式：' + (filters.tagMode === 'and' ? '与（AND，满足全部已启用标签）' : '或（OR，满足任一已启用标签）') + '，点击切换'"
                   @click.stop="toggleTagMode()">{{ filters.tagMode === 'and' ? '与' : '或' }}</button>
-          <span class="zhg-tag-gear" data-tip="编辑标签" @click.stop="tagPanelOpen = true">⚙</span>
+          <span class="zhg-tag-gear" data-tip="编辑标签" @click.stop="tagPanelOpen = true"><span class="ico" aria-hidden="true">⚙️</span></span>
         </div>
         <div class="zhg-block-body">
           <!-- 外部过滤区：俄罗斯套娃包裹式展开；普通左键点击启用/禁用，Ctrl+左键隐藏（完全移除），普通右键展开/收起，Ctrl+右键展开还原（逐级收起）；

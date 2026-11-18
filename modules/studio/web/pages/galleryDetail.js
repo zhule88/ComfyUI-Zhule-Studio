@@ -334,25 +334,25 @@ export const GalleryDetailModal = {
       <div class="zhg-modal">
         <div class="zhg-modal-head">
           <span class="zhg-modal-title">{{ G.detail.name }}</span>
-          <button class="btn zhg-mini" @click="G.closeDetail">✕ 关闭</button>
+          <button class="btn zhg-mini" @click="G.closeDetail"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg> 关闭</button>
         </div>
         <div class="zhg-modal-body">
           <div class="zhg-modal-left">
             <div class="zhg-modal-imgwrap">
               <img class="zhg-modal-img" :src="G.imgUrl(G.detail.path, G.detail.mtime)" :alt="G.detail.name" @click="G.zoomView(G.imgUrl(G.detail.path, G.detail.mtime))">
               <div class="zhg-modal-nav" v-if="G.detail && showNav">
-                <button class="zhg-nav-btn zhg-nav-prev" @click.stop="G.detailNav(-1)" :data-tip="'上一张：在' + (G.poolTip || '当前命中池') + '内向前翻'">‹</button>
+                <button class="zhg-nav-btn zhg-nav-prev" @click.stop="G.detailNav(-1)" :data-tip="'上一张：在' + (G.poolTip || '当前命中池') + '内向前翻'"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
                 <div class="zhg-nav-mid">
-                  <button class="zhg-nav-btn zhg-nav-dice" @click.stop="G.detailNavRandom" :data-tip="'骰子：从' + (G.poolTip || '当前命中池') + '随机一张（共 ' + G.hitTotal + ' 张）'">🎲</button>
+                  <button class="zhg-nav-btn zhg-nav-dice" @click.stop="G.detailNavRandom" :data-tip="'骰子：从' + (G.poolTip || '当前命中池') + '随机一张（共 ' + G.hitTotal + ' 张）'"><span class="ico" aria-hidden="true">🎲</span></button>
                   <span class="zhg-nav-count" v-if="G.hitTotal">{{ G.detailPos > 0 ? G.detailPos : '—' }} / {{ G.hitTotal }}</span>
-                  <button class="zhg-nav-btn zhg-nav-del" :data-tip="G.deleteTip || '删除当前图片及其库内关联数据'" @click.stop="G.askDelete(G.detail)">🗑</button>
+                  <button class="zhg-nav-btn zhg-nav-del" :data-tip="G.deleteTip || '删除当前图片及其库内关联数据'" @click.stop="G.askDelete(G.detail)"><span class="ico" aria-hidden="true">🗑️</span></button>
                 </div>
-                <button class="zhg-nav-btn zhg-nav-next" @click.stop="G.detailNav(1)" :data-tip="'下一张：在' + (G.poolTip || '当前命中池') + '内向后翻'">›</button>
+                <button class="zhg-nav-btn zhg-nav-next" @click.stop="G.detailNav(1)" :data-tip="'下一张：在' + (G.poolTip || '当前命中池') + '内向后翻'"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
               </div>
             </div>
             <div class="zhg-modal-actions" v-if="showNav">
               <button class="btn primary" :disabled="!G.detail.hasWF" @click="G.useWorkflow(G.detail)" :data-tip="G.detail.hasWF ? '跳转 ComfyUI 并导入该图工作流' : '该图片没有保存 workflow 元数据'">
-                ⚡ 在 ComfyUI 中使用工作流
+                <span class="ico" aria-hidden="true">⚡</span> 在 ComfyUI 中使用工作流
               </button>
             </div>
           </div>
@@ -403,9 +403,9 @@ export const GalleryDetailModal = {
                 </div>
               </div>
               <div class="zhg-detail-tag-add" v-if="tagEdit">
-                <span class="zhg-tag-add" v-if="!G.tagInputing" @click="G.startTagInput">＋ 添加标签</span>
+                <span class="zhg-tag-add" v-if="!G.tagInputing" @click="G.startTagInput"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 添加标签</span>
                 <div class="zhg-new-row" v-else>
-                  <input class="zhg-input" v-model="G.quickTag" :ref="(el) => setEl('tagInputEl', el)" placeholder="输入标签后回车…"
+                  <input class="zhg-input" v-model="G.quickTag" :ref="(el) => setEl('tagInputEl', el)" placeholder="输入新标签回车，或从下方已有标签里点选…"
                          @keyup="G.onTagKeyup" @blur="G.onTagInputBlur">
                   <button class="btn zhg-mini" @click="G.quickCreateTag">确定</button>
                 </div>

@@ -137,7 +137,7 @@ const TagNode = {
           :data-tip="hasKids() ? '左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起' : '左键：放到外部过滤区'"
           @click="onLeft" @contextmenu.prevent="onCtx">
       {{ leafName(node.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf && countOf(node) != null">{{ countOf(node) }}</span>
-      <span class="zhg-ttp-arrow" v-if="hasKids()">▸</span>
+      <span class="zhg-ttp-arrow" v-if="hasKids()"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></span>
       <i class="zhg-ttp-more" v-if="canManage" data-tip="管理这个标签" @click.stop="onMore">⋯</i>
     </span>
     <div class="zhg-ttp-open" v-else :style="chipStyle()" @contextmenu.prevent="onCtx">
@@ -466,7 +466,7 @@ export default {
         <span class="zhg-ttp-title">标签层级</span>
         <span class="zhg-ttp-hint">左键：放到外部过滤区 / 右键：展开 / Ctrl+右键：收起</span>
         <span class="zhg-ttp-flash" v-if="toast">{{ toast }}</span>
-        <button class="zhg-ttp-close" data-tip="关闭" @click="close">✕</button>
+        <button class="zhg-ttp-close" data-tip="关闭" @click="close"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>
       <div class="zhg-ttp-body" v-if="!loading && !err">
         <div class="zhg-ttp-selected" v-if="visibleSelected.length">
@@ -474,7 +474,7 @@ export default {
           <span class="zhg-sel-tag zhg-out-tag" :class="[themeCls, { on: t.active, off: !t.active, hid: t.hidden }]"
                 :style="selTagStyle(t.name)"
                 v-for="t in visibleSelected" :key="tagKey(t)" @click="removeFilter(t)">
-            {{ leafName(t.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf(t) != null">{{ countOf(t) }}</span><span class="zhg-sel-tag-x">✕</span>
+            {{ leafName(t.name) }}<span class="zhg-ttp-count" v-if="showCount && countOf(t) != null">{{ countOf(t) }}</span><span class="zhg-sel-tag-x"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></span>
           </span>
           <a class="zhg-ttp-reset" @click="clearAll">清空</a>
         </div>
@@ -496,7 +496,7 @@ export default {
               <span class="zhg-ttp-zone-title">自定义标签</span>
               <span class="zhg-ttp-zone-badge">{{ csCount }}</span>
               <span class="zhg-ttp-zone-gap"></span>
-              <a class="zhg-ttp-add" data-tip="新建一个顶层自定义标签" @click="startCreate(null)">＋ 新建</a>
+              <a class="zhg-ttp-add" data-tip="新建一个顶层自定义标签" @click="startCreate(null)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建</a>
             </div>
             <div class="zhg-ttp-tree">
               <tag-node v-for="n in csTree" :key="n.rel" :node="n" :depth="0" :theme-cls="themeCls" :color-of="colorOf" :manage="true"
@@ -516,9 +516,9 @@ export default {
       <div class="zhg-ttp-menu" v-if="menu.open" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @mousedown.stop @contextmenu.prevent>
         <template v-if="!menu.confirm">
           <div class="zhg-ttp-menu-head">{{ leafName(menu.node && menu.node.name) }}</div>
-          <div class="zhg-ttp-menu-item" @click="startCreate(menu.node)">＋ 新建子标签</div>
-          <div class="zhg-ttp-menu-item" @click="startRename(menu.node)">✎ 重命名</div>
-          <div class="zhg-ttp-menu-item danger" @click="menu.confirm = true">🗑 删除</div>
+          <div class="zhg-ttp-menu-item" @click="startCreate(menu.node)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建子标签</div>
+          <div class="zhg-ttp-menu-item" @click="startRename(menu.node)"><span class="ico" aria-hidden="true">✏️</span> 重命名</div>
+          <div class="zhg-ttp-menu-item danger" @click="menu.confirm = true"><span class="ico" aria-hidden="true">🗑️</span> 删除</div>
         </template>
         <div class="zhg-ttp-menu-confirm" v-else>
           <div class="zhg-ttp-menu-warn">

@@ -121,20 +121,12 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .tab.in-pool.has-selected::before { color: var(--purple); }
 /* 池子类型徽章：♾️ 遍历池 = 紫色实线 + ♾️（所有词条参与全组合）；🎲 随机池 = 淡蓝虚线 + 🎲（每次现抽 1 条）
    两个徽章都用 emoji 字形（不用数学符号 ∞），字号一致、视觉重量才一样 */
-.tab.in-pool::after {
-  content: "♾️"; position: absolute; top: 3px; right: 3px; font-size: 9px; line-height: 1;
-  color: var(--purple); background: var(--bg-2); border-radius: 50%;
-  width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
-}
+.tab.in-pool::after { content: '🎲'; position: absolute; top: 1px; right: 2px; font-size: 11px; line-height: 1; display: block; }
 .tab.in-pool-random { color: var(--accent); }
 .tab.in-pool-random.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab.in-pool-random.has-selected { color: var(--accent); }
 .tab.in-pool-random.has-selected::before { color: var(--accent); }
-.tab.in-pool-random::after {
-  content: "🎲"; position: absolute; top: 3px; right: 3px; font-size: 8px;
-  background: var(--bg-2); border: 1px dashed var(--accent); border-radius: 50%;
-  width: 13px; height: 13px; display: flex; align-items: center; justify-content: center;
-}
+.tab.in-pool-random::after { content: '♾️'; position: absolute; top: 1px; right: 2px; font-size: 11px; line-height: 1; display: block; }
 
 /* Chips */
 /* 词库主体（筛选分类区 + 卡片区）：切 tab 懒加载时以遮罩覆盖，避免闪现「数量 0」 */
@@ -213,30 +205,18 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .chip.in-pool { border-color: var(--purple); color: var(--purple); font-weight: 600;
   box-shadow: inset 3px 0 0 0 var(--purple); padding-left: 14px; }
 .chip.in-pool.active { background: var(--purple-dim); border-color: var(--purple); color: #fff; }
-.chip.in-pool::after {
-  content: "♾️"; position: absolute; top: -7px; right: -5px; font-size: 9px; line-height: 1;
-  color: var(--purple); background: var(--bg); border-radius: 50%;
-  width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
-}
+.chip.in-pool::after { content: '🎲'; position: absolute; top: -9px; right: -6px; font-size: 11px; line-height: 1; display: block; }
 /* 🎲 随机池：虚线框 + 左侧虚线，与 ∞ 遍历池（实线加粗）一眼区分 */
 .chip.in-pool-random { border-color: var(--accent); border-style: dashed; color: var(--accent);
   border-left-width: 3px; padding-left: 12px; }
 .chip.in-pool-random.active { background: var(--primary-dim); border-color: var(--accent); color: #fff; }
-.chip.in-pool-random::after {
-  content: "🎲"; position: absolute; top: -8px; right: -5px; font-size: 8px;
-  background: var(--bg); border: 1px dashed var(--accent); border-radius: 50%;
-  width: 13px; height: 13px; display: flex; align-items: center; justify-content: center;
-}
+.chip.in-pool-random::after { content: '♾️'; position: absolute; top: -9px; right: -6px; font-size: 11px; line-height: 1; display: block; }
 /* 分类整类选中（Ctrl+左键）：只是把该分类下所有词条置为已选中，与「入池」无关，
    所以用琥珀色实线 + ✓，与 ∞ 紫实线 / 🎲 蓝虚线两套池徽章明确区分 */
 .chip.cat-picked, .tab.cat-picked { border-color: #f0a93b; color: #ffbd5c; font-weight: 600;
   box-shadow: inset 3px 0 0 0 #f0a93b; }
 .chip.cat-picked { padding-left: 14px; }
-.chip.cat-picked::after, .tab.cat-picked::after {
-  content: "✓"; position: absolute; top: -6px; right: -3px; font-size: 9px; line-height: 1;
-  color: #1b202b; background: #f0a93b; border-radius: 50%;
-  width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700;
-}
+.chip.cat-picked::after, .tab.cat-picked::after { content: '✅'; position: absolute; top: -7px; right: -4px; font-size: 11px; line-height: 1; display: block; }
 
 /* ── 分类「液态分段」（liquid segment）：同一层小类连成一条分段控件，选中项由 .glider 柔光滑块承载 ──
    滑块宽度/位移由 Wordbank.js 的 syncChipGliders() 按真实 DOM 量出（分类名长短不一）。
@@ -385,12 +365,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   background: linear-gradient(to top,
     rgba(30, 62, 110, 0.96) 0%, rgba(30, 62, 110, 0.72) 35%,
     rgba(30, 62, 110, 0.18) 72%, rgba(0, 0, 0, 0) 100%); }
-.card.selected .card-name::before {
-  content: '✓'; display: inline-block; width: 15px; height: 15px; margin-right: 5px;
-  font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
-  color: #fff; background: var(--primary); border-radius: 50%; vertical-align: 1px;
-  text-decoration: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+.card.selected .card-name::before { content: '✅'; display: inline-block; width: auto; height: auto; margin-right: 5px; vertical-align: -2px; font-size: 12px; line-height: 1; text-decoration: none; }
 /* 框选候选（还没凝结成池）：琥珀描边 + 右上角圆点，与蓝色「已选提示词」严格区分 */
 .card.pick-sel { border-color: #f0a93b;
   box-shadow: 0 0 0 1px #f0a93b, 0 0 0 4px rgba(240, 169, 59, 0.18),
@@ -560,6 +535,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .card-act svg { width: calc(var(--zh-act-size, 26px) * 0.54); height: calc(var(--zh-act-size, 26px) * 0.54); display: block; }
+.card-act .ico { font-size: calc(var(--zh-act-size, 26px) * 0.54); }
 .card-act:hover { background: rgba(30, 40, 55, 0.92); color: #fff; }
 .card-act.act-mute:hover { background: rgba(230, 160, 60, 0.9); border-color: #f0b429; color: #1a1200; }
 .card-act.act-mute.on { background: rgba(230, 160, 60, 0.92); border-color: #f0b429; color: #1a1200; }
@@ -573,14 +549,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .card.muted:not(.selected) { border-color: rgba(217, 154, 43, 0.45); }
 .card.muted .card-thumb { filter: saturate(0.45) brightness(0.7); }
 .card.muted .card-name { color: #e3d8bd; text-decoration: line-through; text-decoration-color: rgba(240, 180, 41, 0.8); }
-.card.muted .card-thumb-wrap::after {
-  content: '🔇 静音';
-  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
-  padding: 3px 9px; border-radius: 10px;
-  background: rgba(0,0,0,0.62); border: 1px solid rgba(240, 180, 41, 0.7);
-  color: #f0b429; font-size: 11px; font-weight: 600; letter-spacing: 1px;
-  z-index: 6; pointer-events: none; white-space: nowrap;
-}
+.card.muted .card-thumb-wrap::after { content: '🔇 静音'; position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); padding: 3px 9px; border-radius: 10px; background: rgba(0,0,0,0.62); border: 1px solid rgba(240, 180, 41, 0.7); color: #f0b429; font-size: 11px; font-weight: 600; letter-spacing: 1px; z-index: 6; pointer-events: none; white-space: nowrap; }
 
 .empty { grid-column: 1 / -1; text-align: center; color: var(--text-3); padding: 40px; font-size: 13px; }
 
@@ -1329,6 +1298,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .zhg-card-actions .zhg-sel-toggle svg,
 .zhg-card-actions .zhg-zoom-btn svg,
 .zhg-card-actions .zhg-del-btn svg { width: calc(var(--zh-act-size, 26px) * 0.54); height: calc(var(--zh-act-size, 26px) * 0.54); display: block; }
+.zhg-card-actions .zhg-del-btn .ico { font-size: calc(var(--zh-act-size, 26px) * 0.54); }
 .zhg-card-actions .zhg-sel-toggle:hover,
 .zhg-card-actions .zhg-zoom-btn:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
 .zhg-card-actions .zhg-sel-toggle.on { background: var(--primary); color: #fff; border-color: var(--primary);
@@ -1732,8 +1702,7 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
 .settings-pick-item { display: flex; flex-direction: column; align-items: stretch; gap: 2px;
   position: relative; padding: 7px 24px 7px 9px; border-radius: 7px; cursor: pointer;
   font-size: 12.5px; color: var(--text-2); transition: background 0.12s, color 0.12s; }
-.settings-pick-item.on::after { content: '✓'; position: absolute; right: 9px; top: 50%;
-  transform: translateY(-50%); color: var(--accent, #4f8cff); font-size: 12px; }
+.settings-pick-item.on::after { content: '✅'; position: absolute; right: 9px; top: 50%; transform: translateY(-50%); width: auto; height: auto; font-size: 12px; line-height: 1; }
 .settings-pick-item:hover { background: var(--card-hover); color: var(--text); }
 .settings-pick-item.on { color: var(--text); background: rgba(79, 140, 255, 0.16); }
 .settings-pick-item-val { font-family: ui-monospace, Consolas, monospace; overflow: hidden;
@@ -2497,10 +2466,7 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 
 /* 空态：给个淡图标，不要只有一行灰字 */
 .pc-empty { padding: 52px 24px; }
-.pc-empty::before {
-  content: '🗂'; display: block; font-size: 28px; line-height: 1;
-  opacity: 0.22; margin-bottom: 12px;
-}
+.pc-empty::before { content: '📭'; display: block; width: auto; height: auto; margin: 0 auto 10px; font-size: 26px; line-height: 1; text-align: center; opacity: 1; }
 
 /* 拖拽握把悬停：改用主题色，和面板色调一致 */
 .pc-resizer-x:hover, .pc-resizer-y:hover, .pc-resizer-xy:hover { background: rgba(79, 143, 247, 0.14); }
@@ -3295,3 +3261,18 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   border-color: var(--sk-bdc, transparent);
   filter: brightness(1.08);
 }
+
+
+/* ===== 统一图标层：Lucide sprite（<svg class="ico"><use href="#i-*"/>）+ CSS 徽章图标 ===== */
+:root {
+  --zhg-ico-infinity: url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%2016c5%200%207-8%2012-8a4%204%200%200%201%200%208c-5%200-7-8-12-8a4%204%200%201%200%200%208%22%20%2F%3E%3C%2Fsvg%3E');
+  --zhg-ico-dice-5: url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20width%3D%2218%22%20height%3D%2218%22%20x%3D%223%22%20y%3D%223%22%20rx%3D%222%22%20ry%3D%222%22%20%2F%3E%20%3Cpath%20d%3D%22M16%208h.01%22%20%2F%3E%20%3Cpath%20d%3D%22M8%208h.01%22%20%2F%3E%20%3Cpath%20d%3D%22M8%2016h.01%22%20%2F%3E%20%3Cpath%20d%3D%22M16%2016h.01%22%20%2F%3E%20%3Cpath%20d%3D%22M12%2012h.01%22%20%2F%3E%3C%2Fsvg%3E');
+  --zhg-ico-check: url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%206%209%2017l-5-5%22%20%2F%3E%3C%2Fsvg%3E');
+  --zhg-ico-folders: url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%205a2%202%200%200%201%202%202v7a2%202%200%200%201-2%202H9a2%202%200%200%201-2-2V5a2%202%200%200%201%202-2h2.5a1.5%201.5%200%200%201%201.2.6l.6.8a1.5%201.5%200%200%200%201.2.6z%22%20%2F%3E%20%3Cpath%20d%3D%22M3%208.268a2%202%200%200%200-1%201.738V19a2%202%200%200%200%202%202h11a2%202%200%200%200%201.732-1%22%20%2F%3E%3C%2Fsvg%3E');
+}
+.ico { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; vertical-align: -0.14em; flex: 0 0 auto; pointer-events: none; font-style: normal; font-size: 1em; line-height: 1; font-family: 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji','Segoe UI Symbol',sans-serif; }
+
+/* 折叠/排序箭头：统一用 #i-chevron-down，靠 class 旋转表达朝向 */
+.zhg-caret { transition: transform 0.16s ease; }
+.zhg-caret.down { transform: rotate(90deg); }
+.zhg-caret.up { transform: rotate(-90deg); }

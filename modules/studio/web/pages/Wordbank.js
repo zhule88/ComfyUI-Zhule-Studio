@@ -15,11 +15,11 @@ export default {
       <template v-else>
         <div class="toolbar">
           <button class="btn" :class="{active: pref.translate}" @click="toggleTranslate">
-            {{ pref.translate ? '🌐 英文' : '🌐 中文' }}
+            <span class="ico" aria-hidden="true">🌐</span>{{ pref.translate ? '英文' : '中文' }}
           </button>
           <div class="col-ctrl">
             <label>每行</label>
-            <button class="col-btn" @click="changeColumns(-1)">−</button>
+            <button class="col-btn" @click="changeColumns(-1)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-minus"></use></svg></button>
             <span class="col-num">{{ pref.columns }}</span>
             <button class="col-btn" @click="changeColumns(1)">+</button>
           </div>
@@ -44,7 +44,7 @@ export default {
                @dragstart="onTabDragStart($event, name)"
                @dragover="onTabDragOver($event, name)"
                @drop.prevent="onTabDrop"
-               @dragend="onTabDragEnd">{{ tabLabel(name) }}<span v-if="isCatMuted('tab', name)" class="chip-mute">🔇</span></div>
+               @dragend="onTabDragEnd">{{ tabLabel(name) }}<span v-if="isCatMuted('tab', name)" class="chip-mute"><span class="ico" aria-hidden="true">🔇</span></span></div>
           </div>
         </div>
           <!-- 数量徽章：原先挤在「筛选分类 ⏶收起 数量43」那行右侧，那行整块去掉后数量挪到这儿，
@@ -54,16 +54,16 @@ export default {
           <!-- 方案A · 分类栏右侧放大镜：平时只有一个图标，点一下才在原位展开成搜索框；筛选档 / 全库档开关放在框内右侧 -->
           <div class="wb-search" :class="{ 'is-open': searchOpen, 'is-search': searching }">
             <button v-if="!searchOpen" class="wb-search-trigger" :data-tip="searchTip"
-                    @click="openSearch">🔍</button>
+                    @click="openSearch"><span class="ico" aria-hidden="true">🔍</span></button>
             <div v-else class="wb-search-box" :class="{ 'is-search': searching, 'closing': searchClosing }">
-              <span class="wb-search-ico">🔍</span>
+              <span class="wb-search-ico"><span class="ico" aria-hidden="true">🔍</span></span>
               <input ref="searchInputEl" class="wb-search-input" v-model="searchText"
                      :placeholder="searchPh"
                      @keydown.esc.stop.prevent="onSearchEsc"
                      @blur="onSearchBlur" />
               <!-- × 与输入的字平级，紧跟在词尾；范围开关贴框的右端 -->
               <button v-if="searchText" class="wb-search-x" data-tip="清空搜索词"
-                      @click="clearSearch">×</button>
+                      @click="clearSearch"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
               <button class="wb-scope-btn" :class="{ all: searchScope === 'all' }"
                       :data-tip="searchScope === 'all' ? '全库：忽略 tab 与分类筛选，点此切回「筛选」' : '筛选：只在当前 tab + 已选分类里搜，点此切到「全库」'"
                       @click="toggleSearchScope">{{ searchScope === 'all' ? '全库' : '筛选' }}</button>
@@ -93,7 +93,7 @@ export default {
                    @dragstart="onChipDragStart($event, depth, chip)"
                    @dragover="onChipDragOver($event, depth, chip)"
                    @drop.prevent
-                   @dragend="onChipDragEnd">{{ chip.name }}<span v-if="isCatMuted('chip', chip.id)" class="chip-mute">🔇</span></div>
+                   @dragend="onChipDragEnd">{{ chip.name }}<span v-if="isCatMuted('chip', chip.id)" class="chip-mute"><span class="ico" aria-hidden="true">🔇</span></span></div>
               </div>
             </div>
           </div>
@@ -106,8 +106,8 @@ export default {
           <div class="pick-bar" v-if="pickSel.size">
             <span class="pick-count">已选 <b>{{ pickSel.size }}</b> 项<span v-if="catPickSel.size" class="pick-cat">（含 {{ catPickSel.size }} 个整类分类）</span></span>
             <span class="pick-tip">Ctrl+左键点分类＝整类全选，点卡片＝单条增删；选完凝结成池</span>
-            <button class="btn pick-condense" @click="onCardCondense(true)">♾️ 凝结为遍历池</button>
-            <button class="btn pick-condense" @click="onCardCondense(false)">🎲 凝结为随机池</button>
+            <button class="btn pick-condense" @click="onCardCondense(true)"><span class="ico" aria-hidden="true">♾️</span> 凝结为遍历池</button>
+            <button class="btn pick-condense" @click="onCardCondense(false)"><span class="ico" aria-hidden="true">🎲</span> 凝结为随机池</button>
             <button class="btn pick-clear" @click="clearPick">取消选择</button>
           </div>
           <div class="grid" ref="gridEl" :style="{ gridTemplateColumns: 'repeat(' + pref.columns + ', 1fr)' }"
@@ -130,9 +130,9 @@ export default {
                      单条（_vgCount<=1）什么角标都不出现，退化成普通卡片。 -->
                 <div class="vg-nav" v-if="file._vgCount > 1 && !pref.hideVgNav" @pointerdown.stop
                      :data-tip="(file._vgTitle ? '分支组「' + file._vgTitle + '」· ' : '') + '同一提示词的 ' + file._vgCount + ' 个分支（' + (file._vgIdx + 1) + '/' + file._vgCount + '）· 右键可呼出胶片条'">
-                  <button class="vg-prev" @click.stop="vgStep(file, -1)">‹</button>
+                  <button class="vg-prev" @click.stop="vgStep(file, -1)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
                   <span class="vg-num">{{ file._vgIdx + 1 }}/{{ file._vgCount }}</span>
-                  <button class="vg-next" @click.stop="vgStep(file, 1)">›</button>
+                  <button class="vg-next" @click.stop="vgStep(file, 1)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
                 </div>
                 <!-- 左上角徽标栈：排除/负面按需出现。
                      多分支不做额外标记——卡名只放这一版自己的名字，所属组名由下方 card-vg 角标单独显示。 -->
@@ -151,16 +151,16 @@ export default {
                        alt="">
                 </div>
                 <div class="thumb-enter" v-if="!hideCardIcons" data-tip="跳转图库（按当前 tag 筛选）" @click.stop="goToGallery(file)">→</div>
-                <div class="thumb-zoom" v-if="!hideCardIcons" data-tip="放大预览" @click.stop="zoomCardImage(file)">🔍</div>
-                <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="!hideCardIcons && file.images && file.images.length">🗑</div>
+                <div class="thumb-zoom" v-if="!hideCardIcons" data-tip="放大预览" @click.stop="zoomCardImage(file)"><span class="ico" aria-hidden="true">🔍</span></div>
+                <div class="thumb-del" data-tip="删除当前参考图" @click.stop="askDeleteRef(file)" v-if="!hideCardIcons && file.images && file.images.length"><span class="ico" aria-hidden="true">🗑️</span></div>
                 <!-- 参考图翻页条：默认压在最下面的 42px。
                      若这张卡同时有分支切换框（vg-nav 在下），则整体上移一档，两者各占一层不打架；
                      隐藏分支切换框时自动落回原位。 -->
                 <div class="thumb-nav" :class="{ 'thumb-nav-up': file._vgCount > 1 && !pref.hideVgNav }"
                      @pointerdown.stop v-if="file.images && file.images.length > 1">
-                  <button @click.stop="prevImage(file)">‹</button>
-                  <button class="dice" @click.stop="randomImage(file)">🎲</button>
-                  <button @click.stop="nextImage(file)">›</button>
+                  <button @click.stop="prevImage(file)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                  <button class="dice" @click.stop="randomImage(file)"><span class="ico" aria-hidden="true">🎲</span></button>
+                  <button @click.stop="nextImage(file)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
                 </div>
                 <!-- 左侧竖排操作：静音 / 删除 / 编辑 / 上传参考图（悬停显现，永不挤压名字） -->
                 <div class="card-actions" v-if="!hideCardIcons">
@@ -217,11 +217,11 @@ export default {
           </div>
           <div v-if="pageCount > 1" class="pager"
                style="display:flex;align-items:center;justify-content:center;gap:6px;padding:12px 0;">
-            <button class="btn" :disabled="pageIndex <= 0" @click="goPrevPage">‹ 上一页</button>
+            <button class="btn" :disabled="pageIndex <= 0" @click="goPrevPage"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"></use></svg> 上一页</button>
             <button v-for="(p, i) in pageNumbers" :key="i" class="btn pager-num"
                     :class="{active: p === pageIndex}" :disabled="p < 0"
                     @click="goPage(p)">{{ p < 0 ? '…' : p + 1 }}</button>
-            <button class="btn" :disabled="pageIndex >= pageCount - 1" @click="goNextPage">下一页 ›</button>
+            <button class="btn" :disabled="pageIndex >= pageCount - 1" @click="goNextPage">下一页 <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
             <span style="color:var(--text-3);font-size:12px;">第 {{ pageIndex + 1 }}/{{ pageCount }} 页 · 共 {{ viewCards.length }} 张</span>
           </div>
         </div>
@@ -233,29 +233,29 @@ export default {
             <div class="header-actions">
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :data-tip="selectedCollapsed ? '展开提示词预览' : '收起提示词预览'"
-                      @click="toggleSelectedCollapsed">{{ selectedCollapsed ? '⏷ 展开预览' : '⏶ 收起预览' }}</button>
-              <button class="btn btn-ico" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）">🎲</button>
-              <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ♾️ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条">⏩</button>
+                      @click="toggleSelectedCollapsed"><svg class="ico zhg-caret" :class="{ down: selectedCollapsed }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>{{ selectedCollapsed ? '展开预览' : '收起预览' }}</button>
+              <button class="btn btn-ico" @click="singleRandom" data-tip="点一下把每个池子的当前答案摇定：随机池各抽 1 条填入黄色标签（可再点重抽）"><span class="ico" aria-hidden="true">🎲</span></button>
+              <button class="btn btn-ico" :class="{active: data.fillMode}" @click="toggleFillMode" data-tip="填充模式 ⏩：先给遍历池 ♾️ 里每条提示词补参考图——「次数」设多少就补到多少张，不足的逐条补跑、已达标的直接跳过（新加的词条从 0 补到该数量，几百张的老词条不动），补完自动停。随机池 🎲 每张图照常各抽 1 条"><span class="ico" aria-hidden="true">⏩</span></button>
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetCtr.open }"
                       @click="openPresetCenter"
-                      data-tip="预设：存下来的预设都在这儿，卡片铺开全部标签与池子，点「应用」一键还原整套已选；「🧩 添加」把整份预设凝结成一个标签接到已选末尾">🗂 预设</button>
+                      data-tip="预设：存下来的预设都在这儿，卡片铺开全部标签与池子，点「应用」一键还原整套已选；「🧩 添加」把整份预设凝结成一个标签接到已选末尾"><span class="ico" aria-hidden="true">🗂️</span> 预设</button>
               <button class="btn" style="padding:4px 10px;font-size:12px;"
                       :class="{ active: presetDlg.open }"
                       @click="openPresetDlg"
-                      data-tip="保存预设：把当前这套已选（标签 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一份预设，随时一键还原">💾 保存</button>
+                      data-tip="保存预设：把当前这套已选（标签 + 池子 + 顺序 / 参与率 / 锁定 / 次数）存成一份预设，随时一键还原"><span class="ico" aria-hidden="true">💾</span> 保存</button>
               <button class="btn danger" style="padding:4px 10px;font-size:12px;"
                       @click="clearAll">清空</button>
               <div class="count-ctrl">
                 <label>次数</label>
-                <button class="count-btn" @click="changeCount(-1)">−</button>
+                <button class="count-btn" @click="changeCount(-1)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-minus"></use></svg></button>
                 <input type="number" class="count-input" min="0" max="99"
                        :value="pref.genCount"
                        @input="onCountInput"
                        @blur="fixCount">
                 <button class="count-btn" @click="changeCount(1)">+</button>
               </div>
-              <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 ▶</button>
+              <button class="btn primary" @click="runGenerate" data-tip="把已选词发送到画布节点，与前置提示词拼接后运行">运行 <span class="ico" aria-hidden="true">▶️</span></button>
             </div>
           </div>
           <!-- 标签行：从「运行」那一行下放，独立成一行常驻展示，展开/收起只影响下方预览。
@@ -278,10 +278,10 @@ export default {
                    :title="mergeTitle(item._mg)"
                    @pointerdown.stop="onTagPointerDown($event, idx)"
                    @click.stop="toggleMergeOpen(item._mg)">
-                <span class="mg-ico">🧩</span>
+                <span class="mg-ico"><span class="ico" aria-hidden="true">🧩</span></span>
                 <span class="mg-name">{{ item._mgName }}</span>
                 <span class="mg-num">{{ mergeSize(item._mg) }}</span>
-                <span class="close" @pointerdown.stop @click.stop="removeMerged(item._mg)">×</span>
+                <span class="close" @pointerdown.stop @click.stop="removeMerged(item._mg)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></span>
               </div>
               <!-- 合并标签展开后的内部项：只读——不给 ×、不给右键菜单，但能拖（拖任意一枚＝整组一起挪） -->
               <div v-else-if="isMergedChild(idx)" v-show="isMergeOpen(item._mg)" class="tag is-merged-child"
@@ -295,7 +295,7 @@ export default {
                    title="合并标签里的提示词（跟着合并标签整组走，不能单独编辑或删除）"
                    @pointerdown.stop="onTagPointerDown($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
-                <span v-if="item.t === 'pool'" class="ph-badge">♻</span>
+                <span v-if="item.t === 'pool'" class="ph-badge"><span class="ico" aria-hidden="true">🔄</span></span>
               </div>
               <div v-else
                    class="tag"
@@ -311,7 +311,7 @@ export default {
                    @pointerdown.stop="onTagPointerDown($event, idx)"
                    @contextmenu.prevent.stop="openTagMenu($event, idx)">
                 <span>{{ selDisplayName(item) }}</span>
-                <span v-if="item.t === 'pool'" class="ph-badge" title="池子标签：抽取结果绑定显示在本标签内">♻</span>
+                <span v-if="item.t === 'pool'" class="ph-badge" title="池子标签：抽取结果绑定显示在本标签内"><span class="ico" aria-hidden="true">🔄</span></span>
                 <!-- 参与率角标：池与普通手选词条都支持，100% 是默认值不显示，低于 100 才挂出来 -->
                 <span v-if="itemChance(item) < 100" class="ph-chance"
                       :title="(item.t === 'pool' ? '该池参与率 ' : '该词条参与率 ') + itemChance(item) + '%：每轮按此概率决定是否出词，没摇中本轮就不出词'">{{ itemChance(item) }}%</span>
@@ -323,8 +323,8 @@ export default {
                       @pointerdown.stop
                       @click.stop="vgCycleMode(item)">{{ vgTagLabel(item) }}</span>
                 <!-- 锁定徽标：锁上之后 × 收起来，右键菜单也只剩「解锁」，改不动也删不掉 -->
-                <span v-if="itemLocked(item)" class="tag-lock" title="已锁定：不能修改也不能删除，右键可解锁">🔒</span>
-                <span v-else class="close" @pointerdown.stop="removeSelected(idx)">×</span>
+                <span v-if="itemLocked(item)" class="tag-lock" title="已锁定：不能修改也不能删除，右键可解锁"><span class="ico" aria-hidden="true">🔒</span></span>
+                <span v-else class="close" @pointerdown.stop="removeSelected(idx)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></span>
               </div>
               </template>
             </div>
@@ -336,7 +336,7 @@ export default {
                 <span v-if="ci" class="pv-sep">,</span>
                 <span v-if="c.k === 'pool'" class="pv-pool" :class="['pv-pool-' + c.mode, { 'pv-pool-ph': c.placeholder }]"
                       :data-tip="c.tip">
-                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  <span class="pv-pool-badge"><span class="ico" aria-hidden="true">{{ c.mode ? '♾️' : '🎲' }}</span></span
                   ><span class="pv-pool-label">{{ c.label }}</span
                   ><span v-if="c.text" class="pv-pool-word">：{{ c.text }}</span>
                 </span>
@@ -345,16 +345,16 @@ export default {
               <span v-if="!previewChunks.length" class="pv-empty">（空）</span>
               <span v-if="previewRemoved" class="pv-removed">（排除 {{ previewRemoved }} 段）</span>
             </span>
-            <span v-if="data.fillMode" class="pv-fill" :data-tip="fillPreviewTip">⏩</span>
+            <span v-if="data.fillMode" class="pv-fill" :data-tip="fillPreviewTip"><span class="ico" aria-hidden="true">⏩</span></span>
             <button type="button" class="pv-neg-toggle" :class="{on: pref.showNegPreview}" @click="toggleNegPreview"
-                    :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 {{ pref.showNegPreview ? '⏶' : '⏷' }}</button>
+                    :data-tip="pref.showNegPreview ? '收起负面提示词预览' : '展开负面提示词预览'">负面 <svg class="ico zhg-caret" :class="{ up: pref.showNegPreview }" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></button>
           </div>
           <div class="preview neg" v-show="!selectedCollapsed && pref.showNegPreview">
             <span class="pv-flow">
               <template v-for="(c, ci) in previewNegChunks" :key="ci">
                 <span v-if="ci" class="pv-sep">,</span>
                 <span v-if="c.k === 'pool'" class="pv-pool" :class="'pv-pool-' + c.mode" :data-tip="c.tip">
-                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  <span class="pv-pool-badge"><span class="ico" aria-hidden="true">{{ c.mode ? '♾️' : '🎲' }}</span></span
                   ><span class="pv-pool-label">{{ c.label }}</span>
                 </span>
                 <span v-else class="pv-text">{{ c.text }}</span>
@@ -374,18 +374,18 @@ export default {
             <span class="ctx-count" :class="{ empty: catMenu.fileCount <= 0 }" v-if="catMenu.fileCount !== -1">{{ catMenu.fileCount }} 项</span>
             <span class="ctx-count empty" v-else>未加载</span>
           </div>
-          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCtxEditCategory">✎ 编辑分类</button>
+          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCtxEditCategory"><span class="ico" aria-hidden="true">✏️</span> 编辑分类</button>
           <button type="button" class="ctx-item" :class="{ on: catMenu.muted }" @pointerdown.stop @click="toggleCatMute"
                   :data-tip="catMenu.muted ? '恢复该分类参与自动选词' : '静音后该分类及其下全部词条都不参与自动选词'">
-            {{ catMenu.muted ? '🔊 取消静音' : '🔇 静音' }}
+            <span class="ico" aria-hidden="true">{{ catMenu.muted ? '🔊' : '🔇' }}</span>{{ catMenu.muted ? '取消静音' : '静音' }}
           </button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'all' }"
-                  @pointerdown.stop @click="onCtxPool('all')">🚫 不进池</button>
+                  @pointerdown.stop @click="onCtxPool('all')"><span class="ico" aria-hidden="true">🚫</span> 不进池</button>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'random' }"
-                  @pointerdown.stop @click="onCtxPool('random')">🎲 随机池</button>
+                  @pointerdown.stop @click="onCtxPool('random')"><span class="ico" aria-hidden="true">🎲</span> 随机池</button>
           <button type="button" class="ctx-item" :class="{ on: catMenu.pool === 'traverse' }"
-                  @pointerdown.stop @click="onCtxPool('traverse')">♾️ 遍历池</button>
+                  @pointerdown.stop @click="onCtxPool('traverse')"><span class="ico" aria-hidden="true">♾️</span> 遍历池</button>
           <!-- 参与率：只给 🎲 随机池（不进池的分类谈概率没意义；♾️ 遍历池穷举走遍，天然不吃概率）。
                点一下就落地，菜单不关，方便连着试几档看标签角标变化。 -->
           <div class="ctx-chance" v-if="catMenu.pool === 'random'">
@@ -405,7 +405,7 @@ export default {
                     ? '把该分类（含全部子分类）从已选集合里整类剔除，与 Ctrl/⌘+左键再点一次等价'
                     : '等价于按住 Ctrl/⌘ 左键点这个分类：把它连同所有子分类的词条整批加入已选，之后还能继续多选别的分类，最后统一凝结'"
                   @pointerdown.stop @click="onCtxCatPick">
-            {{ catMenu.catPicked ? '☑ 取消选中分类' : '☑ 选中分类' }}
+            <span class="ico" aria-hidden="true">☑️</span>{{ catMenu.catPicked ? '取消选中分类' : '选中分类' }}
           </button>
           <div class="ctx-sep"></div>
           <!-- 分类 ⇄ 分支 互转：两者本质同构，只差 type 一位。
@@ -415,19 +415,19 @@ export default {
                   :disabled="!catMenu.canToVg"
                   :data-tip="catMenu.canToVg ? ('把「' + catMenu.name + '」整个分类聚拢成一张分支卡：分类从左侧树里消失、自己当组名，其下词条成为同组的各分支（之后可在卡片右键原路拆回分类）') : catMenu.toVgWhy"
                   @pointerdown.stop @click="catMenu.canToVg && onCtxToVg()">
-            🗂 聚拢为分支组
+            <span class="ico" aria-hidden="true">🗂️</span> 聚拢为分支组
           </button>
           <div class="ctx-sep"></div>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild">＋ 新建子分类</button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard">＋ 新建提示词</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddChild"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建子分类</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCtxAddCard"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建提示词</button>
           <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
-                  @pointerdown.stop @click="onCtxAddTab">＋ 新建大类</button>
+                  @pointerdown.stop @click="onCtxAddTab"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建大类</button>
           <div class="ctx-sep"></div>
           <!-- 删除分类：连同其下所有子分类与词条（软删，可恢复）。大类 Tab 根不提供删除（后端保护，防止误删整库） -->
           <button type="button" class="ctx-item danger" :class="{ disabled: catMenu.kind === 'tab' }"
                   :disabled="catMenu.kind === 'tab'"
                   :data-tip="catMenu.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'"
-                  @pointerdown.stop @click="onCtxDeleteCategory">🗑 删除分类</button>
+                  @pointerdown.stop @click="onCtxDeleteCategory"><span class="ico" aria-hidden="true">🗑️</span> 删除分类</button>
         </div>
       </div>
 
@@ -442,59 +442,59 @@ export default {
           <!-- 分支组卡片：右键即可把该卡的全部分支摊成一条胶片条（方案 B），点哪一帧就切到哪一版 -->
           <button type="button" class="ctx-item vg-strip-entry" v-if="cardMenu.vgCount > 1"
                   @pointerdown.stop @click="onCardVgStrip">
-            🎞 分支胶片条 · {{ cardMenu.vgCount }} 版
+            <span class="ico" aria-hidden="true">🎞️</span> 分支胶片条 · {{ cardMenu.vgCount }} 版
           </button>
           <!-- 分支组卡片：就地新建一个分支（落在同一分类下，自动成为组里的最新一版） -->
           <button type="button" class="ctx-item vg-add-entry" v-if="cardMenu.isVg"
                   @pointerdown.stop @click="onCardNewVersion">
-            ＋ 新建分支
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建分支
           </button>
           <!-- 分支组卡片：改组名 = 改这个分支组节点自己的 name；各分支只存短名，显示前缀自动跟着变 -->
           <button type="button" class="ctx-item vg-rename-entry" v-if="cardMenu.isVg"
                   :data-tip="'当前组名：' + (cardMenu.vgTitle || '本组')"
                   @pointerdown.stop @click="onCardVgRename">
-            ✎ 重命名分支组
+            <span class="ico" aria-hidden="true">✏️</span> 重命名分支组
           </button>
           <!-- 分支组 ⇄ 分类只差 type 一位：转过去后组名当分类名，各分支成为该分类下的独立卡片。
                各分支库里存的一直是短名，「组名#」前缀由渲染层拼，所以转换不需要动任何名字 -->
           <button type="button" class="ctx-item vg-to-cat-entry" v-if="cardMenu.canToCategory"
                   :data-tip="'把这张分支卡还原成分类：组名当分类名，组内各分支平铺成独立卡片（名字本来只存短名，无需摘前缀）'"
                   @pointerdown.stop @click="onCardToCategory">
-            🗂 转为分类
+            <span class="ico" aria-hidden="true">🗂️</span> 转为分类
           </button>
           <div class="ctx-sep" v-if="cardMenu.vgCount > 1 || cardMenu.isVg"></div>
           <!-- 该卡片在框选集合里时，先把「凝结」两项摆在最前（Ctrl+左键单独补选也能触发） -->
           <template v-if="cardMenu.picked">
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(true)">
-              ♾️ 凝结为遍历池
+              <span class="ico" aria-hidden="true">♾️</span> 凝结为遍历池
             </button>
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardCondense(false)">
-              🎲 凝结为随机池
+              <span class="ico" aria-hidden="true">🎲</span> 凝结为随机池
             </button>
             <!-- 多选态：新建一个分支组（独立组头），把这批提示词整批挂上去；父级不一致会被拦下 -->
             <button type="button" class="ctx-item" @pointerdown.stop @click="onCardVgJoin">
-              🗂 聚拢为分支组
+              <span class="ico" aria-hidden="true">🗂️</span> 聚拢为分支组
             </button>
             <div class="ctx-sep"></div>
           </template>
-          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit">✎ 编辑词条</button>
+          <button type="button" class="ctx-item primary" @pointerdown.stop @click="onCardEdit"><span class="ico" aria-hidden="true">✏️</span> 编辑词条</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMute"
                   :data-tip="cardMenu.muted ? '恢复该词条参与自动选词' : '静音后该词条不参与自动选词'">
-            {{ cardMenu.muted ? '🔊 取消静音' : '🔇 静音' }}
+            <span class="ico" aria-hidden="true">{{ cardMenu.muted ? '🔊' : '🔇' }}</span>{{ cardMenu.muted ? '取消静音' : '静音' }}
           </button>
           <!-- 提示词卡片：新建一个独立组头，再把自己挂到这个新组头下（不借用自己当组头）；多选时整批一起挂 -->
           <button type="button" class="ctx-item" v-if="!cardMenu.isVg && cardMenu.canVg && !cardMenu.picked"
                   @pointerdown.stop @click="onCardVgJoin">
-            🗂 聚拢为分支组
+            <span class="ico" aria-hidden="true">🗂️</span> 聚拢为分支组
           </button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload">🖼 上传参考图</button>
-          <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord">🗑 删除词条</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload"><span class="ico" aria-hidden="true">🖼️</span> 上传参考图</button>
+          <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord"><span class="ico" aria-hidden="true">🗑️</span> 删除词条</button>
           <div class="ctx-sep"></div>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail">🖼 查看图片详情</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail"><span class="ico" aria-hidden="true">🖼️</span> 图片详情</button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardGallery">→ 跳转图库</button>
-          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom">🔍 放大预览</button>
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardZoom"><span class="ico" aria-hidden="true">🔍</span> 放大预览</button>
           <button type="button" class="ctx-item danger" v-if="cardMenu.hasImages"
-                  @pointerdown.stop @click="onCardDeleteRef">🗑 删除参考图</button>
+                  @pointerdown.stop @click="onCardDeleteRef"><span class="ico" aria-hidden="true">🗑️</span> 删除参考图</button>
         </div>
       </div>
 
@@ -512,10 +512,10 @@ export default {
           <template v-if="tagMenu.isPool">
             <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'random', 'is-off': tagMenu.lock }"
                     :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxType('random')">🎲 随机池</button>
+                    @pointerdown.stop @click="onTagCtxType('random')"><span class="ico" aria-hidden="true">🎲</span> 随机池</button>
             <button type="button" class="ctx-item" :class="{ on: tagMenu.poolType === 'traverse', 'is-off': tagMenu.lock }"
                     :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxType('traverse')">♾️ 遍历池</button>
+                    @pointerdown.stop @click="onTagCtxType('traverse')"><span class="ico" aria-hidden="true">♾️</span> 遍历池</button>
             <div class="ctx-sep"></div>
             <div class="ctx-chance" v-if="tagMenu.poolType === 'random'" :class="{ 'is-off': tagMenu.lock }">
               <span class="ctx-chance-label">参与率</span>
@@ -529,7 +529,7 @@ export default {
             <div class="ctx-sep"></div>
             <button type="button" class="ctx-item" v-if="tagMenu.poolType === 'random'"
                     :class="{ 'is-off': tagMenu.lock }" :disabled="tagMenu.lock"
-                    @pointerdown.stop @click="onTagCtxReroll">🎲 重新抽取</button>
+                    @pointerdown.stop @click="onTagCtxReroll"><span class="ico" aria-hidden="true">🎲</span> 重新抽取</button>
           </template>
           <template v-else>
             <!-- 普通手选词条也能设参与率：同样六档，没摇中本轮这个词就不出现在提示词里 -->
@@ -544,7 +544,7 @@ export default {
           </template>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" :class="{ on: tagMenu.lock }"
-                  @pointerdown.stop @click="onTagCtxLock">{{ tagMenu.lock ? '🔓 解锁' : '🔒 锁定' }}</button>
+                  @pointerdown.stop @click="onTagCtxLock"><span class="ico" aria-hidden="true">{{ tagMenu.lock ? '🔓' : '🔒' }}</span>{{ tagMenu.lock ? '解锁' : '锁定' }}</button>
         </div>
       </div>     <!-- 分支胶片条（方案 B）：从卡片右键菜单呼出，把该分支组全部分支横向摊开，
            点一帧 = 把卡片切到该分支（与卡内 ‹ › 翻页改的是同一个游标，两处始终同步）。 -->
@@ -553,7 +553,7 @@ export default {
           <div class="vg-strip-head">
             <span class="vg-strip-title">{{ vgStrip.title }}</span>
             <span class="vg-strip-count">{{ vgStrip.idx + 1 }} / {{ vgStrip.versions.length }}</span>
-            <button type="button" class="vg-strip-close" @click="closeVgStrip">×</button>
+            <button type="button" class="vg-strip-close" @click="closeVgStrip"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
           </div>
           <div class="vg-strip-body">
             <div v-for="(v, i) in vgStrip.versions" :key="v.relPath + '#' + i"
@@ -707,7 +707,7 @@ export default {
                @dragover.prevent
                @dragleave.prevent="onUploadRefDragLeave"
                @drop.prevent="onUploadRefDrop">
-            <div class="upload-drop-icon">🖼</div>
+            <div class="upload-drop-icon"><span class="ico" aria-hidden="true">🖼️</span></div>
             <div class="upload-drop-text">拖入图片 / 点击选择 / Ctrl+V 粘贴</div>
             <div class="upload-drop-hint">仅支持图片：png / jpg / webp / gif / bmp / avif</div>
           </div>
@@ -878,11 +878,11 @@ export default {
                 <span class="preset-v">{{ presetSummary.items }} 条</span>
               </div>
               <div class="preset-row" v-if="presetSummary.trav.length">
-                <span class="preset-k">♾️ 遍历池</span>
+                <span class="preset-k"><span class="ico" aria-hidden="true">♾️</span> 遍历池</span>
                 <span class="preset-v">{{ presetSummary.trav.length }} 个 · {{ presetSummary.trav.join('、') }}</span>
               </div>
               <div class="preset-row" v-if="presetSummary.rnd.length">
-                <span class="preset-k">🎲 随机池</span>
+                <span class="preset-k"><span class="ico" aria-hidden="true">🎲</span> 随机池</span>
                 <span class="preset-v">{{ presetSummary.rnd.length }} 个 · {{ presetSummary.rnd.join('、') }}</span>
               </div>
               <div class="preset-row">
@@ -894,7 +894,7 @@ export default {
               <template v-for="(c, ci) in previewChunks" :key="ci">
                 <span v-if="ci" class="pv-sep">,</span>
                 <span v-if="c.k === 'pool'" class="pv-pool" :class="['pv-pool-' + c.mode, { 'pv-pool-ph': c.placeholder }]">
-                  <span class="pv-pool-badge">{{ c.mode === 'traverse' ? '♾️' : '🎲' }}</span
+                  <span class="pv-pool-badge"><span class="ico" aria-hidden="true">{{ c.mode ? '♾️' : '🎲' }}</span></span
                   ><span class="pv-pool-label">{{ c.label }}</span
                   ><span v-if="c.text" class="pv-pool-word">：{{ c.text }}</span>
                 </span>
@@ -921,14 +921,14 @@ export default {
       <div v-if="presetCtr.open" class="pc-overlay" @click.self="closePresetCenter">
         <div class="pc-panel" :style="{ width: presetCtr.w + 'vw', height: presetCtr.h + 'vh' }">
           <div class="pc-head">
-            <span class="pc-title">🗂 预设
+            <span class="pc-title"><span class="ico" aria-hidden="true">🗂️</span> 预设
               <span class="pc-num">{{ presetCtr.list.length }}</span>
             </span>
             <div class="pc-head-r">
               <input v-model="presetCtr.q" class="pc-search" placeholder="搜预设名 / 标签 / 池名" spellcheck="false">
               <button class="btn" @click="refreshPresetList"
-                      :disabled="presetCtr.loading" data-tip="重新读取预设列表">↻</button>
-              <button class="btn icon-btn" @click="closePresetCenter" data-tip="关闭">✕</button>
+                      :disabled="presetCtr.loading" data-tip="重新读取预设列表"><span class="ico" aria-hidden="true">🔄</span></button>
+              <button class="btn icon-btn" @click="closePresetCenter" data-tip="关闭"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
             </div>
           </div>
           <div v-if="presetCtr.loading && !presetCtr.list.length" class="pc-empty">读取中…</div>
@@ -953,11 +953,11 @@ export default {
                   <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
                         :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'"
                         :style="it.t === 'pool' ? null : chipStyle(it.label)">
-                    <span v-if="it.t === 'pool'" class="pc-tag-badge">{{ it.mode === 'traverse' ? '♾️' : '🎲' }}</span>
+                    <span v-if="it.t === 'pool'" class="pc-tag-badge"><span class="ico" aria-hidden="true">{{ it.mode ? '♾️' : '🎲' }}</span></span>
                     <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
                     <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
                           class="pc-tag-chance">{{ it.chance }}%</span>
-                    <span v-if="it.lock" class="pc-tag-lock">🔒</span>
+                    <span v-if="it.lock" class="pc-tag-lock"><span class="ico" aria-hidden="true">🔒</span></span>
                   </span>
                   <span v-if="!p.flow || !p.flow.length" class="pc-tag-none">空预设</span>
               </div>
@@ -965,7 +965,7 @@ export default {
                 <span class="pc-sub">次数 {{ p.genCount }}{{ p.fillMode ? ' · ⏩ 填充' : '' }}</span>
                 <div class="pc-ops">
                   <button class="btn primary" @click="mergeAppendPreset(p)"
-                          data-tip="把这份预设整份凝结成一个标签接到已选末尾：已有标签一个不动，次数与填充也不改；标签名 = 预设名，里面的提示词（角色 + 体型等）照常参与生图">🧩 添加</button>
+                          data-tip="把这份预设整份凝结成一个标签接到已选末尾：已有标签一个不动，次数与填充也不改；标签名 = 预设名，里面的提示词（角色 + 体型等）照常参与生图"><span class="ico" aria-hidden="true">🧩</span> 添加</button>
                   <button class="btn" @click="applyPreset(p)"
                           data-tip="把这份预设的整套内容装回词库（会替换当前「已选」）">应用</button>
                   <button class="btn" @click="presetToGallery(p)"
@@ -4851,14 +4851,14 @@ const submitAddTab = async () => {
           tip: '',
           actions: [
             // 对称图标栏：大图标（外圈）切换提示词，小图标（内圈）切换参考图，骰子随机居中
-            { label: '‹', tip: '上一提示词', size: 'lg', onClick: () => zoomWordAt(-1) },
-            { label: '‹', tip: '上一张参考图', size: 'sm', onClick: () => zoomRefAt(-1) },
-            { label: '🎲', tip: '随机参考图（当前提示词）', dice: true, onClick: zoomRandomRef },
-            { label: '›', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
-            { label: '›', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
+            { icon: 'chevron-left', tip: '上一提示词', size: 'lg', onClick: () => zoomWordAt(-1) },
+            { icon: 'chevron-left', tip: '上一张参考图', size: 'sm', onClick: () => zoomRefAt(-1) },
+            { icon: 'dice-5', tip: '随机参考图（当前提示词）', dice: true, onClick: zoomRandomRef },
+            { icon: 'chevron-right', tip: '下一张参考图', size: 'sm', onClick: () => zoomRefAt(1) },
+            { icon: 'chevron-right', tip: '下一提示词', size: 'lg', onClick: () => zoomWordAt(1) },
             // 分隔线右侧放破坏性操作：删除「当前正在看的这张参考图」（不是整条词条）
             { sep: true },
-            { label: '🗑', tip: '删除当前参考图', onClick: () => zoomAskDeleteRef() },
+            { icon: 'trash', tip: '删除当前参考图', onClick: () => zoomAskDeleteRef() },
           ],
         });
       }

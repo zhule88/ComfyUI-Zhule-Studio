@@ -751,7 +751,7 @@ const App = {
         <div class="settings-panel" :class="{ 'hide-hints': pref.common.hideHints === true }">
           <div class="settings-head">
             <span class="settings-title">设置</span>
-            <button class="settings-close" @click="showSettings = false">✕</button>
+            <button class="settings-close" @click="showSettings = false"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
           </div>
           <div class="settings-body" @click="closePick">
             <!-- 通用设置：对所有页面生效 -->
@@ -912,7 +912,7 @@ const App = {
                   <div class="settings-pick-wrap" @click.stop>
                     <button class="settings-pick" :class="{ open: pickOpen === 'galleryTime' }" @click="togglePick('galleryTime')">
                       <span class="settings-pick-val">{{ pref.gallery.timeFmt }}</span>
-                      <span class="settings-pick-caret">▼</span>
+                      <span class="settings-pick-caret"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
                     </button>
                     <div class="settings-pick-pop" v-if="pickOpen === 'galleryTime'">
                       <div v-for="f in TIME_FMTS" :key="f" class="settings-pick-item"
@@ -990,7 +990,7 @@ const App = {
                     <div class="settings-pick-wrap" @click.stop>
                       <button class="settings-pick" :class="{ open: pickOpen === 'linkTime' }" @click="togglePick('linkTime')">
                         <span class="settings-pick-val">{{ linkTimePresetLabel }}</span>
-                        <span class="settings-pick-caret">▼</span>
+                        <span class="settings-pick-caret"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
                       </button>
                       <div class="settings-pick-pop" v-if="pickOpen === 'linkTime'">
                         <div v-for="p in LINK_TIME_PRESETS" :key="p.key" class="settings-pick-item"
@@ -1046,7 +1046,7 @@ const App = {
                 <div class="settings-row">
                   <button class="settings-danger-btn" :disabled="rebuilding" @click="rebuildDB">重建图库</button>
                 </div>
-                <div class="settings-hint rebuild-hint" :data-tip="'仅在图片索引异常时才需要重建，例如新增图片未显示、信息过期或索引文件损坏。系统正常运行时会自动维护索引，正常情况请勿点击。重建需重新扫描全部图片元数据，耗时数分钟，期间图库列表暂时不可用。'">⚠️ 正常情况用不到，请勿随意点击。</div>
+                <div class="settings-hint rebuild-hint" :data-tip="'仅在图片索引异常时才需要重建，例如新增图片未显示、信息过期或索引文件损坏。系统正常运行时会自动维护索引，正常情况请勿点击。重建需重新扫描全部图片元数据，耗时数分钟，期间图库列表暂时不可用。'"><span class="ico" aria-hidden="true">⚠️</span> 正常情况用不到，请勿随意点击。</div>
                 <div class="settings-hint keep-hint" v-if="rebuildNotice">{{ rebuildNotice }}</div>
                 </div>
               </div>
