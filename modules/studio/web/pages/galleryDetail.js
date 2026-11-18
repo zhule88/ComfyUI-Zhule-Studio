@@ -17,6 +17,20 @@ function readGalleryPref() {
     return {};
   }
 }
+
+// 图库偏好（标签质感 / 边角）模块级缓存：tagThemeClass 需要它。
+// 旧实现直接引用了 detailColor 内部的局部变量 gp，标签区渲染时抛 ReferenceError，
+// 导致带标签的图片点「图片详情」整块渲染失败、看起来点了没反应。
+const galleryPrefVer = ref(0);
+let galleryPrefCache = readGalleryPref();
+function refreshGalleryDetailPref() {
+  galleryPrefCache = readGalleryPref();
+  galleryPrefVer.value += 1;
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('zhule-pref-changed', refreshGalleryDetailPref);
+  window.addEventListener('zhule-wordbank-pref', refreshGalleryDetailPref);
+}
 // 标签配色：与图库同一套规则（全局种子散列 / 统一色 / 分区配置）
 function seedHash(name, seed) {
   const s = String(seed || readGalleryPref().tagSeed || '') + '|' + String(name);
@@ -67,6 +81,14 @@ export function createDetailHost(opts = {}) {
   // 否则词库图在 gallery/image 下必然 404，弹层打开也是空白。
   const imgUrlFn = typeof opts.imgUrl === 'function' ? opts.imgUrl : null;
   const detailRef = ref(null);
+  // 详情数据兜底：模板里有 G.detail.tags.length / G.detail.loras.length，接口或调用方漏字段时
+  // 会在渲染阶段抛 TypeError，导致整个弹层不渲染、点「图片详情」看起来没反应；这里统一补空数组。
+  function normalizeDetail(d) {
+    if (!d || typeof d !== 'object') return d;
+    if (!Array.isArray(d.tags)) d.tags = [];
+    if (!Array.isArray(d.loras)) d.loras = [];
+    return d;
+  }
   const fileRenameInput = ref(null);
   const tagInputEl = ref(null);
 
@@ -151,6 +173,8 @@ export function createDetailHost(opts = {}) {
   });
   // 主题（深色/浅色/描边）已废弃，固定浅色；圆角跟随图库「边角」，质感跟随图库「主题」（胶囊时不挂类）
   const tagThemeClass = computed(() => {
+  void galleryPrefVer.value; // 依赖：图库偏好变更后重新求值
+  const gp = galleryPrefCache;
   const st = gp.tagStyle || 'capsule';
   const stCls = (st && st !== 'capsule') ? ' zhg-theme-' + st : '';
   return 'zhg-tag-theme-light' + (gp.tagRound === false ? ' zhg-tag-square' : '') + stCls;
@@ -170,12 +194,12 @@ export function createDetailHost(opts = {}) {
     try {
       const d = await jfetch(API.detail + '?id=' + encodeURIComponent(g));
       // 接口 200 但数据不指向具体图片时同样视为失败，避免 detail 被置空、弹层不出现
-      if (d && (d.path || d.name)) { detailRef.value = d; return d; }
+      if (d && (d.path || d.name)) { detailRef.value = normalizeDetail(d); return d; }
       throw new Error('详情数据为空');
     } catch (e) {
       if (typeof fallback === 'function') {
         const d2 = fallback();
-        if (d2) { detailRef.value = d2; return d2; }
+        if (d2) { detailRef.value = normalizeDetail(d2); return d2; }
       }
       if (onError) onError(e);
       return null;
@@ -186,19 +210,19 @@ export function createDetailHost(opts = {}) {
     if (!path) {
       if (typeof fallback === 'function') {
         const d0 = fallback();
-        if (d0) { detailRef.value = d0; return d0; }
+        if (d0) { detailRef.value = normalizeDetail(d0); return d0; }
       }
       return null;
     }
     try {
       const d = await jfetch(API.detail + '?path=' + encodeURIComponent(path));
       // 接口 200 但数据不指向具体图片时同样视为失败，避免 detail 被置空、弹层不出现
-      if (d && (d.path || d.name)) { detailRef.value = d; return d; }
+      if (d && (d.path || d.name)) { detailRef.value = normalizeDetail(d); return d; }
       throw new Error('详情数据为空');
     } catch (e) {
       if (typeof fallback === 'function') {
         const d2 = fallback();
-        if (d2) { detailRef.value = d2; return d2; }
+        if (d2) { detailRef.value = normalizeDetail(d2); return d2; }
       }
       if (onError) onError(e);
       return null;
@@ -207,7 +231,7 @@ export function createDetailHost(opts = {}) {
   // 直接喂一份同结构数据打开弹层（词库参考图不在图库索引里，无需再问接口）
   function setDetail(d) {
     if (!d) return null;
-    detailRef.value = d;
+    detailRef.value = normalizeDetail(d);
     return d;
   }
 
