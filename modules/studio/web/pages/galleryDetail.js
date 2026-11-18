@@ -281,6 +281,18 @@ export function createDetailHost(opts = {}) {
     onTagKeyup: noop,
     onTagInputBlur: noop,
     quickCreateTag: noop,
+    // 已有自定义标签候选浮层（词库侧 tagEdit=false，这里只作结构兜底）
+    tagPickOpen: false,
+    tagPickRows: [],
+    tagPickHi: 0,
+    tagPickPos: { top: 0, bottom: null, left: 0, width: 360 },
+    pickRowEl: null,
+    tagOnImage: () => false,
+    tagPickIsHi: () => false,
+    openTagPick: noop,
+    closeTagPick: noop,
+    pickExistingTag: noop,
+    hasCustomTag: false,
     detailNav: (dir) => { if (onNav) onNav(dir); },
     detailNavRandom: () => { if (onNavRandom) onNavRandom(); },
     deleteTip,
@@ -396,6 +408,34 @@ export const GalleryDetailModal = {
                   <input class="zhg-input" v-model="G.quickTag" :ref="(el) => setEl('tagInputEl', el)" placeholder="输入标签后回车…"
                          @keyup="G.onTagKeyup" @blur="G.onTagInputBlur">
                   <button class="btn zhg-mini" @click="G.quickCreateTag">确定</button>
+                </div>
+                <!-- 已有自定义标签候选浮层：点一行直接加到图上，浮层不关可连着加；
+                     mousedown.prevent 拦住 input 先失焦，否则 blur 会立刻把浮层收掉 -->
+                <div class="zhg-tagpick" v-if="G.tagPickOpen"
+                     :style="{ left: G.tagPickPos.left + 'px', width: G.tagPickPos.width + 'px',
+                              top: (G.tagPickPos.top != null ? G.tagPickPos.top + 'px' : 'auto'),
+                              bottom: (G.tagPickPos.bottom != null ? G.tagPickPos.bottom + 'px' : 'auto') }"
+                     @mousedown.prevent @contextmenu.prevent>
+                  <div class="zhg-tagpick-tip">
+                    <span>已有自定义标签 · 点选即添加</span>
+                    <span class="esc">↑↓ 选 ⏎ 加 Esc 关</span>
+                  </div>
+                  <div class="zhg-tagpick-list" v-if="G.tagPickRows.length" :ref="(el) => setEl('pickRowEl', el)">
+                    <div v-for="r in G.tagPickRows" :key="'pk' + r.rel"
+                         class="zhg-tagpick-row"
+                         :class="{ grp: r.hasKids, hi: !r.hasKids && G.tagPickIsHi(r.rel), on: !r.hasKids && G.tagOnImage(r) }"
+                         :style="{ paddingLeft: (9 + r.depth * 13) + 'px' }"
+                         :title="r.hasKids ? ('分类：' + r.rel) : r.rel"
+                         @click="G.pickExistingTag(r)">
+                      <span class="nm">{{ r.display }}</span>
+                      <span class="path" v-if="r.path">{{ r.path }}</span>
+                      <span class="cnt" v-if="r.count">{{ r.count }}</span>
+                      <span class="ok" v-if="!r.hasKids && G.tagOnImage(r)">已添加</span>
+                    </div>
+                  </div>
+                  <div class="zhg-tagpick-empty" v-else>
+                    {{ G.hasCustomTag ? '没有匹配的自定义标签，回车可直接新建' : '还没有自定义标签，输入后回车即可新建' }}
+                  </div>
                 </div>
               </div>
             </div>

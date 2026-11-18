@@ -1123,6 +1123,40 @@ body.zhule-dragging .thumb-nav { backdrop-filter: none !important; -webkit-backd
   color: var(--text); border: 1px solid var(--border); border-radius: 6px;
   font-size: 12px; outline: none; }
 .zhg-input:focus { border-color: var(--primary); }
+
+/* 详情页「从已有自定义标签里选」候选浮层：
+   fixed 定位贴住输入框——详情右栏是滚动容器，absolute 会被裁掉半截；
+   z-index 高于详情遮罩（10000），与快捷导出的浮层选择器视觉保持一套语言 */
+.zhg-tagpick { position: fixed; z-index: 10050; max-height: 300px; display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  overflow: hidden; animation: zhg-tagpick-in 0.12s ease-out; }
+@keyframes zhg-tagpick-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.zhg-tagpick-tip { display: flex; align-items: center; gap: 8px; padding: 6px 9px;
+  font-size: 10.5px; color: var(--text-3, #8b97ab);
+  border-bottom: 1px solid var(--border-2, var(--border)); }
+.zhg-tagpick-tip .esc { margin-left: auto; font-size: 10px; color: var(--text-3, #7f8b9e);
+  border: 1px solid var(--border-2, var(--border)); border-radius: 5px; padding: 1px 5px; }
+.zhg-tagpick-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 4px 6px; }
+.zhg-tagpick-row { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 7px;
+  font-size: 12px; color: var(--text); cursor: pointer; transition: background 0.1s; }
+.zhg-tagpick-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhg-tagpick-row .path { font-size: 10px; color: var(--text-3, #8b97ab);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhg-tagpick-row .cnt { margin-left: auto; font-size: 10px; color: var(--text-3, #8b97ab);
+  background: #1b202b; border-radius: 8px; padding: 0 5px; }
+.zhg-tagpick-row:hover, .zhg-tagpick-row.hi { background: rgba(79, 140, 255, 0.16); }
+.zhg-tagpick-row.grp { cursor: default; font-size: 11px; font-weight: 700; color: var(--text-2); padding-top: 7px; }
+.zhg-tagpick-row.grp:hover { background: none; }
+.zhg-tagpick-row.on { cursor: default; color: var(--text-3, #8b97ab); }
+.zhg-tagpick-row.on .nm { text-decoration: line-through; }
+.zhg-tagpick-row.on:hover { background: none; }
+.zhg-tagpick-row .ok { margin-left: auto; font-size: 10px; color: #5ad18a; }
+.zhg-tagpick-empty { padding: 14px 10px 16px; text-align: center; font-size: 11.5px;
+  color: var(--text-3, #8b97ab); }
 .zhg-new-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .zhg-mini { padding: 5px 10px; font-size: 12px; flex-shrink: 0; }
 

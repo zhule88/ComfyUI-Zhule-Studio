@@ -339,6 +339,7 @@ const DEFAULT_PREF = {
 export function normalizeTree(ns) {
   if (!Array.isArray(ns)) return [];
   return ns.map((n) => ({
+    id: (n && n.id != null && n.id !== '') ? String(n.id) : '',
     name: String((n && n.name) || ''),
     rel: String((n && n.rel) || (n && n.name) || ''),
     count: (n && typeof n.count === 'number') ? n.count : null,
@@ -924,11 +925,20 @@ export function useGalleryCommon(opts = {}) {
   const tagKidMeta = ref({});
   // 标签树原始层级（整棵）：给「自定义分层」浮层选择器用，能按「角色 → 胡桃」逐级钻取、也能整类选取
   const tagTreeRoots = ref([]);
+  // 自定义标签树（只取 isCustom 顶层，后端拼在 tagtree 末尾）：图库详情「从已有标签里选」的数据源。
+  // 与 tagTreeRoots 分开存——筛选区那棵混着词库提示词目录，不能直接当候选列表用。
+  const customTagTree = ref([]);
   // 词条 id -> 显示名：URL 带 id 筛选时（词库跳转）用它把数字回显成词条名
   const tagIdNameMap = ref({});
   const expandedTags = ref(new Set());
-  async function ensureTagTree() {
-    if (Object.keys(tagTreeKidsMap.value).length) return;
+  // 上次拉树的时间戳：详情页反复开关候选浮层时 force 重拉会连打接口并重建整棵树（列表闪一下）
+  let tagTreeFetchTs = 0;
+  // force=true 时绕过本地缓存重拉：详情页刚新建完自定义标签，候选列表得能立刻看到它
+  async function ensureTagTree(force) {
+    if (!force && Object.keys(tagTreeKidsMap.value).length) return;
+    const now = Date.now();
+    if (force && (now - tagTreeFetchTs) < 1200) return;
+    tagTreeFetchTs = now;
     try {
       const r = await fetch('/zhule_studio/api/gallery/tagtree', { headers: { 'Cache-Control': 'no-cache' } });
       const d = await r.json();
@@ -965,6 +975,8 @@ export function useGalleryCommon(opts = {}) {
         tagKidMeta.value = kidMeta;
         // 只挑整层选择器需要的字段，避免把后端整包数据挂在响应式里
         tagTreeRoots.value = normalizeTree(d.tree);
+        // 详情页候选标签：只留自定义域（isCustom），词库提示词目录不进候选
+        customTagTree.value = normalizeTree(d.tree.filter((n) => n && n.isCustom));
         backfillTagIds();
       }
     } catch (e) { /* 静默失败，右键展开无子标签可显示 */ }
@@ -1163,6 +1175,27 @@ export function useGalleryCommon(opts = {}) {
     if (e.key === 'Enter') applyFilter();
   }
   function onTagKeyup(e) {
+    // 候选浮层开着时接管上下键与回车：↑↓ 移动高亮，回车加高亮那个标签（不新建）
+    if (tagPickOpen.value && !e.isComposing) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); movePickHi(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); movePickHi(-1); return; }
+      if (e.key === 'Enter') {
+        const row = tagPickPickable.value[tagPickHi.value];
+        const typed = quickTag.value.trim();
+        // 方向键自己挪过高亮 → 加高亮那行
+        if (pickHiByUser.value && row) { e.preventDefault(); pickExistingTag(row); return; }
+        // 打了字 → 按打字内容走：命中已有标签就复用（同名多义返回空、留给点选），
+        // 没命中才新建。否则「敲个新名字回车」会把列表第一项加进去
+        if (typed) {
+          e.preventDefault();
+          const rel = findExistingTagRel(typed);
+          const hit = rel ? tagPickPickable.value.find((r) => String(r.rel) === rel) : null;
+          if (hit) { if (!tagOnImage(hit)) pickExistingTag(hit); } else quickCreateTag();
+          return;
+        }
+        if (row) { e.preventDefault(); pickExistingTag(row); return; }
+      }
+    }
     if (e.key === 'Enter') quickCreateTag();
     else if (e.key === 'Escape') cancelTagInput();
   }
@@ -1572,7 +1605,13 @@ export function useGalleryCommon(opts = {}) {
     const idx = Math.floor(Math.random() * arr.length);
     await openDetailByPath(arr[idx]);
   }
-  function closeDetail() { detail.value = null; }
+  function closeDetail() {
+    // 详情一关，候选浮层和输入态一起收，否则下次开详情会残留（fixed 浮层还会挂在屏幕上）
+    closeTagPick();
+    tagInputing.value = false;
+    quickTag.value = '';
+    detail.value = null;
+  }
   function copyPrompt() {
     const d = detail.value;
     if (!d || !d.promptPreview) return;
@@ -1701,6 +1740,7 @@ export function useGalleryCommon(opts = {}) {
     clearTimeout(tagBlurTimer);
     tagInputing.value = false;
     quickTag.value = '';
+    closeTagPick();
   }
   function onTagInputBlur() {
     // 失焦延迟收起，避免与“确定”按钮点击竞争
@@ -1715,22 +1755,213 @@ export function useGalleryCommon(opts = {}) {
     if (!name) { cancelTagInput(); return; }
     const d = detail.value;
     if (!d) return;
-    const names = customTagNames();
-    if (!names.includes(name)) {
-      await annotate({ tags: [...names, name] });
+    // 输入的内容若已经是库里的自定义标签（完整路径，或唯一叶子名），直接复用它，
+    // 不再新建一个同名顶层标签——否则库里会同时躺着「角色/胡桃」和「胡桃」两条
+    const existed = findExistingTagRel(name);
+    if (existed) {
+      quickTag.value = '';
+      await addTagToImage(existed);
+      tagPickHi.value = 0;
+      nextTick(() => { if (tagInputEl.value) tagInputEl.value.focus(); });
+      return;
+    }
+    // 图上已有同名标签（完整路径或唯一叶子名）就别再写一遍
+    const paths = customTagPaths();
+    const already = paths.includes(name) || paths.some((p) => leafName(p) === name);
+    if (!already) {
+      await annotate({ tags: [...paths, name] });
+      // 新标签入库后重拉候选树，浮层里能立刻看到它
+      ensureTagTree(true);
     }
     quickTag.value = '';
     tagInputing.value = false;
+    closeTagPick();
   }
   // 自定义标签名列表（唯一可增删部分；zhule_tags 已并入 zhule_custom_tags）。
   // String 归一化：后端 JSON 若把纯数字自定义标签序列化为数值类型，统一转字符串比对，避免覆盖提示词标签。
   function customTagNames() {
     return (detail.value.tags || [])
-      .filter((t) => t && !t.prompt && t.name != null)
-      .map((t) => String(t.name));
+      .filter((t) => t && !t.prompt && (t.path || t.name != null))
+      .map((t) => String(t.path || t.name));
   }
-  // 打标后重组详情 tags：只读的提示词标签在前，自定义标签在后
-  function mergeDetailTags(customNames) {
+  // ============ 详情页：从已有自定义标签里选择（＋添加标签旁的候选浮层） ============
+  // 只列叶子：图库绑定的一律是叶子，分组只负责缩进展示（与筛选区「整类可选」语义区分开，
+  // 避免把「测试」这种分组挂到图上、展示时又包住「喜欢」）
+  const tagPickOpen = ref(false);
+  const tagPickHi = ref(0);
+  // 高亮是不是用户自己按方向键挪过去的：手动挪过，回车就加高亮项，不再看输入框内容
+  const pickHiByUser = ref(false);
+  // fixed 定位：详情右栏是滚动容器，absolute 会被裁掉一半
+  const tagPickPos = ref({ top: 0, bottom: null, left: 0, width: 360 });
+  const pickRowEl = ref(null);
+  // 本图已绑定的自定义标签：按 custom_id 与完整路径双口径判定。
+  // 不能拿叶子名比——'测试/喜欢' 和顶层 '喜欢' 叶子同名，用名字比会把没绑的标签标成「已添加」
+  const detailCustomKeySet = computed(() => {
+    const ids = new Set();
+    const paths = new Set();
+    ((detail.value && detail.value.tags) || []).forEach((t) => {
+      if (!t || !t.custom) return;
+      if (t.id != null && t.id !== '') ids.add(String(t.id));
+      // 存量标签可能只有叶子名（无 path）：退回用 name 存，与新顶层标签自然匹配
+      const key = String(t.path || t.name || '');
+      if (key) paths.add(key);
+    });
+    return { ids, paths };
+  });
+  // row 可以是候选行对象（带 id/rel），也可以是手打的标签名/路径字符串
+  function tagOnImage(row) {
+    if (!row) return false;
+    const isObj = typeof row === 'object';
+    const rel = String((isObj ? (row.rel || row.name) : row) || '');
+    if (!rel) return false;
+    const { ids, paths } = detailCustomKeySet.value;
+    const rid = (isObj && row.id != null) ? String(row.id) : '';
+    if (rid && ids.has(rid)) return true;
+    return paths.has(rel);
+  }
+  function relParent(rel) {
+    const p = String(rel || '');
+    const i = p.lastIndexOf('/');
+    return i > 0 ? p.slice(0, i) : '';
+  }
+  function tagPickWalk(cb) {
+    (function walk(ns) {
+      for (const n of ns || []) {
+        const kids = n.children || [];
+        cb(n, kids);
+        if (kids.length) walk(kids);
+      }
+    })(customTagTree.value);
+  }
+  // 按完整路径回查树节点（取 id 用；找不到说明树还没拉到，返回 null）
+  function tagNodeByRel(rel) {
+    const key = String(rel || '');
+    if (!key) return null;
+    let found = null;
+    tagPickWalk((n) => { if (!found && String(n.rel || '') === key) found = n; });
+    return found;
+  }
+  // 库里到底有没有自定义标签：区分「一个都还没有」和「搜索没命中」两种空态文案
+  const hasCustomTag = computed(() => customTagTree.value.length > 0);
+  // 候选行：没输入时按树形全展开（缩进表达层级，分组行不可点）；
+  // 输入了就整树拍平、只留命中的叶子，按关联图数降序（常用的排前面）
+  const tagPickRows = computed(() => {
+    const q = String(quickTag.value || '').trim().toLowerCase();
+    const rows = [];
+    if (q) {
+      tagPickWalk((n, kids) => {
+        if (kids.length) return;
+        const hit = String(n.name || '').toLowerCase().includes(q)
+          || String(n.rel || '').toLowerCase().includes(q);
+        if (!hit) return;
+        rows.push({
+          rel: n.rel || n.name, name: n.name, display: leafName(n.name), count: n.count,
+          id: n.id || '', depth: 0, hasKids: false, path: relParent(n.rel),
+        });
+      });
+      rows.sort((a, b) => ((b.count || 0) - (a.count || 0)) || String(a.rel).localeCompare(String(b.rel)));
+      return rows.slice(0, 80);
+    }
+    (function walk(ns, depth) {
+      for (const n of ns || []) {
+        const kids = n.children || [];
+        rows.push({
+          rel: n.rel || n.name, name: n.name, display: leafName(n.name), count: n.count,
+          id: n.id || '', depth, hasKids: kids.length > 0, path: '',
+        });
+        if (kids.length) walk(kids, depth + 1);
+      }
+    })(customTagTree.value, 0);
+    return rows;
+  });
+  // 键盘上下只在「可点的行」之间走，分组行跳过
+  const tagPickPickable = computed(() => tagPickRows.value.filter((r) => !r.hasKids));
+  function scrollPickHi() {
+    nextTick(() => {
+      const box = pickRowEl.value;
+      if (!box) return;
+      const el = box.querySelector('.zhg-tagpick-row.hi');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
+  function movePickHi(step) {
+    const n = tagPickPickable.value.length;
+    if (!n) return;
+    tagPickHi.value = (tagPickHi.value + step + n) % n;
+    // 用户手动挪过高亮：回车就该加他选中的那行，优先级高于输入框里的字
+    pickHiByUser.value = true;
+    scrollPickHi();
+  }
+  // 浮层是 fixed 定位，详情右栏一滚动它就会跟输入框错位——宁可收起来
+  function onPickAnyScroll(e) {
+    const el = e && e.target;
+    // 浮层自己列表内部的滚动不算，否则滚候选列表就把自己关了
+    if (el && el.nodeType === 1 && el.closest && el.closest('.zhg-tagpick')) return;
+    closeTagPick();
+  }
+  // 打开候选浮层：贴在输入行正下方，下面放不下就翻到上方（用 bottom 定位，浮层只有一行时也贴住输入框）
+  function openTagPick() {
+    ensureTagTree(true);
+    tagPickHi.value = 0;
+    pickHiByUser.value = false;
+    tagPickOpen.value = true;
+    window.addEventListener('scroll', onPickAnyScroll, true);
+    window.addEventListener('resize', onPickAnyScroll);
+    // 两拍校准：v-if 刚挂出来的输入框可能还没拿到布局，下一帧再算一次位置
+    nextTick(() => { placeTagPick(); requestAnimationFrame(placeTagPick); });
+  }
+  function placeTagPick() {
+    const el = tagInputEl.value;
+    if (!el || !el.getBoundingClientRect) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return;
+    const w = Math.max(280, Math.min(380, r.width || 360));
+    const down = (window.innerHeight - r.bottom) >= 260;
+    tagPickPos.value = {
+      width: w,
+      left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)),
+      top: down ? r.bottom + 6 : null,
+      bottom: down ? null : (window.innerHeight - r.top + 6),
+    };
+  }
+  function closeTagPick() {
+    tagPickOpen.value = false;
+    tagPickHi.value = 0;
+    pickHiByUser.value = false;
+    window.removeEventListener('scroll', onPickAnyScroll, true);
+    window.removeEventListener('resize', onPickAnyScroll);
+  }
+  // 点候选行 = 直接加到图上；浮层保持打开，方便连着加好几个（加过的行变「已添加」灰勾）
+  async function pickExistingTag(row) {
+    if (!row || row.hasKids) return;
+    const rel = String(row.rel || row.name || '');
+    if (!rel || tagOnImage(row)) return;
+    await addTagToImage(rel);
+    tagPickHi.value = 0;
+    nextTick(() => { if (tagInputEl.value && tagInputEl.value.focus) tagInputEl.value.focus({ preventScroll: true }); });
+  }
+  // 模板里判断某行是不是当前键盘高亮项（列表按 rel 定位，不靠循环下标）
+  function tagPickIsHi(rel) {
+    const r = tagPickPickable.value[tagPickHi.value];
+    return !!(r && String(r.rel) === String(rel));
+  }
+  // 手打的名字先问一遍库：完整路径命中 > 唯一叶子名命中；同名多义时返回空让用户自己点选，不猜
+  function findExistingTagRel(text) {
+    const q = String(text || '').trim();
+    if (!q) return '';
+    const leaves = [];
+    tagPickWalk((n, kids) => { if (!kids.length) leaves.push({ rel: String(n.rel || n.name || ''), name: String(n.name || '') }); });
+    const byRel = leaves.find((x) => x.rel === q);
+    if (byRel) return byRel.rel;
+    const byName = leaves.filter((x) => x.name === q);
+    return byName.length === 1 ? byName[0].rel : '';
+  }
+  // 输入内容变化时把键盘高亮拉回第一项，避免高亮停在别的标签上被回车误加
+  watch(quickTag, () => { tagPickHi.value = 0; pickHiByUser.value = false; });
+  // 打标后重组详情 tags：只读的提示词标签在前，自定义标签在后。
+  // 入参是完整路径（与后端 tags 全量重写同口径），条目上仍保留 path + id：
+  // 展示只显叶子名，删除/判重还能按 id、按路径精确落到同一个标签
+  function mergeDetailTags(customPaths) {
     const src = detail.value.tags || [];
     const readonly = src.filter((t) => t && t.prompt);
     const seen = new Set(readonly.map((t) => (t.name != null ? String(t.name) : '')));
@@ -1942,9 +2173,10 @@ export function useGalleryCommon(opts = {}) {
   async function addTagToImage(name) {
     const d = detail.value;
     if (!d) return;
-    const names = customTagNames();
-    if (names.includes(name)) return;
-    await annotate({ tags: [...names, name] });
+    // 判重走 tagOnImage：候选浮层点进来的是完整 rel（角色/胡桃），手打的是名字，两种都要认
+    if (tagOnImage(name)) return;
+    const paths = customTagPaths();
+    await annotate({ tags: [...paths, name] });
   }
   async function annotate(payload) {
     const d = detail.value;
@@ -2444,6 +2676,7 @@ export function useGalleryCommon(opts = {}) {
   });
   onBeforeUnmount(() => {
     window.removeEventListener('zhule-pref-changed', onPrefChanged);
+    closeTagPick();
     if (fullViewer) fullViewer.close();
     clearTimeout(toastTimer);
   });
@@ -2478,6 +2711,8 @@ export function useGalleryCommon(opts = {}) {
     onCtxSel, onCtxZoom, onCtxCopyLink, onCtxDownload, onCtxDel, onCtxBatchDel,
     cardTip,
     tagInputing, tagInputEl, startTagInput, cancelTagInput, onTagInputBlur,
+    tagPickOpen, tagPickRows, tagPickHi, tagPickPos, pickRowEl, tagOnImage, tagPickIsHi,
+    openTagPick, closeTagPick, pickExistingTag, hasCustomTag,
     addTagToImage, removeTagFromImage,
     askDeleteTag,
     useWorkflow,
