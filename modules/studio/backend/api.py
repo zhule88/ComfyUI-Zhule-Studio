@@ -29,7 +29,9 @@ from . import db  # zhule.db 数据层（词库/图库读写统一走 SQLite）
 STUDIO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.abspath(os.path.join(STUDIO_DIR, "web"))
 
-# 词库根：随代码走，位于 modules/studio/prompt/
+# 词库根：历史兼容路径（modules/studio/prompt/）。
+# 词库现已全量迁入 zhule.db（词库/图库共用一份 SQLite），该目录可能不存在，
+# 保留仅为前端 root 字段展示与参考图白名单兜底；白名单处会过滤不存在的目录。
 _WB_ROOT = os.path.join(STUDIO_DIR, "prompt")
 
 # 调试日志目录：ComfyUI-Zhule-Nodes/log
@@ -581,9 +583,10 @@ async def get_image(request):
     zhule_img/ 为图库反查图，zhule_reference/ 为词条上传参考图。
     """
     path = request.query.get("path", "")
-    roots = (IMAGE_ROOT, wb_root())
+    roots = tuple(r for r in (IMAGE_ROOT, wb_root()) if r and os.path.isdir(r))
     if path.startswith("zhule_img/") or path.startswith(REF_SUBDIR + "/"):
-        roots = (os.path.join(IMAGE_ROOT, STUDIO_SUBDIR), wb_root())
+        roots = tuple(r for r in (os.path.join(IMAGE_ROOT, STUDIO_SUBDIR), wb_root())
+                      if r and os.path.isdir(r))
     for root in roots:
         full = os.path.abspath(os.path.join(root, path))
         if _is_within(root, full) and os.path.isfile(full):
@@ -1145,8 +1148,8 @@ async def post_wordbank_sort_save(request):
     try:
         from . import gallery as _gal
         _gal._tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ZhuleStudio] 图库标签树缓存失效失败：{e}")
     return web.json_response({"ok": True, "layers": layers, "total": total, "renamed": total,
                               "errors": errors})
 

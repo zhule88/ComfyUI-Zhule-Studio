@@ -264,7 +264,7 @@ class ZhuleSaveImage:
         # 否则模型会按绝对路径入库：筛选列表出现一坨巨长条目，还和同名真名裂成两条。
         # id 与 name 合成一个对象写入：只占一个字段，改名后自动跟随，名字做兜底。
         try:
-            from ..studio import db as _db
+            from ..studio.backend import db as _db
         except Exception:
             _db = None
         if _db is not None:
@@ -337,13 +337,13 @@ class ZhuleSaveImage:
                   f"loras={loras or '-'} prompt_tags={prompt_tag_ids or '-'} "
                   f"tags={custom_tags or '-'}")
         print(f"[ZhuleSaveImage] 共保存 {len(图像)} 张 -> {output_dir}")
-        # 新图直接入图库索引（写入点维护，不再有守护线程扫盘）；图库模块缺失时静默跳过
+        # 新图直接入图库索引（写入点维护，不再有守护线程扫盘）；失败必须打印，避免再次静默丢图
         if saved:
             try:
-                from ..studio import gallery
+                from ..studio.backend import gallery
                 gallery.index_new(saved)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ZhuleSaveImage] 图库入库失败：{e}")
         return {}
 
 
