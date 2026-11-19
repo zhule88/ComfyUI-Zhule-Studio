@@ -228,20 +228,20 @@ export const CardCtxMenu = {
     <div v-if="state.open" class="ctx-layer" @pointerdown.self="onClose" @contextmenu.prevent.self="onClose">
       <div class="ctx-menu" :style="{ left: state.x + 'px', top: state.y + 'px' }" @pointerdown.stop>
         <div class="ctx-title">{{ state.title }}</div>
-        <button type="button" class="ctx-item" @click="onSel"><span class="ico" aria-hidden="true">✅</span>{{ state.picked ? '取消选中' : '选中这张图' }}</button>
+        <button type="button" class="ctx-item" @click="onSel"><span class="ico" aria-hidden="true">✅</span>{{ state.picked ? '取消选中' : '选中图片' }}</button>
         <button type="button" class="ctx-item" @click="onZoom"><span class="ico" aria-hidden="true">🔍</span> 放大预览</button>
         <!-- 不再重复放「进入详情」：左键点卡片即可进详情 -->
         <!-- 系统右键菜单未注册时整块（分隔线 + 复制硬链接）都不渲染，避免复制了无处可粘 -->
         <template v-if="linkMenuReady">
           <div class="ctx-sep"></div>
-          <button type="button" class="ctx-item" style="white-space:nowrap" data-tip="复制这张图原文件的硬链接源：到目标文件夹空白处右键「Zhule 粘贴为硬链接」即可零拷贝落地（直接 Ctrl+V 会变成普通副本）"
+          <button type="button" class="ctx-item" style="white-space:nowrap" data-tip="复制图片原文件的硬链接源：到目标文件夹空白处右键「Zhule 粘贴为硬链接」即可零拷贝落地（直接 Ctrl+V 会变成普通副本）"
                   @click="onCopyLink"><span class="ico" aria-hidden="true">🔗</span> {{ state.picked && state.selCount > 1 ? ('复制选中的 ' + state.selCount + ' 张硬链接') : '复制图片硬链接' }}</button>
         </template>
         <div class="ctx-sep"></div>
         <!-- 下载：图标之外的第二个入口，多选时整批下载（右键 = 下载 + 删除，不必再去找图标） -->
         <button type="button" class="ctx-item" @click="onDownload">⬇ {{ state.picked && state.selCount > 1 ? ('导出选中的 ' + state.selCount + ' 张') : '导出图片' }}</button>
-        <!-- 多选时只保留「删除选中的 N 张」，「删除这张图」隐去，避免误删当前这一张之外的语义混乱 -->
-        <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel"><span class="ico" aria-hidden="true">🗑️</span> 删除这张图</button>
+        <!-- 多选时只保留「删除选中的 N 张」，「删除图片」隐去，避免误删当前这一张之外的语义混乱 -->
+        <button type="button" class="ctx-item danger" v-if="state.selCount <= 1" @click="onDel"><span class="ico" aria-hidden="true">🗑️</span> 删除图片</button>
         <button type="button" class="ctx-item danger" v-if="state.selCount > 1" @click="onBatchDel"><span class="ico" aria-hidden="true">🗑️</span> 删除选中的 {{ state.selCount }} 张</button>
       </div>
     </div>

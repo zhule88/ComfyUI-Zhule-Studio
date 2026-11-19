@@ -333,8 +333,9 @@ export const GalleryDetailModal = {
     <div class="zhg-mask" v-if="G.detail" @click.self="G.closeDetail">
       <div class="zhg-modal">
         <div class="zhg-modal-head">
+          <span class="zhg-modal-head-ico" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24"><use href="#i-image"></use></svg></span>
           <span class="zhg-modal-title">{{ G.detail.name }}</span>
-          <button class="btn zhg-mini" @click="G.closeDetail"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg> 关闭</button>
+          <button class="btn zhg-mini zhg-modal-close" @click="G.closeDetail" data-tip="关闭详情"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg> 关闭</button>
         </div>
         <div class="zhg-modal-body">
           <div class="zhg-modal-left">
@@ -357,21 +358,23 @@ export const GalleryDetailModal = {
             </div>
           </div>
           <div class="zhg-modal-right">
-            <div class="zhg-detail-row"><span class="zhg-detail-k">文件</span><span class="zhg-detail-v zhg-file-cell" :data-tip="G.fileRenaming ? '' : (G.renameTip || '双击重命名（自动保留扩展名）')" @dblclick.stop="G.beginFileRename">
-                <template v-if="!G.fileRenaming">{{ G.fileDisplayName(G.detail) }}</template>
-                <input v-else class="zhg-file-input" :ref="(el) => setEl('fileRenameInput', el)" v-model="G.fileRenameVal"
-                       @keyup.enter="G.commitFileRename" @keyup.esc="G.cancelFileRename"
-                       @blur="G.commitFileRename" @click.stop @dblclick.stop>
-              </span></div>
-            <div class="zhg-detail-row" v-if="G.detail.mtime"><span class="zhg-detail-k">时间</span><span class="zhg-detail-v">{{ G.fmtTime(G.detail.mtime) }}</span></div>
-            <div class="zhg-detail-row" v-if="G.detail.size"><span class="zhg-detail-k">大小</span><span class="zhg-detail-v">{{ G.fmtSize(G.detail.size) }}</span></div>
-            <div class="zhg-detail-row" v-if="G.detail.model"><span class="zhg-detail-k">模型</span>
-              <span class="zhg-detail-v" :data-tip="G.detail.model || ''">{{ G.detail.model ? G.fmtModel(G.detail.model) : '—' }}</span></div>
-            <div class="zhg-detail-row"><span class="zhg-detail-k">LoRA</span>
-              <div class="zhg-detail-v zhg-detail-tags">
-                <span class="zhg-lora" v-for="l in G.detail.loras" :key="'dl'+l">{{ l }}</span>
-                <span v-if="!G.detail.loras.length">—</span>
-              </div></div>
+            <div class="zhg-detail-meta">
+              <div class="zhg-detail-row zhg-meta-card zhg-meta-wide"><span class="zhg-detail-k">文件</span><span class="zhg-detail-v zhg-file-cell" :data-tip="G.fileRenaming ? '' : (G.renameTip || '双击重命名（自动保留扩展名）')" @dblclick.stop="G.beginFileRename">
+                  <template v-if="!G.fileRenaming">{{ G.fileDisplayName(G.detail) }}</template>
+                  <input v-else class="zhg-file-input" :ref="(el) => setEl('fileRenameInput', el)" v-model="G.fileRenameVal"
+                         @keyup.enter="G.commitFileRename" @keyup.esc="G.cancelFileRename"
+                         @blur="G.commitFileRename" @click.stop @dblclick.stop>
+                </span></div>
+              <div class="zhg-detail-row zhg-meta-card"><span class="zhg-detail-k">时间</span><span class="zhg-detail-v">{{ G.detail.mtime ? G.fmtTime(G.detail.mtime) : '—' }}</span></div>
+              <div class="zhg-detail-row zhg-meta-card"><span class="zhg-detail-k">大小</span><span class="zhg-detail-v">{{ G.detail.size ? G.fmtSize(G.detail.size) : '—' }}</span></div>
+              <div class="zhg-detail-row zhg-meta-card zhg-meta-wide"><span class="zhg-detail-k">模型</span>
+                <span class="zhg-detail-v" :data-tip="G.detail.model || ''">{{ G.detail.model ? G.fmtModel(G.detail.model) : '—' }}</span></div>
+              <div class="zhg-detail-row zhg-meta-card zhg-meta-wide"><span class="zhg-detail-k">LoRA</span>
+                <div class="zhg-detail-v zhg-detail-tags">
+                  <span class="zhg-lora" v-for="l in G.detail.loras" :key="'dl'+l">{{ l }}</span>
+                  <span class="zhg-meta-dd" v-if="!G.detail.loras.length">—</span>
+                </div></div>
+            </div>
 
             <div class="zhg-detail-section">
               <div class="zhg-detail-section-title">标签 <span class="zhg-badge">{{ G.detail.tags.length }}</span>

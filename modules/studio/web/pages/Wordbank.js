@@ -949,10 +949,9 @@ export default {
                 <span class="pc-items">{{ (p.flow || []).length }} 标签</span>
               </div>
               <div class="pc-tags">
-                <!-- 标签（灰）与池（橙/紫）同层并列，按出图顺序铺开；普通标签按词库「标签颜色」规则取色，池子标签保留 🎲/♾️ 专属配色 -->
+                <!-- 标签（蓝）与池（橙/紫）同层并列，按出图顺序铺开；普通标签统一走外部标签蓝，不再按标签名散列异色，池子标签保留 🎲/♾️ 专属配色 -->
                   <span v-for="(it, ii) in p.flow" :key="ii" class="pc-tag"
-                        :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'"
-                        :style="it.t === 'pool' ? null : chipStyle(it.label)">
+                        :class="it.t === 'pool' ? ('pc-tag-' + it.mode) : 'pc-tag-item'">
                     <span v-if="it.t === 'pool'" class="pc-tag-badge"><span class="ico" aria-hidden="true">{{ it.mode ? '♾️' : '🎲' }}</span></span>
                     <span class="pc-tag-label">{{ it.label || (it.t === 'pool' ? '(未名池)' : '(无名标签)') }}</span>
                     <span v-if="it.chance < 100 && !(it.t === 'pool' && it.mode === 'traverse')"
@@ -3158,7 +3157,7 @@ export default {
     // 筛选/排序/搜索词变化时回到第一页，避免停留在无效页码
     watch(listFiles, () => { pageIndex.value = 0; });
 
-    // ============ 排除词引擎（与节点 modules/studio/node.py::build_prompt 同一套规则）============
+    // ============ 排除词引擎（与节点 modules/studio/backend/node.py::build_prompt 同一套规则）============
     // 段分隔：中英逗号 / 顿号 / 分号 / 换行；段内按空白分词；段内任一命中（OR）即排除。
     // 语义：排除词只删「别的词条」产出的段，永远不删自己；粒度是逗号段（不是整条词条）。
     const splitSegments = (text) => String(text || '').split(/[,，、;；\n\r]+/).map(t => t.trim()).filter(Boolean);

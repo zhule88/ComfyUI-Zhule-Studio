@@ -2340,10 +2340,11 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .pc-tag-label { font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-tag-chance { font-size: 10.5px; opacity: 0.85; }
 .pc-tag-lock { font-size: 10px; }
-/* 预设中心普通标签：颜色跟随「标签颜色」wordbank 区域（--tag-bg 由 Wordbank.js chipStyle 注入），无配置时回落中性蓝灰 */
-.pc-tag-item { color: color-mix(in srgb, var(--tag-bg, #8aa0b8) 62%, #fff);
-  border-color: color-mix(in srgb, var(--tag-bg, #8aa0b8) 50%, transparent);
-  background: color-mix(in srgb, var(--tag-bg, #8aa0b8) 18%, transparent); }
+/* 预设中心普通标签：统一走外部标签蓝（--primary），不再按标签名散列成异色；
+   池子等特殊标签不吃这条，仍由上面的 .pc-tag-random / .pc-tag-traverse 给橙 / 紫 */
+.pc-tag-item { color: color-mix(in srgb, var(--primary, #4f8ff7) 52%, #eaf3ff);
+  border-color: color-mix(in srgb, var(--primary, #4f8ff7) 50%, transparent);
+  background: color-mix(in srgb, var(--primary, #4f8ff7) 18%, transparent); }
 .pc-tag-item .pc-tag-label { font-weight: 500; }
 .pc-tag-none { font-size: 11.5px; color: var(--text-3); align-self: center; }
 .pc-foot {
@@ -3276,3 +3277,297 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
 .zhg-caret { transition: transform 0.16s ease; }
 .zhg-caret.down { transform: rotate(90deg); }
 .zhg-caret.up { transform: rotate(-90deg); }
+
+/* ============================================================
+   图片详情弹层 · 视觉美化层（图库 / 词库共用，仅覆盖视觉，不改交互）
+   —— 设计语言：深色玻璃 + 顶部流光 + 属性卡网格 + 分区竖条标题
+   放在文件末尾，全部为覆盖式规则，删掉本段即可回到旧观感
+   ============================================================ */
+
+/* 遮罩：双层彩色氛围光 + 背景虚化，替代原来的纯黑压暗 */
+.zhg-mask {
+  background:
+    radial-gradient(1100px 640px at 26% 12%, rgba(79, 143, 247, 0.13), transparent 68%),
+    radial-gradient(900px 620px at 82% 92%, rgba(167, 139, 250, 0.13), transparent 70%),
+    rgba(6, 8, 12, 0.80);
+  -webkit-backdrop-filter: blur(7px) saturate(118%);
+  backdrop-filter: blur(7px) saturate(118%);
+  animation: zhg-mask-in 0.16s ease-out;
+}
+@keyframes zhg-mask-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 弹层主体：更大圆角、多层投影、内描边高光 + 顶部渐变流光条 */
+.zhg-modal {
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  background:
+    linear-gradient(180deg, #2c323d 0%, #262b35 38%, #1f232c 100%);
+  box-shadow:
+    0 48px 110px -28px rgba(0, 0, 0, 0.86),
+    0 12px 34px -14px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  animation: zhg-modal-in 0.24s cubic-bezier(0.2, 0.92, 0.28, 1);
+}
+@keyframes zhg-modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.zhg-modal::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 5;
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(79, 143, 247, 0.9) 16%, rgba(167, 139, 250, 0.95) 50%,
+    rgba(42, 157, 143, 0.9) 82%, transparent 100%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* 头部：图标胶囊 + 标题，弱化分割线的硬边界 */
+.zhg-modal-head {
+  padding: 12px 16px 12px 16px;
+  gap: 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.zhg-modal-head-ico {
+  flex-shrink: 0;
+  width: 27px; height: 27px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; color: #cfe1ff;
+  background: linear-gradient(135deg, rgba(79, 143, 247, 0.30), rgba(167, 139, 250, 0.24));
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.zhg-modal-title {
+  font-size: 14.5px; font-weight: 650; letter-spacing: 0.2px; color: #eaf1fb;
+}
+.zhg-modal-close { border-radius: 8px; }
+.zhg-modal-close:hover {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border-color: rgba(239, 68, 68, 0.55) !important;
+  color: #ffb4b4 !important;
+}
+
+/* 左图区：深色底 + 细点阵 + 中心柔光，图片本体带投影后更像"照片卡" */
+.zhg-modal-left {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(122, 168, 255, 0.07), transparent 62%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.038) 1px, transparent 1px),
+    linear-gradient(180deg, #14181f 0%, #0a0c11 100%);
+  background-size: auto, 22px 22px, auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.zhg-modal-img {
+  padding: 16px;
+  border-radius: 4px;
+  cursor: zoom-in;
+  filter: drop-shadow(0 20px 34px rgba(0, 0, 0, 0.62));
+  transition: filter 0.18s ease;
+}
+.zhg-modal-img:hover { filter: drop-shadow(0 22px 40px rgba(0, 0, 0, 0.72)) brightness(1.03); }
+
+/* 图内导航：由纯黑圆钮改玻璃胶囊，静止半透明、进图区提亮，避免压住画面 */
+.zhg-nav-btn {
+  width: 42px; height: 42px; font-size: 20px;
+  background: rgba(14, 18, 25, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e7eefc;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  opacity: 0.55;
+  transition: opacity 0.16s ease, background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+.zhg-modal-imgwrap:hover .zhg-nav-btn { opacity: 1; }
+.zhg-nav-btn:hover {
+  background: rgba(79, 143, 247, 0.92);
+  border-color: rgba(150, 190, 255, 0.85);
+  transform: scale(1.05);
+}
+.zhg-nav-btn:active { transform: scale(0.97); }
+.zhg-nav-mid {
+  bottom: 16px; gap: 6px; padding: 5px 8px; border-radius: 999px;
+  background: rgba(14, 18, 25, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  opacity: 0.7; transition: opacity 0.16s ease;
+}
+.zhg-modal-imgwrap:hover .zhg-nav-mid { opacity: 1; }
+.zhg-nav-mid .zhg-nav-btn { width: 28px; height: 28px; font-size: 15px; opacity: 1; border: none; background: transparent; box-shadow: none; }
+.zhg-nav-mid .zhg-nav-btn:hover { background: rgba(79, 143, 247, 0.85); transform: none; }
+.zhg-nav-mid .zhg-nav-del:hover { background: rgba(214, 69, 69, 0.92); }
+.zhg-nav-count {
+  color: #dbe6f5; font-size: 11.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.3px;
+  padding: 0 3px;
+}
+
+/* 底部工作流按钮：主色渐变 + 发光，作为整个弹层唯一强 CTA */
+.zhg-modal-actions { padding: 11px 14px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.zhg-modal-actions .btn.primary {
+  background: linear-gradient(135deg, #5b98ff 0%, #4f8ff7 46%, #6f7bf7 100%);
+  border-color: rgba(150, 190, 255, 0.5);
+  border-radius: 9px;
+  padding: 9px 12px;
+  letter-spacing: 0.3px;
+  box-shadow: 0 12px 26px -12px rgba(79, 143, 247, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+}
+.zhg-modal-actions .btn.primary:hover:not([disabled]) {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 16px 30px -12px rgba(79, 143, 247, 1), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+.zhg-modal-actions .btn.primary[disabled] {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: #7d8b9f; box-shadow: none;
+}
+
+/* 右栏：留白更松、滚动条统一细条 */
+.zhg-modal-right { padding: 14px 18px 22px; gap: 14px; }
+.zhg-modal-right::-webkit-scrollbar { width: 8px; }
+.zhg-modal-right::-webkit-scrollbar-track { background: transparent; }
+.zhg-modal-right::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14); border-radius: 8px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+.zhg-modal-right::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); background-clip: padding-box; }
+
+/* 元信息：原来的 key-value 行 → 两列属性卡（label 上、值下），文件/模型/LoRA 通栏 */
+.zhg-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.zhg-detail-meta .zhg-meta-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 3px;
+  padding: 8px 11px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.033);
+  border: 1px solid rgba(255, 255, 255, 0.062);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.zhg-detail-meta .zhg-meta-card:hover {
+  background: rgba(255, 255, 255, 0.058);
+  border-color: rgba(79, 143, 247, 0.34);
+}
+.zhg-detail-meta .zhg-meta-wide { grid-column: 1 / -1; }
+.zhg-detail-meta .zhg-detail-k {
+  width: auto; padding: 0;
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em;
+  color: #75849a; text-transform: uppercase;
+}
+.zhg-detail-meta .zhg-detail-v {
+  font-size: 12.5px; font-weight: 550; line-height: 1.5; color: #e6ecf4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.zhg-detail-meta .zhg-meta-wide .zhg-detail-v { white-space: normal; word-break: break-all; }
+.zhg-detail-meta .zhg-detail-tags { gap: 6px; }
+.zhg-meta-dd { color: #4c5768; }
+
+/* 分区标题：虚线分隔 → 实线细边 + 左侧渐变竖条，层级更清晰 */
+.zhg-detail-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 13px; gap: 9px;
+}
+.zhg-detail-section-title {
+  position: relative;
+  padding-left: 10px;
+  font-size: 12.5px; font-weight: 650; letter-spacing: 0.2px;
+  color: #dfe8f5;
+}
+.zhg-detail-section-title::before {
+  content: '';
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 12px; border-radius: 2px;
+  background: linear-gradient(180deg, #6ea6ff, #a78bfa);
+}
+.zhg-detail-section-title .zhg-badge {
+  background: linear-gradient(135deg, #4f8ff7, #7b5cf0);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  font-size: 10.5px; min-width: 17px; height: 17px;
+}
+.zhg-detail-hint { color: #6b7a8f; font-size: 10px; }
+
+/* 标签 chip：保留主题色配色，只加浮起反馈与轻微内高光 */
+.zhg-detail-section .zhg-tag,
+.zhg-detail-tag-add .zhg-tag-add {
+  transition: transform 0.13s ease, filter 0.13s ease, border-color 0.13s ease, background 0.13s ease;
+}
+.zhg-detail-section .zhg-tag:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.zhg-detail-section .zhg-tag.hl-prompt,
+.zhg-detail-section .zhg-tag.hl-custom { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28); }
+.zhg-detail-tag-add .zhg-tag-add { border-radius: 999px; padding: 3px 10px; }
+.zhg-detail-tag-add .zhg-tag-add:hover { background: rgba(79, 143, 247, 0.13); }
+.zhg-detail-btn, .zhg-prompt-copy { border-radius: 8px; }
+
+/* LoRA：从灰紫描边块改为柔光徽章 */
+.zhg-lora {
+  border-radius: 7px;
+  padding: 2px 8px;
+  color: #cab9ff;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.22), rgba(167, 139, 250, 0.07));
+  border: 1px solid rgba(167, 139, 250, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+/* 提示词块：深色玻璃 + 左侧彩色导轨，正文改成更透气的行距 */
+.zhg-prompt {
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 2px solid rgba(79, 143, 247, 0.55);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  padding: 10px 12px;
+  font-size: 11.5px; line-height: 1.72;
+  color: #c3cfdf;
+}
+.zhg-prompt-cn {
+  border-left-color: rgba(42, 157, 143, 0.62);
+  background: linear-gradient(180deg, rgba(42, 157, 143, 0.09), rgba(42, 157, 143, 0.02));
+  color: #e2ecf5;
+}
+.zhg-prompt::-webkit-scrollbar { width: 7px; }
+.zhg-prompt::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 7px; }
+.zhg-prompt::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); }
+.zhg-hl { border-radius: 4px; padding: 0 3px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+.zhg-prompt-copy {
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #9fb0c6;
+}
+.zhg-prompt-copy:hover {
+  color: #cfe1ff; background: rgba(79, 143, 247, 0.17);
+  border-color: rgba(79, 143, 247, 0.55);
+}
+.zhg-prompt-more { color: #6b7a8f; }
+.zhg-none { color: #6b7a8f; }
+
+/* 窄屏：属性卡保持两列，图区高度略增 */
+@media (max-width: 720px) {
+  .zhg-modal { border-radius: 14px; }
+  .zhg-modal-left { border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+}
+
+/* 尊重系统减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .zhg-mask, .zhg-modal { animation: none; }
+  .zhg-modal-img, .zhg-nav-btn, .zhg-modal-actions .btn.primary,
+  .zhg-detail-section .zhg-tag, .zhg-detail-meta .zhg-meta-card { transition: none; }
+  .zhg-detail-section .zhg-tag:hover { transform: none; }
+}
+
+/* 收尾微调：标题条加极淡投影建立层次；空值属性卡（如无 LoRA）降权，避免整宽留白抢眼 */
+.zhg-modal-head { box-shadow: 0 1px 0 rgba(255, 255, 255, 0.045), 0 10px 22px -18px rgba(0, 0, 0, 0.9); }
+.zhg-detail-meta .zhg-meta-card:has(.zhg-meta-dd) {
+  background: rgba(255, 255, 255, 0.018);
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.07);
+}
+.zhg-detail-meta .zhg-meta-card:has(.zhg-meta-dd):hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.13);
+}
