@@ -22,6 +22,8 @@ def register_routes():
     routes.get("/zhule_studio/api/image")(api.get_image)
     routes.post("/zhule_studio/api/rename")(api.post_rename)
     routes.post("/zhule_studio/api/wordbank/delete")(api.post_wordbank_delete)
+    # 移动分类 / 提示词到另一个分类（分类树里点选目标，不再靠手改 parent_id）
+    routes.post("/zhule_studio/api/wordbank/move")(api.post_wordbank_move)
     routes.post("/zhule_studio/api/wordbank/mute")(api.post_wordbank_mute)
     # 提示词（单个 / 多选）右键「并入分支组」：弹框输组名，一次性把选的卡固化成同组多分支
     routes.post("/zhule_studio/api/wordbank/vg-join")(api.post_wordbank_vg_join)

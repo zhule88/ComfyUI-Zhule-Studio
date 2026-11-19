@@ -423,11 +423,15 @@ export default {
           <button type="button" class="ctx-item" v-if="catMenu.kind === 'tab'"
                   @pointerdown.stop @click="onCtxAddTab"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg> 新建大类</button>
           <div class="ctx-sep"></div>
-          <!-- 删除分类：连同其下所有子分类与词条（软删，可恢复）。大类 Tab 根不提供删除（后端保护，防止误删整库） -->
-          <button type="button" class="ctx-item danger" :class="{ disabled: catMenu.kind === 'tab' }"
-                  :disabled="catMenu.kind === 'tab'"
-                  :data-tip="catMenu.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'"
-                  @pointerdown.stop @click="onCtxDeleteCategory"><span class="ico" aria-hidden="true">🗑️</span> 删除分类</button>
+          <!-- 移动分类：把它这一整枝（含全部子分类与词条）挂到另一个分类下面；大类是分类栏的根，不提供移动 -->
+          <button type="button" class="ctx-item" v-if="catMenu.kind === 'chip'"
+                  :data-tip="'把「' + (catMenu.name || '') + '」连同其下全部分类与词条整枝挂到别的分类下面'"
+                  @pointerdown.stop @click="onCtxMoveCategory"><span class="ico" aria-hidden="true">↪️</span> 移动分类</button>
+          <!-- 删除分类：连同其下所有子分类与词条（软删，可恢复）。大类现在也允许删，
+               但它会连带整棵子树一起消失，所以点下去先弹一次明写「整树删除」的确认 -->
+          <button type="button" class="ctx-item danger"
+                  :data-tip="catMenu.kind === 'tab' ? '整个大类连同它下面的所有分类与词条一起删除（软删，可恢复）' : '连同其下所有子分类与词条一并删除（可恢复）'"
+                  @pointerdown.stop @click="onCtxDeleteCategory"><span class="ico" aria-hidden="true">🗑️</span> 删除{{ catMenu.kind === 'tab' ? '大类' : '分类' }}</button>
         </div>
       </div>
 
@@ -488,6 +492,11 @@ export default {
             <span class="ico" aria-hidden="true">🗂️</span> 聚拢为分支组
           </button>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardUpload"><span class="ico" aria-hidden="true">🖼️</span> 上传参考图</button>
+          <!-- 移动提示词：单卡 / 多选都走同一个弹层，整体搬到别的分类下；目标只给分类，
+               不给分支组（把词条塞进组头等于凭空多一个分支，那是「聚拢为分支组」的事） -->
+          <button type="button" class="ctx-item" @pointerdown.stop @click="onCardMove">
+            <span class="ico" aria-hidden="true">↪️</span> 移动到分类
+          </button>
           <button type="button" class="ctx-item danger" @pointerdown.stop @click="onCardDeleteWord"><span class="ico" aria-hidden="true">🗑️</span> 删除词条</button>
           <div class="ctx-sep"></div>
           <button type="button" class="ctx-item" @pointerdown.stop @click="onCardDetail"><span class="ico" aria-hidden="true">🖼️</span> 图片详情</button>
@@ -613,8 +622,8 @@ export default {
             </label>
           </div>
           <div class="actions">
-            <button class="btn danger" @click="askDeleteCatFromEdit" :disabled="catSaving || catEdit.kind === 'tab'"
-                    :data-tip="catEdit.kind === 'tab' ? '大类（Tab 根）不可删除' : '连同其下所有子分类与词条一并删除（可恢复）'">删除</button>
+            <button class="btn danger" @click="askDeleteCatFromEdit" :disabled="catSaving"
+                    :data-tip="catEdit.kind === 'tab' ? '整个大类连同它下面的所有分类与词条一起删除（软删，可恢复）' : '连同其下所有子分类与词条一并删除（可恢复）'">删除</button>
             <button class="btn" @click="closeCatEdit">取消</button>
             <button class="btn primary" @click="submitCatEdit" :disabled="catSaving">保存</button>
           </div>
@@ -852,6 +861,39 @@ export default {
           <div class="actions">
             <button class="btn" @click="closeVgJoin">取消</button>
             <button class="btn primary" @click="submitVgJoin" :disabled="vgJoin.busy">聚拢</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 移动分类 / 移动提示词：同一个弹层，点选目标分类后整体搬过去（后端只认分类 id）。
+           列表里只放分类，分支组不进来（往组头下塞词条等于凭空加一个分支，走「聚拢为分支组」）；
+           自己这一整枝已从列表里剔掉，搬不进自己的子树里。 -->
+      <div v-if="moveDlg.open" class="edit-overlay" @click.self="closeMove">
+        <div class="edit-dialog vg-rename-dialog">
+          <div class="title"><span class="title-text">{{ moveDlg.title }}</span></div>
+          <div class="edit-body">
+            <div class="hint" style="margin:0 0 10px">
+              当前在 <b>{{ moveDlg.fromPath || '—' }}</b>，这次要搬 <b>{{ moveDlg.ids.length }}</b> 项；
+              搬过去排在目标分类末尾，遇到同名自动加序号，不会顶掉原来那张。
+            </div>
+            <input type="text" v-model="moveDlg.search" placeholder="搜索分类名或路径" spellcheck="false">
+            <div class="move-list">
+              <button type="button" v-for="r in moveRows" :key="r.id" class="move-row"
+                      :class="{ on: moveDlg.targetId === r.id, cur: moveDlg.curParentId === r.id }"
+                      :style="{ paddingLeft: (14 + r.depth * 16) + 'px' }"
+                      :disabled="moveDlg.curParentId === r.id"
+                      :data-tip="moveDlg.curParentId === r.id ? '它现在就待在这个分类里，不用重复搬' : r.path"
+                      @click="moveDlg.targetId = r.id">
+                <span class="move-name">{{ r.name }}</span>
+                <span class="move-tag" v-if="!r.parentId">大类</span>
+                <span class="move-tag cur-tag" v-if="moveDlg.curParentId === r.id">当前位置</span>
+              </button>
+              <div class="hint" v-if="!moveRows.length" style="padding:10px 4px">没有匹配的分类</div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" @click="closeMove">取消</button>
+            <button class="btn primary" @click="submitMove" :disabled="moveDlg.busy || !moveDlg.targetId">移动</button>
           </div>
         </div>
       </div>
@@ -4306,30 +4348,33 @@ const submitAddTab = async () => {
     };
 
     // ---- 删除分类：连同其下所有子分类与词条（后端 delete_subtree 软删，isdel=1 可恢复） ----
-    // 入口两处：分类右键菜单的「🗑 删除该分类」与编辑分类弹层的「删除」按钮。
-    // 大类 Tab 根不提供删除（后端 post_wordbank_delete 明确拒绝，防止误删整库）。
+    // 入口两处：分类右键菜单的「🗑 删除分类」与编辑分类弹层的「删除」按钮。
+    // 大类（Tab 根）现在也允许删，但它连着自己整棵子树，所以文案里必须把「整个大类」写明白，
+    // 后端还要再收一道 confirmAll，防止接口被脚本误调时一口气清掉一个大类。
     const deletingCat = ref(false);
     const askDeleteCat = (kind, key) => {
       const n = nodeOfCat(kind, key);
       if (!n) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
-      if (kind === 'tab') { showToast('大类（Tab 根）不可删除', 'warn', 2600); return; }
       const label = nodePathOf(n.id) || n.name || String(n.id);
+      const isTab = kind === 'tab';
       del.ask({
-        title: '确认删除分类',
-        message: '是否确认删除该分类「' + label + '」？它下面的所有子分类与词条会一并删除'
+        title: isTab ? '确认删除整个大类' : '确认删除分类',
+        message: (isTab
+          ? '是否确认删除整个大类「' + label + '」？它下面的所有子分类与词条会一起消失'
+          : '是否确认删除该分类「' + label + '」？它下面的所有子分类与词条会一并删除')
           + '（数据仍保留在库中，可后续恢复）。相关参考图会归档到 zhule_reference/_trash，可在需要时找回。',
         name: label,
-        run: () => deleteCatNow(n.id, label),
+        run: () => deleteCatNow(n.id, label, isTab),
       });
     };
-    const deleteCatNow = async (id, label) => {
+    const deleteCatNow = async (id, label, isTab) => {
       if (deletingCat.value) return;
       deletingCat.value = true;
       try {
         const resp = await fetch('/zhule_studio/api/wordbank/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: String(id) }),
+          body: JSON.stringify({ id: String(id), confirmAll: !!isTab }),
         });
         const json = await resp.json();
         if (!resp.ok || json.error) { showToast('删除失败：' + (json.error || resp.status), 'error'); return; }
@@ -4354,6 +4399,139 @@ const submitAddTab = async () => {
       askDeleteCat(m.kind, m.key);
     };
     const askDeleteCatFromEdit = () => askDeleteCat(catEdit.kind, catEdit.key);
+
+    // ---- 移动分类 / 移动提示词：一个弹层两用，目标只能点选「分类」，分支组不进列表 ----
+    // 分类移动会把它整枝（含全部子分类与词条）挂过去，所以「自己 + 自己的子孙」从目标列表里
+    // 整枝剔掉，从根上避免搬成环；提示词（单卡或多选）只搬自己，没有环的问题。
+    const moveDlg = reactive({
+      open: false, busy: false, title: '', fromPath: '', curParentId: '',
+      ids: [], block: [], search: '', targetId: '',
+    });
+    const moveBlockSet = computed(() => new Set((moveDlg.block || []).map((x) => String(x))));
+    const moveRows = computed(() => {
+      const idx = bankNodes.value || {};
+      const block = moveBlockSet.value;
+      const kw = (moveDlg.search || '').trim().toLowerCase();
+      // 分类节点按 parentId 先归成邻接表，再从顶层一层层往下铺，缩进即层级
+      const kids = new Map();
+      Object.keys(idx).forEach((k) => {
+        const n = idx[k];
+        // 与 catHasChildCat 同口径：缺 type 字段的老节点按分类算，别把分类从列表里漏掉
+        if (!n || String(n.type || 'category') !== 'category') return;
+        const pid = String(n.parentId || '');
+        if (!kids.has(pid)) kids.set(pid, []);
+        kids.get(pid).push(n);
+      });
+      const rows = [];
+      const walk = (pid, depth, chain) => {
+        const list = (kids.get(pid) || []).slice().sort((a, b) =>
+          String(a.name || '').localeCompare(String(b.name || ''), 'zh'));
+        list.forEach((n) => {
+          const nid = String(n.id);
+          if (block.has(nid)) return;      // 自己这一整枝不出现
+          const p2 = chain.concat(String(n.name || ''));
+          const path = p2.join(' / ');
+          if (!kw || path.toLowerCase().indexOf(kw) >= 0) {
+            rows.push({ id: nid, name: n.name || '', parentId: String(n.parentId || ''), depth, path });
+          }
+          walk(nid, depth + 1, p2);
+        });
+      };
+      walk('', 0, []);
+      return rows;
+    });
+    const closeMove = () => { if (!moveDlg.busy) moveDlg.open = false; };
+    const openMove = (title, fromPath, curParentId, ids, block) => {
+      moveDlg.open = true;
+      moveDlg.busy = false;
+      moveDlg.title = title;
+      moveDlg.fromPath = fromPath || '';
+      moveDlg.curParentId = String(curParentId || '');
+      moveDlg.ids = ids.map(String);
+      moveDlg.block = block.map(String);
+      moveDlg.search = '';
+      moveDlg.targetId = '';
+    };
+    const openMoveCategory = (kind, key) => {
+      const n = nodeOfCat(kind, key);
+      if (!n) { showToast('没找到该分类节点，刷新一下再试', 'warn'); return; }
+      const id = String(n.id);
+      const pid = String(n.parentId || '');
+      if (!pid) { showToast('大类本来就在分类栏最外层，不用移动', 'warn', 2600); return; }
+      const idx = bankNodes.value || {};
+      const block = [id];
+      const inBlock = new Set(block);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        Object.keys(idx).forEach((k) => {
+          const kid = String((idx[k] || {}).parentId || '');
+          if (kid && inBlock.has(kid) && !inBlock.has(k)) { inBlock.add(k); block.push(k); grew = true; }
+        });
+      }
+      openMove('移动分类', nodePathOf(id) || n.name || id, pid, [id], block);
+    };
+    const openMoveCards = (f, fromPick) => {
+      const list = fromPick ? pickedFiles() : (f ? [f] : []);
+      const idx = bankNodes.value || {};
+      const ids = [];
+      const pids = new Set();
+      list.forEach((it) => {
+        const nid = String((it && it.id) || '');
+        if (!nid || ids.indexOf(nid) >= 0) return;
+        ids.push(nid);
+        const node = idx[nid];
+        if (node) pids.add(String(node.parentId || ''));
+      });
+      if (!ids.length) { showToast('这几张卡还没有库内 id，刷新一下再试', 'warn'); return; }
+      const cur = pids.size === 1 ? [...pids][0] : '';
+      const from = cur
+        ? (nodePathOf(cur) || (idx[cur] || {}).name || '')
+        : '分属 ' + pids.size + ' 个分类';
+      openMove(ids.length > 1 ? '移动提示词（' + ids.length + ' 项）' : '移动提示词', from, cur, ids, []);
+    };
+    const submitMove = async () => {
+      if (moveDlg.busy || !moveDlg.ids.length) return;
+      if (!moveDlg.targetId) { showToast('请先选一个目标分类', 'warn'); return; }
+      moveDlg.busy = true;
+      try {
+        const resp = await fetch('/zhule_studio/api/wordbank/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: moveDlg.ids.map(String), target: String(moveDlg.targetId) }),
+        });
+        const json = await resp.json();
+        if (!resp.ok || json.error) { showToast('移动失败：' + (json.error || resp.status), 'error', 3600); return; }
+        moveDlg.open = false;
+        // 被搬走的分类可能正停在左侧选区链上、卡片也可能还在已选池里 → 统一清干净再整页重读
+        const sel = getSelections();
+        for (let i = 0; i < Math.max(maxDepth.value, sel.length); i++) sel[i] = [];
+        pageIndex.value = 0;
+        clearPick();
+        const renamed = (json.renamed || []).length;
+        showToast('已移到「' + (json.targetName || '目标分类') + '」：' + (json.moved || 0) + ' 项'
+          + (renamed ? '，' + renamed + ' 项重名自动加序号' : '')
+          + ((json.skipped || []).length ? '，' + json.skipped.length + ' 项本来就在那儿' : ''),
+          'success', 3600);
+        await load(true);
+      } catch (e) {
+        showToast('请求失败：' + e.message, 'error');
+      } finally {
+        moveDlg.busy = false;
+      }
+    };
+    const onCtxMoveCategory = () => {
+      const m = { kind: catMenu.kind, key: catMenu.key };
+      closeCatMenu();
+      openMoveCategory(m.kind, m.key);
+    };
+    const onCardMove = () => {
+      const f = cardMenu.file;
+      const fromPick = !!(f && isPicked(f));
+      closeCardMenu();
+      if (!f) return;
+      openMoveCards(f, fromPick);
+    };
 
     // ---- 菜单里的新建入口 ----
     const onCtxEditCategory = () => {
@@ -6485,6 +6663,8 @@ const submitAddTab = async () => {
       tagMenu, openTagMenu, closeTagMenu, onTagCtxType, onTagCtxChance, onTagCtxReroll, onTagCtxLock, itemLocked,
 
     deletingCat, askDeleteCat, onCtxDeleteCategory, askDeleteCatFromEdit,
+    // 移动分类 / 移动提示词
+    moveDlg, moveRows, closeMove, submitMove, onCtxMoveCategory, onCardMove,
     isCatMuted, toggleCatMute,
       // 卡片右键菜单（复制卡片图标功能）+ 通用设置「隐藏卡片上的图标」
       cardMenu, openCardMenu, closeCardMenu, hideCardIcons,

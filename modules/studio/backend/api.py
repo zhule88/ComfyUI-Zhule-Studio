@@ -876,7 +876,11 @@ async def post_wordbank_vg_join(request):
 
 
 async def post_wordbank_delete(request):
-    """删除词条（DB 版）：按 DB id 递归删除该节点及其子树（zhule.db）。禁止删除顶层 Tab。"""
+    """删除词条 / 分类 / 大类（DB 版）：按 DB id 递归软删该节点及其子树（zhule.db）。
+
+    顶层大类（Tab 根）也允许删除，但它会连带整棵子树一起消失，所以要求前端显式带
+    confirmAll:true 才执行，避免接口被脚本或误调清空一整个大类。
+    """
     try:
         body = await request.json()
     except Exception:
@@ -887,14 +891,104 @@ async def post_wordbank_delete(request):
     node = db.node_by_id(raw_id)
     if node is None:
         return web.json_response({"error": "词条不存在"}, status=404)
-    if node.get("type") == "category" and node.get("parent_id") is None:
-        return web.json_response({"error": "不能删除 Tab 根目录"}, status=400)
+    if (node.get("type") == "category" and node.get("parent_id") is None
+            and not body.get("confirmAll")):
+        return web.json_response(
+            {"error": "删除大类需要二次确认（confirmAll）"}, status=400)
     ids = db.subtree_ids(int(node["id"]))
     count = db.delete_subtree(int(node["id"]))
     if not count:
         return web.json_response({"error": "删除失败"}, status=500)
     purged = sum(1 for i in ids if _purge_ref_dir(i))
     return web.json_response({"ok": True, "deleted": count, "refDirsPurged": purged})
+
+async def post_wordbank_move(request):
+    """移动分类 / 提示词到另一个分类（DB 版）：body { ids:[...], target:"目标分类 id" }。
+
+    规则（前后端各守一遍，后端是最终裁决）：
+    - 目标只能是 type=category 的节点：分支组是「组头 + 分支」两层结构，把普通词条塞进
+      组头下面等于凭空多一个分支，语义该走「聚拢为分支组」，不在移动里做；
+    - 分类不能搬进自己的子孙（环）：用 db.subtree_ids 自证一遍，前端只是提前拦；
+    - 顶层大类（Tab 根）不能移动：一旦挂到别处，顶层 Tab 就从分类栏消失，整页错位；
+    - 同父下重名不顶替别人，自动追加序号，并把改了名的项回给前端提示；
+    - 已经在目标分类下的项直接跳过，返回值里单列 skipped。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON 解析失败"}, status=400)
+    raw_ids = body.get("ids")
+    if isinstance(raw_ids, (str, int)):
+        raw_ids = [raw_ids]
+    ids = []
+    for x in (raw_ids or []):
+        s = str(x or "").strip()
+        if s and s.isdigit() and s not in ids:
+            ids.append(s)
+    target = str(body.get("target") or "").strip()
+    if not ids:
+        return web.json_response({"error": "没有选中要移动的内容"}, status=400)
+    if len(ids) > 200:
+        return web.json_response({"error": "一次最多移动 200 项"}, status=400)
+    if not target or not target.isdigit():
+        return web.json_response({"error": "请先选择目标分类"}, status=400)
+    tgt = db.node_by_id(target)
+    if tgt is None:
+        return web.json_response({"error": "目标分类不存在，刷新后再试"}, status=404)
+    if str(tgt.get("type") or "") != "category":
+        return web.json_response(
+            {"error": "只能移动到分类；分支组请先右键「转为分类」"}, status=400)
+    target_pid = int(tgt["id"])
+    moved = 0
+    renamed = []
+    skipped = []
+    for i in ids:
+        n = db.node_by_id(i)
+        if n is None:
+            return web.json_response({"error": "有内容已被删除，刷新后再试"}, status=404)
+        nid = int(n["id"])
+        nm = str(n.get("name") or "").strip() or str(nid)
+        if nid == target_pid:
+            return web.json_response({"error": "不能把「%s」移动到自己下面" % nm}, status=400)
+        if str(n.get("type") or "") == "category" and n.get("parent_id") is None:
+            return web.json_response(
+                {"error": "大类「%s」不能移动：顶层大类一旦挂到别处，分类栏会整排错位" % nm},
+                status=400)
+        # 环检测：目标不能落在「自己或自己的子孙」里
+        try:
+            sub = set(int(x) for x in db.subtree_ids(nid))
+        except (TypeError, ValueError):
+            sub = {nid}
+        if target_pid in sub:
+            return web.json_response(
+                {"error": "不能把「%s」搬到它自己的子分类下面" % nm}, status=400)
+        if int(n.get("parent_id") or 0) == target_pid:
+            skipped.append(nm)
+            continue
+        want = _unique_child_name(target_pid, nm, exclude_id=nid)
+        if want != nm and not db.update_node(nid, name=want):
+            return web.json_response(
+                {"error": "改名失败：%s（已移动 %d 项）" % (nm, moved)}, status=500)
+        if not db.relocate(nid, target_pid):
+            return web.json_response(
+                {"error": "移动失败：%s（已移动 %d 项）" % (nm, moved)}, status=500)
+        if want != nm:
+            renamed.append({"from": nm, "to": want})
+        moved += 1
+    # 分类树动过 → 图库标签树缓存里的层级/路径全失效，跟排序保存一样就地刷掉
+    try:
+        from . import gallery as _gal
+        _gal._tree_cache.update({"ts": 0.0, "sig": None, "tree": None, "anc": None})
+    except Exception as e:
+        print(f"[ZhuleStudio] 图库标签树缓存失效失败：{e}")
+    return web.json_response({
+        "ok": True,
+        "moved": moved,
+        "skipped": skipped,
+        "renamed": renamed,
+        "target": str(target_pid),
+        "targetName": str(tgt.get("name") or ""),
+    })
 
 async def post_wordbank_tab_create(request):
     """新建 Tab 大类（DB 版）：INSERT 顶层 category 节点，sort_order 取同层 max+1。"""

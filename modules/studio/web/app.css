@@ -3571,3 +3571,49 @@ body.zh-js-tip .rebuild-hint::after { display: none !important; }
   background: rgba(255, 255, 255, 0.035);
   border-color: rgba(255, 255, 255, 0.13);
 }
+
+/* ---- 移动分类 / 移动提示词：弹层里的目标分类列表（可搜索、按层级缩进、当前父级置灰） ---- */
+.move-list {
+  margin-top: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+.move-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 1px 0;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #cfd8e6;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.move-row:hover:not(:disabled) {
+  background: rgba(120, 160, 255, 0.1);
+  border-color: rgba(120, 160, 255, 0.22);
+}
+.move-row.on {
+  background: rgba(120, 160, 255, 0.2);
+  border-color: rgba(140, 175, 255, 0.55);
+  color: #eaf1ff;
+}
+.move-row.cur { opacity: 0.55; cursor: not-allowed; }
+.move-row .move-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-row .move-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid rgba(150, 180, 220, 0.35);
+  border-radius: 999px;
+  color: #9fb6d8;
+  font-size: 10px;
+}
+.move-row .move-tag.cur-tag { color: #ffd7a3; border-color: rgba(255, 200, 120, 0.45); }
